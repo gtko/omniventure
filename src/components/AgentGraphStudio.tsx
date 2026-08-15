@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
 import { VirtualOffice2D } from './VirtualOffice2D';
+import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
 export type HierarchyLevel = 'c_level' | 'vp' | 'head_of' | 'lead' | 'expert';
@@ -357,7 +358,7 @@ export const AgentGraphStudio: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('market_agent');
   const [selectedChannelId, setSelectedChannelId] = useState<string>('ch-market-scraper');
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config'>('hierarchy');
+  const [activeTab, setActiveTab] = useState<'graph' | 'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config'>('graph');
   const [activeEditorSubTab, setActiveEditorSubTab] = useState<'ame' | 'job' | 'params'>('ame');
   const [keyStatus, setKeyStatus] = useState<'none' | 'valid' | 'invalid'>('none');
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
@@ -719,6 +720,14 @@ export const AgentGraphStudio: React.FC = () => {
 
           <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white text-xs">
             <button
+              onClick={() => setActiveTab('graph')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                activeTab === 'graph' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              🕸️ Graphe Réseau (DAG)
+            </button>
+            <button
               onClick={() => setActiveTab('hierarchy')}
               className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
                 activeTab === 'hierarchy' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
@@ -938,6 +947,86 @@ export const AgentGraphStudio: React.FC = () => {
             </div>
 
           </div>
+      {/* VIEW 0: INTERACTIVE VISUAL NODE NETWORK GRAPH (DAG) */}
+      {activeTab === 'graph' && (
+        <div className="space-y-4">
+          {/* Top Control Bar */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-bold text-slate-900">Graphe Réseau d'Entreprise :</span>
+                <span className="text-slate-600 font-mono">
+                  {agents.length} Agents Connectés • {channels.length} Canaux Inter-Niveaux
+                </span>
+              </div>
+
+              <span className="text-slate-300">|</span>
+
+              <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-mono font-semibold">
+                Glissez les nœuds & Zoomez à volonté
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSimulateFlow}
+                disabled={simulationActive}
+                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                <span>{simulationActive ? '⚡ Échanges en direct...' : '▶ Lancer Simulation des Flux'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Big Visual Network Canvas */}
+          <EnterpriseNetworkGraph
+            agents={agents}
+            channels={channels}
+            teams={teams}
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={id => setSelectedAgentId(id)}
+            simulationActive={simulationActive}
+            activeSimulationStep={activeSimulationStep}
+          />
+
+          {/* Quick Inspector Footer for Selected Node */}
+          {currentAgent && (
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center text-lg font-bold shadow-md">
+                  {currentAgent.category === 'orchestration' ? '👑' :
+                   currentAgent.category === 'research' ? '🔬' :
+                   currentAgent.category === 'engineering' ? '📐' :
+                   currentAgent.category === 'growth' ? '📢' : '🛡️'}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-900 text-sm">{currentAgent.role}</h3>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${getHierarchyBadge(currentAgent.hierarchyLevel).color}`}>
+                      {getHierarchyBadge(currentAgent.hierarchyLevel).label}
+                    </span>
+                    <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded font-semibold">
+                      {currentAgent.modelId}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 max-w-xl truncate">{currentAgent.description}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setActiveTab('editor');
+                    setActiveEditorSubTab('ame');
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors"
+                >
+                  Modifier Ame.md & Job.md ➔
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

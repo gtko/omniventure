@@ -1,370 +1,819 @@
-import React, { useState, useEffect } from 'react';
-import { getRealAgentLogs, clearRealAgentLogs, type RealAgentActivity, saveRealAgentLog } from '../lib/agent-bus';
-
-export interface OfficeAgent {
-  id: string;
-  name: string;
-  role: string;
-  avatar: string;
-  color: string;
-  modelId: string;
-  tier: 1 | 2 | 3;
-  deskX: number;
-  deskY: number;
-  currentX: number;
-  currentY: number;
-  status: 'idle' | 'walking' | 'working';
-  currentBubble: string | null;
-}
-
-const DEFAULT_AGENTS_LAYOUT = [
-  { id: 'master', name: 'Victoria (CEO)', role: 'Orchestrateur Suprême', avatar: '👑', color: 'bg-purple-600', tier: 1, deskX: 42, deskY: 24 },
-  { id: 'planner', name: 'Hugo (Crise)', role: 'Planificateur & Crise', avatar: '🛡️', color: 'bg-rose-600', tier: 1, deskX: 58, deskY: 24 },
-  { id: 'market_agent', name: 'Alex (Veille)', role: 'Orchestrateur Veille', avatar: '🕵️‍♂️', color: 'bg-amber-500', tier: 1, deskX: 18, deskY: 28 },
-  { id: 'market_scraper_agent', name: 'Sam (Scraper)', role: 'Agent Scraper Web', avatar: '🕷️', color: 'bg-orange-500', tier: 2, deskX: 18, deskY: 72 },
-  { id: 'sentiment_agent', name: 'Eva (Sentiment)', role: 'Agent Avis & Frustrations', avatar: '💬', color: 'bg-pink-500', tier: 2, deskX: 30, deskY: 72 },
-  { id: 'lead_dev', name: 'David (Arch.)', role: 'Lead Architecte', avatar: '📐', color: 'bg-indigo-600', tier: 2, deskX: 50, deskY: 75 },
-  { id: 'copywriter_agent', name: 'Léa (Copy)', role: 'Agent Copywriting & Ads', avatar: '✍️', color: 'bg-emerald-600', tier: 2, deskX: 62, deskY: 75 },
-  { id: 'worker_dev', name: 'Leo (Coder)', role: 'Worker Développeur', avatar: '💻', color: 'bg-blue-600', tier: 3, deskX: 82, deskY: 28 },
-  { id: 'qa_agent', name: 'Clara (QA)', role: 'Agent Recette QA', avatar: '🧪', color: 'bg-teal-600', tier: 3, deskX: 82, deskY: 52 },
-  { id: 'devops_agent', name: 'Marc (DevOps)', role: 'DevOps Canary Sentinel', avatar: '🚀', color: 'bg-cyan-600', tier: 3, deskX: 82, deskY: 76 }
-];
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { clearRealAgentLogs, getRealAgentLogs, saveRealAgentLog, type RealAgentActivity } from '../lib/agent-bus';
+import { loadGraphProfiles } from './office/agents';
+import { AgentPanel, type AgentView } from './office/AgentPanel';
+import { loadOfficeAssets, type OfficeAssets } from './office/assets';
+import { SAVE_INTERVAL_SEC, TIME_SCALES, TILE, ZOOM_MAX, ZOOM_MIN } from './office/constants';
+import { buildNav } from './office/grid';
+import { BUILDING, buildOffice } from './office/layout';
+import { flushSnapshot, generateTopics, loadSnapshot, loadTopics, saveSnapshot, type StateSource } from './office/persistence';
+import {
+  bakeBackground,
+  buildFurnitureDraws,
+  clampCamera,
+  computeView,
+  fitZoom,
+  renderFrame,
+  screenToWorld,
+  type Camera,
+  type FurnitureDraw,
+  type RenderOptions,
+  type View
+} from './office/renderer';
+import { OfficeSim, type OfficeEvent } from './office/simulation';
 
 interface Props {
   initialMissionName?: string;
   autoPlay?: boolean;
+  /** Hauteur du plateau. La page /office passe « 100% » pour un rendu plein écran. */
+  height?: string;
 }
 
-export const VirtualOffice2D: React.FC<Props> = () => {
-  const [agents, setAgents] = useState<OfficeAgent[]>([]);
+interface Hud {
+  feed: OfficeEvent[];
+  roster: AgentView[];
+  census: Record<string, number>;
+  clock: number;
+}
+
+const CENSUS_LABELS: Array<{ key: string; icon: string; label: string }> = [
+  { key: 'desk', icon: '🖥️', label: 'Au poste' },
+  { key: 'moving', icon: '🚶', label: 'En chemin' },
+  { key: 'meeting', icon: '🗓️', label: 'Réunion' },
+  { key: 'chat', icon: '💬', label: 'Discussion' },
+  { key: 'coffee', icon: '☕', label: 'Café' },
+  { key: 'tv', icon: '📺', label: 'Lounge' },
+  { key: 'music', icon: '🎵', label: 'Musique' },
+  { key: 'read', icon: '📚', label: 'Biblio' },
+  { key: 'plant', icon: '🌱', label: 'Plantes' },
+  { key: 'window', icon: '📝', label: 'Tableau' },
+  { key: 'work', icon: '⚡', label: 'Tâche réelle' }
+];
+
+const SOURCE_LABEL: Record<StateSource, string> = {
+  d1: 'Cloudflare D1',
+  kv: 'Cloudflare KV',
+  local: 'navigateur',
+  none: 'non enregistré'
+};
+
+const GLASS = 'rounded-2xl border border-white/10 bg-slate-950/60 text-slate-100 shadow-2xl backdrop-blur-xl';
+const CHIP =
+  'rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-white/15';
+
+export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height }) => {
+  const blueprint = useMemo(() => buildOffice(), []);
+
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const simRef = useRef<OfficeSim | null>(null);
+  const sceneRef = useRef<{ assets: OfficeAssets; background: HTMLCanvasElement; furniture: FurnitureDraw[] } | null>(null);
+  const viewRef = useRef<View | null>(null);
+  // Au démarrage, on cadre le bâtiment ; le jardin et la route restent
+  // accessibles en dézoomant ou en faisant glisser la carte.
+  const cameraRef = useRef<Camera>({
+    x: (BUILDING.col + BUILDING.w / 2) * TILE,
+    y: (BUILDING.row + BUILDING.h / 2) * TILE,
+    zoom: 1
+  });
+  const fitPendingRef = useRef(true);
+  const followRef = useRef<string | null>(null);
+  const dragRef = useRef({ active: false, moved: 0, lastX: 0, lastY: 0 });
+  const optionsRef = useRef<RenderOptions>({ selectedId: null, hoveredId: null, showNames: true });
+
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [hud, setHud] = useState<Hud>({ feed: [], roster: [], census: {}, clock: 0 });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [followId, setFollowId] = useState<string | null>(null);
+  const [showNames, setShowNames] = useState(true);
+  const [idleEnabled, setIdleEnabled] = useState(true);
+  const [timeScale, setTimeScale] = useState(1);
+  const [zoomLabel, setZoomLabel] = useState(1);
+  const [uiVisible, setUiVisible] = useState(true);
+  const [feedOpen, setFeedOpen] = useState(true);
+
+  const [headcount, setHeadcount] = useState(0);
+  const [capacity, setCapacity] = useState(0);
+  const [stateSource, setStateSource] = useState<StateSource>('none');
+  const [lastSaveAt, setLastSaveAt] = useState<string | null>(null);
+
+  const [topicCount, setTopicCount] = useState(0);
+  const [topicModel, setTopicModel] = useState<string | null>(null);
+  const [topicBusy, setTopicBusy] = useState(false);
+
   const [realLogs, setRealLogs] = useState<RealAgentActivity[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [edgeTelemetry, setEdgeTelemetry] = useState<any>(null);
+  const [liveTestQuery, setLiveTestQuery] = useState('loom.com');
+  const [isExecutingLiveTest, setIsExecutingLiveTest] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
-  // Initialize Real Agents from localStorage
-  const refreshAgentsFromStore = () => {
-    try {
-      const stored = localStorage.getItem('omniventure_custom_agents_v4') || localStorage.getItem('omniventure_custom_agents_v3');
-      const customAgentsList = stored ? JSON.parse(stored) : [];
+  // Le masquage de l'UI vit sur <body> (il pilote aussi la nav de l'app).
+  useEffect(() => () => document.body.classList.remove('office-ui-hidden'), []);
 
-      const mapped: OfficeAgent[] = DEFAULT_AGENTS_LAYOUT.map(layout => {
-        const found = customAgentsList.find((c: any) => c.id === layout.id);
-        return {
-          id: layout.id,
-          name: found ? found.role.split(' ')[0] + ` (${layout.avatar})` : layout.name,
-          role: found ? found.role : layout.role,
-          avatar: layout.avatar,
-          color: layout.color,
-          modelId: found ? found.modelId : 'google/gemini-2.5-flash',
-          tier: (found?.tier as 1 | 2 | 3) || (layout.tier as 1 | 2 | 3),
-          deskX: layout.deskX,
-          deskY: layout.deskY,
-          currentX: layout.deskX,
-          currentY: layout.deskY,
-          status: 'idle',
-          currentBubble: null
+  const notify = useCallback((message: string) => {
+    setNotification(message);
+    window.setTimeout(() => setNotification(null), 4000);
+  }, []);
+
+  /* ── Simulation + boucle de rendu ────────────────────────── */
+  useEffect(() => {
+    const { map, seats, spots, blocked } = blueprint;
+    // Postes ET spots doivent rester praticables : un canapé ou une chaise de
+    // réunion est du mobilier bloquant, mais on doit pouvoir venir s'y asseoir.
+    const nav = buildNav(map, [...seats, ...spots], blocked);
+    const sim = new OfficeSim(map, nav, loadGraphProfiles(), seats, spots);
+    simRef.current = sim;
+    setHeadcount(sim.actors.length);
+    setCapacity(seats.length);
+
+    let cancelled = false;
+    let raf = 0;
+    let last = performance.now();
+
+    void loadSnapshot().then(({ snapshot, source }) => {
+      if (cancelled || !snapshot) return;
+      sim.restore(snapshot);
+      setStateSource(source);
+    });
+
+    void loadTopics().then((bank) => {
+      if (cancelled || !bank?.topics?.length) return;
+      sim.setTopics(bank.topics);
+      setTopicCount(bank.topics.length);
+      setTopicModel(bank.modelUsed);
+    });
+
+    loadOfficeAssets()
+      .then((assets) => {
+        if (cancelled) return;
+        sceneRef.current = {
+          assets,
+          background: bakeBackground(map, assets),
+          furniture: buildFurnitureDraws(map)
         };
+        setReady(true);
+
+        const loop = (now: number) => {
+          raf = requestAnimationFrame(loop);
+          const dt = (now - last) / 1000;
+          last = now;
+          sim.update(dt);
+
+          const canvas = canvasRef.current;
+          const scene = sceneRef.current;
+          if (!canvas || !scene) return;
+
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+          const height2 = Math.max(1, Math.round(canvas.clientHeight * dpr));
+          if (canvas.width !== width || canvas.height !== height2) {
+            canvas.width = width;
+            canvas.height = height2;
+            if (fitPendingRef.current) {
+              cameraRef.current.zoom = fitZoom(width, height2, map, BUILDING);
+              setZoomLabel(cameraRef.current.zoom / dpr);
+              fitPendingRef.current = false;
+            }
+          }
+
+          const followed = followRef.current ? sim.byId.get(followRef.current) : null;
+          if (followed) {
+            cameraRef.current.x += (followed.x - cameraRef.current.x) * 0.08;
+            cameraRef.current.y += (followed.y - cameraRef.current.y) * 0.08;
+          }
+          cameraRef.current = clampCamera(cameraRef.current, width, height2, map);
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          const view = computeView(width, height2, map, cameraRef.current);
+          viewRef.current = view;
+          renderFrame(ctx, view, sim, scene.assets, scene.background, scene.furniture, optionsRef.current);
+        };
+        raf = requestAnimationFrame(loop);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Chargement des sprites impossible');
       });
 
-      setAgents(mapped);
-    } catch {
-      // Fallback
-      setAgents(DEFAULT_AGENTS_LAYOUT.map(l => ({
-        ...l,
-        modelId: 'google/gemini-2.5-flash',
-        tier: l.tier as 1 | 2 | 3,
-        currentX: l.deskX,
-        currentY: l.deskY,
-        status: 'idle',
-        currentBubble: null
-      })));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      simRef.current = null;
+    };
+  }, [blueprint]);
+
+  /* ── Sauvegarde ──────────────────────────────────────────── */
+  useEffect(() => {
+    if (!ready) return;
+    let ticks = 0;
+
+    const persist = async (remote: boolean) => {
+      const sim = simRef.current;
+      if (!sim) return;
+      const source = await saveSnapshot(sim.snapshot(), remote);
+      setStateSource(source);
+      setLastSaveAt(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+    };
+
+    const id = window.setInterval(() => {
+      ticks += 1;
+      void persist(ticks % 9 === 0);
+    }, SAVE_INTERVAL_SEC * 1000);
+
+    const onHide = () => {
+      const sim = simRef.current;
+      if (sim && document.visibilityState === 'hidden') flushSnapshot(sim.snapshot());
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onHide);
+
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onHide);
+      const sim = simRef.current;
+      if (sim) flushSnapshot(sim.snapshot());
+    };
+  }, [ready]);
+
+  /* ── Rafraîchissement des panneaux ───────────────────────── */
+  useEffect(() => {
+    const tick = () => {
+      const sim = simRef.current;
+      if (!sim) return;
+      setHud({
+        feed: sim.events.slice(0, 16),
+        census: sim.census(),
+        clock: sim.clock,
+        roster: sim.actors.map((actor) => ({
+          id: actor.profile.id,
+          short: actor.profile.short,
+          role: actor.profile.role,
+          emoji: actor.profile.emoji,
+          accent: actor.profile.accent,
+          tier: actor.profile.tier,
+          level: actor.profile.level ?? 'expert',
+          department: actor.profile.department ?? '',
+          modelId: actor.profile.modelId,
+          senior: !!actor.profile.senior,
+          status: sim.statusOf(actor),
+          mode: actor.mode,
+          activity: actor.activity,
+          ritual: actor.ritual,
+          seatLabel: actor.seat.label ?? (actor.seat.kind === 'private' ? 'Bureau fermé' : `Open space ${actor.seat.room}`),
+          col: actor.col,
+          row: actor.row,
+          bubble: actor.bubble
+        }))
+      });
+    };
+    tick();
+    const id = window.setInterval(tick, 330);
+    return () => window.clearInterval(id);
+  }, [ready]);
+
+  /* ── Bus d'activités réelles ─────────────────────────────── */
+  useEffect(() => {
+    setRealLogs(getRealAgentLogs());
+
+    const onActivity = (event: Event) => {
+      const activity = (event as CustomEvent<RealAgentActivity>).detail;
+      if (!activity) return;
+      setRealLogs((prev) => [activity, ...prev.slice(0, 49)]);
+      simRef.current?.triggerRealTask(
+        activity.fromAgentId,
+        activity.toAgentId,
+        activity.bubbleText || activity.actionSummary,
+        activity.actionSummary
+      );
+    };
+    const onCleared = () => {
+      setRealLogs([]);
+      notify('Historique réel vidé.');
+    };
+
+    window.addEventListener('omniventure_real_agent_activity', onActivity);
+    window.addEventListener('omniventure_real_agent_activity_cleared', onCleared);
+    return () => {
+      window.removeEventListener('omniventure_real_agent_activity', onActivity);
+      window.removeEventListener('omniventure_real_agent_activity_cleared', onCleared);
+    };
+  }, [notify]);
+
+  /* ── Caméra & interaction ────────────────────────────────── */
+  const devicePoint = useCallback((event: { clientX: number; clientY: number }) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = canvas.width / Math.max(rect.width, 1);
+    return { x: (event.clientX - rect.left) * dpr, y: (event.clientY - rect.top) * dpr, dpr };
+  }, []);
+
+  const handlePointerDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    dragRef.current = { active: true, moved: 0, lastX: event.clientX, lastY: event.clientY };
+  }, []);
+
+  const handlePointerMove = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      const point = devicePoint(event);
+      const canvas = canvasRef.current;
+      const sim = simRef.current;
+      const view = viewRef.current;
+      if (!point || !canvas || !sim || !view) return;
+
+      const drag = dragRef.current;
+      if (drag.active) {
+        const dx = (event.clientX - drag.lastX) * point.dpr;
+        const dy = (event.clientY - drag.lastY) * point.dpr;
+        drag.moved += Math.abs(dx) + Math.abs(dy);
+        drag.lastX = event.clientX;
+        drag.lastY = event.clientY;
+        if (drag.moved > 3) {
+          followRef.current = null;
+          setFollowId(null);
+          cameraRef.current.x -= dx / view.zoom;
+          cameraRef.current.y -= dy / view.zoom;
+          canvas.style.cursor = 'grabbing';
+        }
+        return;
+      }
+
+      const world = screenToWorld(view, point.x, point.y);
+      const actor = sim.actorAt(world.x, world.y);
+      optionsRef.current.hoveredId = actor?.profile.id ?? null;
+      canvas.style.cursor = actor ? 'pointer' : 'grab';
+    },
+    [devicePoint]
+  );
+
+  const handlePointerUp = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      const drag = dragRef.current;
+      const wasClick = drag.active && drag.moved <= 3;
+      drag.active = false;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = 'grab';
+      if (!wasClick) return;
+
+      const point = devicePoint(event);
+      const sim = simRef.current;
+      const view = viewRef.current;
+      if (!point || !sim || !view) return;
+      const world = screenToWorld(view, point.x, point.y);
+      const actor = sim.actorAt(world.x, world.y);
+      const id = actor?.profile.id ?? null;
+      optionsRef.current.selectedId = id;
+      setSelectedId(id);
+    },
+    [devicePoint]
+  );
+
+  const handleWheel = useCallback(
+    (event: React.WheelEvent<HTMLCanvasElement>) => {
+      const point = devicePoint(event);
+      const view = viewRef.current;
+      const canvas = canvasRef.current;
+      if (!point || !view || !canvas) return;
+      const before = screenToWorld(view, point.x, point.y);
+      const factor = event.deltaY < 0 ? 1.18 : 1 / 1.18;
+      cameraRef.current.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cameraRef.current.zoom * factor));
+      const next = computeView(canvas.width, canvas.height, blueprint.map, cameraRef.current);
+      const after = screenToWorld(next, point.x, point.y);
+      cameraRef.current.x += before.x - after.x;
+      cameraRef.current.y += before.y - after.y;
+      setZoomLabel(cameraRef.current.zoom / point.dpr);
+    },
+    [blueprint.map, devicePoint]
+  );
+
+  const nudgeZoom = (factor: number) => {
+    const canvas = canvasRef.current;
+    const dpr = canvas ? canvas.width / Math.max(canvas.clientWidth, 1) : 1;
+    cameraRef.current.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cameraRef.current.zoom * factor));
+    setZoomLabel(cameraRef.current.zoom / dpr);
+  };
+
+  /** Alterne entre le cadrage du bâtiment et celui de la parcelle entière. */
+  const fitAll = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const buildingZoom = fitZoom(canvas.width, canvas.height, blueprint.map, BUILDING);
+    const wide = Math.abs(cameraRef.current.zoom - buildingZoom) < 0.02;
+    cameraRef.current.zoom = wide ? fitZoom(canvas.width, canvas.height, blueprint.map) : buildingZoom;
+    cameraRef.current.x = wide
+      ? (blueprint.map.cols * TILE) / 2
+      : (BUILDING.col + BUILDING.w / 2) * TILE;
+    cameraRef.current.y = wide
+      ? (blueprint.map.rows * TILE) / 2
+      : (BUILDING.row + BUILDING.h / 2) * TILE;
+    followRef.current = null;
+    setFollowId(null);
+    setZoomLabel(cameraRef.current.zoom / (canvas.width / Math.max(canvas.clientWidth, 1)));
+  };
+
+  const focusAgent = (id: string) => {
+    const actor = simRef.current?.byId.get(id);
+    if (!actor) return;
+    optionsRef.current.selectedId = id;
+    setSelectedId(id);
+    followRef.current = id;
+    setFollowId(id);
+    cameraRef.current.zoom = Math.max(cameraRef.current.zoom, 2);
+    cameraRef.current.x = actor.x;
+    cameraRef.current.y = actor.y;
+  };
+
+  const toggleNames = () => {
+    const next = !showNames;
+    setShowNames(next);
+    optionsRef.current.showNames = next;
+  };
+
+  const toggleIdle = () => {
+    const next = !idleEnabled;
+    setIdleEnabled(next);
+    if (simRef.current) simRef.current.idleEnabled = next;
+  };
+
+  const applyTimeScale = (scale: number) => {
+    setTimeScale(scale);
+    if (simRef.current) simRef.current.timeScale = scale;
+  };
+
+  const toggleFullscreen = () => {
+    const node = wrapRef.current;
+    if (!node) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void node.requestFullscreen?.();
+  };
+
+  /* ── Banque de conversations ─────────────────────────────── */
+  const handleGenerateTopics = async () => {
+    setTopicBusy(true);
+    try {
+      const context = [
+        `Agence OmniVenture — ${headcount} agents autonomes sur un plateau de ${capacity} postes.`,
+        `Mission : ${initialMissionName ?? 'orchestration multi-agents'}.`,
+        `Agents : ${hud.roster.map((entry) => `${entry.short} (${entry.role})`).join(', ')}.`,
+        'Modèle : essai 0,50 € pendant 48 h puis 29 €/mois, déploiement Cloudflare Edge.',
+        realLogs.length > 0 ? `Dernières activités : ${realLogs.slice(0, 5).map((l) => l.actionSummary).join(' | ')}.` : ''
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const result = await generateTopics({ model: 'deepseek/deepseek-v4-flash', count: 360, context });
+      simRef.current?.setTopics(result.topics);
+      setTopicCount(result.topics.length);
+      setTopicModel(result.modelUsed);
+      notify(`${result.count} sujets générés avec ${result.modelUsed}.`);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Génération impossible');
+    } finally {
+      setTopicBusy(false);
     }
   };
 
-  // Fetch Edge Telemetry
-  const fetchTelemetry = async () => {
+  /* ── Tâche réelle ────────────────────────────────────────── */
+  const handleExecuteLiveTask = async (event?: React.FormEvent) => {
+    if (event) event.preventDefault();
+    if (!liveTestQuery.trim()) return;
+
+    setIsExecutingLiveTest(true);
     try {
-      const res = await fetch('/api/agents/telemetry');
-      if (res.ok) {
-        const json = await res.json();
-        setEdgeTelemetry(json);
-      }
-    } catch {}
-  };
+      const storedKey = localStorage.getItem('omniventure_openrouter_key') || undefined;
 
-  // Animate a real activity
-  const triggerRealActivityAnimation = (activity: RealAgentActivity) => {
-    setAgents(prev => {
-      const fromAgent = prev.find(a => a.id === activity.fromAgentId) || prev[0];
-      const toAgent = prev.find(a => a.id === activity.toAgentId) || prev[1];
-
-      return prev.map(a => {
-        if (a.id === fromAgent.id) {
-          const midX = (fromAgent.deskX + toAgent.deskX) / 2;
-          const midY = (fromAgent.deskY + toAgent.deskY) / 2;
-          return {
-            ...a,
-            currentX: midX,
-            currentY: midY,
-            status: 'walking',
-            currentBubble: activity.bubbleText || activity.actionSummary
-          };
-        }
-        if (a.id === toAgent.id) {
-          return {
-            ...a,
-            status: 'working',
-            currentBubble: `⚡ Reçu de ${fromAgent.name.split(' ')[0]}`
-          };
-        }
-        return a;
+      saveRealAgentLog({
+        fromAgentId: 'market_agent',
+        fromAgentName: 'Alex (Orchestrateur Veille)',
+        toAgentId: 'market_scraper_agent',
+        toAgentName: 'Sam (Scraper Web)',
+        actionSummary: `Inspection réelle de "${liveTestQuery}"`,
+        bubbleText: `🕷️ Crawl des tarifs de "${liveTestQuery}"`,
+        payloadSummary: JSON.stringify({ target: liveTestQuery }),
+        costUsd: 0.00005,
+        modelUsed: 'google/gemini-2.5-flash'
       });
-    });
 
-    // Return to desk after 2.5s
-    setTimeout(() => {
-      setAgents(prev => prev.map(a => ({
-        ...a,
-        currentX: a.deskX,
-        currentY: a.deskY,
-        status: 'idle',
-        currentBubble: null
-      })));
-    }, 2500);
+      const res = await fetch('/api/market/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: liveTestQuery.trim(),
+          searchType: 'domain',
+          openRouterKey: storedKey,
+          model: 'google/gemini-2.5-flash'
+        })
+      });
+
+      if (res.ok) {
+        const json = (await res.json()) as any;
+        if (json?.data) {
+          saveRealAgentLog({
+            fromAgentId: 'market_scraper_agent',
+            fromAgentName: 'Sam (Scraper Web)',
+            toAgentId: 'master',
+            toAgentName: 'Victoria (CEO)',
+            actionSummary: `Données réelles extraites pour "${json.data.name}" (${json.source})`,
+            bubbleText: `🎯 Tarifs : ${json.data.pricing}`,
+            payloadSummary: JSON.stringify({ exploit: json.data.pricingExploit }),
+            costUsd: json.source === 'openrouter_live' ? 0.00025 : 0.00008,
+            modelUsed: json.modelUsed || 'google/gemini-2.5-flash'
+          });
+          notify(`Tâche réelle exécutée pour "${liveTestQuery}".`);
+        }
+      }
+    } catch {
+      notify("Erreur lors de l'exécution réelle.");
+    } finally {
+      setIsExecutingLiveTest(false);
+    }
   };
 
-  useEffect(() => {
-    refreshAgentsFromStore();
-    setRealLogs(getRealAgentLogs());
-    fetchTelemetry();
-
-    // Listen to real activity broadcast
-    const handleNewActivity = (e: any) => {
-      const activity: RealAgentActivity = e.detail;
-      if (activity) {
-        setRealLogs(prev => [activity, ...prev.slice(0, 49)]);
-        triggerRealActivityAnimation(activity);
-      }
-    };
-
-    const handleCleared = () => {
-      setRealLogs([]);
-      setNotification('Historique réel vidé.');
-      setTimeout(() => setNotification(null), 2500);
-    };
-
-    window.addEventListener('omniventure_real_agent_activity', handleNewActivity);
-    window.addEventListener('omniventure_real_agent_activity_cleared', handleCleared);
-
-    return () => {
-      window.removeEventListener('omniventure_real_agent_activity', handleNewActivity);
-      window.removeEventListener('omniventure_real_agent_activity_cleared', handleCleared);
-    };
-  }, []);
-
-  const selectedAgent = agents.find(a => a.id === selectedAgentId);
+  const selected = hud.roster.find((entry) => entry.id === selectedId) ?? null;
+  const simHours = Math.floor(hud.clock / 3600);
+  const simMinutes = Math.floor((hud.clock % 3600) / 60);
 
   return (
-    <div className="space-y-4">
-      {/* Toast Notification */}
-      {notification && (
-        <div className="fixed bottom-5 right-5 z-50 px-4 py-3 bg-slate-900 text-white rounded-lg shadow-lg text-xs flex items-center gap-2">
-          <span>✓</span>
-          <span>{notification}</span>
+    <div
+      ref={wrapRef}
+      className={`relative w-full overflow-hidden bg-slate-950 ${
+        height === '100%' ? '' : 'rounded-2xl border border-slate-800'
+      }`}
+      style={{ height: height ?? 'clamp(520px, 78vh, 980px)' }}
+    >
+      <canvas
+        ref={canvasRef}
+        onMouseDown={handlePointerDown}
+        onMouseMove={handlePointerMove}
+        onMouseUp={handlePointerUp}
+        onMouseLeave={() => {
+          dragRef.current.active = false;
+          optionsRef.current.hoveredId = null;
+        }}
+        onWheel={handleWheel}
+        className="absolute inset-0 h-full w-full"
+        style={{ imageRendering: 'pixelated', cursor: 'grab' }}
+      />
+
+      {!ready && !loadError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-slate-400">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+          <span className="font-mono">Ouverture des locaux…</span>
+        </div>
+      )}
+      {loadError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-6 text-center text-xs text-rose-300">
+          <span className="font-semibold">Sprites indisponibles</span>
+          <span className="font-mono text-[11px] text-slate-400">{loadError}</span>
         </div>
       )}
 
-      {/* Real Live Top Control Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs">
-            <span className={`w-2.5 h-2.5 rounded-full ${edgeTelemetry?.edgeStatus === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-indigo-500'}`}></span>
-            <span className="font-bold text-slate-900">État Réel : </span>
-            <span className="text-slate-600 font-mono">
-              {edgeTelemetry ? `Cloudflare Edge En Ligne (Loop 30s) • ${agents.length} Agents Actifs` : 'Prêt'}
-            </span>
+      {/* Bouton toujours visible pour masquer/afficher l'interface */}
+      <button
+        type="button"
+        onClick={() => {
+          setUiVisible((value) => {
+            // La navigation de l'application se masque avec le reste de l'UI.
+            document.body.classList.toggle('office-ui-hidden', value);
+            return !value;
+          });
+        }}
+        title={uiVisible ? "Masquer l'interface (ne voir que le bureau)" : "Afficher l'interface"}
+        className={`absolute right-3 top-3 z-30 ${CHIP} ${uiVisible ? '' : 'bg-slate-950/70 backdrop-blur-xl'}`}
+        style={selected && uiVisible ? { right: 'calc(min(92vw, 390px) + 1.5rem)' } : undefined}
+      >
+        {uiVisible ? '👁️ Masquer l’UI' : '👁️ Afficher l’UI'}
+      </button>
+
+      {/* ── Calque d'interface, en transparence sur le bureau ── */}
+      {uiVisible && (
+        <div className="office-ui-layer pointer-events-none absolute inset-0 z-20">
+          {/* Bandeau d'état */}
+          <div className={`pointer-events-auto absolute left-3 top-3 max-w-[52%] px-3.5 py-2.5 ${GLASS}`}>
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                <strong className="text-[12px] text-white">{initialMissionName ?? 'Agence OmniVenture'}</strong>
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="font-mono text-slate-300">
+                {headcount} agents / {capacity} postes
+              </span>
+              <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+                animation locale · 0 token
+              </span>
+              <span className="font-mono text-[10px] text-slate-400">
+                journée simulée {simHours} h {String(simMinutes).padStart(2, '0')}
+              </span>
+              <span className="font-mono text-[10px] text-slate-500">
+                état : {SOURCE_LABEL[stateSource]}
+                {lastSaveAt ? ` · ${lastSaveAt}` : ''}
+              </span>
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {CENSUS_LABELS.filter((item) => (hud.census[item.key] ?? 0) > 0).map((item) => (
+                <span
+                  key={item.key}
+                  className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300"
+                  title={item.label}
+                >
+                  <span>{item.icon}</span>
+                  <span className="font-mono font-semibold text-white">{hud.census[item.key]}</span>
+                  <span className="hidden sm:inline">{item.label}</span>
+                </span>
+              ))}
+            </div>
           </div>
 
-          <span className="text-slate-300">|</span>
-
-          <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded font-mono font-semibold">
-            {realLogs.length} Activités Réelles Enregistrées
-          </span>
-        </div>
-
-        {realLogs.length > 0 && (
-          <button
-            type="button"
-            onClick={clearRealAgentLogs}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-slate-50 text-xs font-medium transition-colors"
-            title="Vider l'historique des activités réelles"
-          >
-            Vider l'historique
-          </button>
-        )}
-      </div>
-
-      {/* 2D VIRTUAL OFFICE FLOOR CANVAS (REAL STATE) */}
-      <div className="relative w-full h-[440px] bg-slate-100 rounded-2xl border border-slate-300 overflow-hidden shadow-inner select-none">
-        
-        {/* Floor Pattern */}
-        <div className="absolute inset-0 opacity-40 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:16px_16px]"></div>
-
-        {/* Zone 1: Veille & Recherche de Marché */}
-        <div className="absolute left-4 top-4 w-[28%] h-[88%] border-2 border-dashed border-amber-300/80 rounded-xl bg-amber-50/40 p-2.5 pointer-events-none">
-          <span className="text-[10px] font-mono font-bold text-amber-800 uppercase tracking-wider block">
-            Zone 1 : Veille & Recherche
-          </span>
-          <div className="absolute top-[20%] left-[20%] w-16 h-10 bg-amber-200/70 border border-amber-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-amber-900">
-            Poste Veille
-          </div>
-          <div className="absolute bottom-[20%] left-[20%] w-16 h-10 bg-orange-200/70 border border-orange-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-orange-900">
-            Poste Scraper
-          </div>
-        </div>
-
-        {/* Zone 2: Cerveau & Architecture */}
-        <div className="absolute left-[35%] top-4 w-[28%] h-[88%] border-2 border-dashed border-purple-300/80 rounded-xl bg-purple-50/40 p-2.5 pointer-events-none">
-          <span className="text-[10px] font-mono font-bold text-purple-800 uppercase tracking-wider block">
-            Zone 2 : Stratégie & Architecture
-          </span>
-          <div className="absolute top-[20%] left-[20%] w-20 h-10 bg-purple-200/70 border border-purple-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-purple-900">
-            Poste Cerveau
-          </div>
-          <div className="absolute bottom-[20%] left-[20%] w-20 h-10 bg-indigo-200/70 border border-indigo-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-indigo-900">
-            Poste Architecte
-          </div>
-        </div>
-
-        {/* Zone 3: Ingénierie & Recette QA */}
-        <div className="absolute right-4 top-4 w-[28%] h-[88%] border-2 border-dashed border-blue-300/80 rounded-xl bg-blue-50/40 p-2.5 pointer-events-none">
-          <span className="text-[10px] font-mono font-bold text-blue-800 uppercase tracking-wider block">
-            Zone 3 : Ingénierie & Canary
-          </span>
-          <div className="absolute top-[20%] right-[20%] w-16 h-10 bg-blue-200/70 border border-blue-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-blue-900">
-            Worker Dev
-          </div>
-          <div className="absolute bottom-[20%] right-[20%] w-16 h-10 bg-teal-200/70 border border-teal-300 rounded shadow-xs flex items-center justify-center text-[9px] font-mono text-teal-900">
-            Labo Recette
-          </div>
-        </div>
-
-        {/* Central Meeting Hub */}
-        <div className="absolute left-[46%] top-[46%] w-14 h-10 bg-slate-200 border border-slate-300 rounded-full flex items-center justify-center text-[10px] shadow-xs pointer-events-none font-mono text-slate-600">
-          ☕ Hub
-        </div>
-
-        {/* REAL 2D AGENTS WITH GENUINE STATUS & SPEECH BUBBLES */}
-        {agents.map(agent => (
+          {/* Contrôles */}
           <div
-            key={agent.id}
-            onClick={() => setSelectedAgentId(agent.id)}
-            style={{
-              left: `${agent.currentX}%`,
-              top: `${agent.currentY}%`,
-              transform: 'translate(-50%, -50%)',
-              transition: 'left 1.4s cubic-bezier(0.4, 0, 0.2, 1), top 1.4s cubic-bezier(0.4, 0, 0.2, 1)'
-            }}
-            className="absolute z-20 flex flex-col items-center cursor-pointer group"
+            className={`pointer-events-auto absolute top-14 flex flex-col items-end gap-1.5`}
+            style={{ right: selected ? 'calc(min(92vw, 390px) + 1.5rem)' : '0.75rem' }}
           >
-            
-            {/* SPEECH BUBBLE OVER AGENT HEAD (REAL ACTIONS ONLY) */}
-            {agent.currentBubble && (
-              <div className="absolute -top-12 z-30 max-w-[200px] bg-white border border-slate-800 text-slate-900 text-[11px] font-medium px-2.5 py-1.5 rounded-xl shadow-xl leading-tight text-center animate-bounce">
-                <span className="block font-bold text-[9px] text-indigo-600 font-mono">{agent.name}</span>
-                <span>{agent.currentBubble}</span>
-                <div className="w-2 h-2 bg-white border-r border-b border-slate-800 transform rotate-45 mx-auto -mb-2.5 mt-0.5"></div>
+            <div className={`flex items-center gap-1 px-1.5 py-1 ${GLASS}`}>
+              <button type="button" onClick={() => nudgeZoom(1 / 1.3)} className={CHIP}>
+                −
+              </button>
+              <span className="px-1 font-mono text-[10px] text-slate-300">{zoomLabel.toFixed(2)}×</span>
+              <button type="button" onClick={() => nudgeZoom(1.3)} className={CHIP}>
+                +
+              </button>
+              <button type="button" onClick={fitAll} className={CHIP}>
+                Vue d’ensemble
+              </button>
+            </div>
+
+            <div className={`flex items-center gap-1 px-1.5 py-1 ${GLASS}`}>
+              <span className="px-1 text-[10px] text-slate-400">Temps</span>
+              {TIME_SCALES.map((scale) => (
+                <button
+                  key={scale}
+                  type="button"
+                  onClick={() => applyTimeScale(scale)}
+                  title={scale === 1 ? 'Temps réel' : `Accéléré ×${scale}`}
+                  className={`rounded-lg px-2 py-1 text-[11px] font-semibold transition-colors ${
+                    timeScale === scale ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:bg-white/10'
+                  }`}
+                >
+                  ×{scale}
+                </button>
+              ))}
+            </div>
+
+            <div className={`flex items-center gap-1 px-1.5 py-1 ${GLASS}`}>
+              <button
+                type="button"
+                onClick={toggleIdle}
+                className={`${CHIP} ${idleEnabled ? 'border-emerald-400/30 bg-emerald-400/15 text-emerald-200' : ''}`}
+              >
+                {idleEnabled ? '● Vie du bureau' : '○ Vie en pause'}
+              </button>
+              <button type="button" onClick={toggleNames} className={CHIP}>
+                {showNames ? 'Noms visibles' : 'Noms masqués'}
+              </button>
+              <button type="button" onClick={toggleFullscreen} className={CHIP}>
+                ⛶
+              </button>
+            </div>
+
+            {followId && (
+              <button
+                type="button"
+                onClick={() => {
+                  followRef.current = null;
+                  setFollowId(null);
+                }}
+                className={`${CHIP} border-amber-400/30 bg-amber-400/15 text-amber-200`}
+              >
+                🎥 Suivi actif — arrêter
+              </button>
+            )}
+          </div>
+
+          {/* Journal de vie */}
+          <div className={`pointer-events-auto absolute bottom-3 left-3 w-[min(92vw,360px)] ${GLASS}`}>
+            <button
+              type="button"
+              onClick={() => setFeedOpen((value) => !value)}
+              className="flex w-full items-center justify-between px-3.5 py-2 text-[11px] font-semibold text-slate-200"
+            >
+              <span className="flex items-center gap-1.5">
+                <span>🏢</span>
+                <span>Vie de l’agence</span>
+                <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 font-mono text-[9px] text-emerald-300">
+                  0 token
+                </span>
+              </span>
+              <span className="text-slate-400">{feedOpen ? '▾' : '▸'}</span>
+            </button>
+            {feedOpen && (
+              <div className="max-h-44 space-y-1 overflow-y-auto border-t border-white/10 px-3.5 py-2 font-mono text-[10.5px] text-slate-300">
+                {hud.feed.length > 0 ? (
+                  hud.feed.map((event) => (
+                    <div key={event.id} className="flex gap-2">
+                      <span className="text-slate-500">{event.at}</span>
+                      <span className={event.tone === 'real' ? 'text-indigo-300' : 'text-slate-300'}>{event.text}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="py-2 italic text-slate-500">Tout le monde est au travail.</p>
+                )}
               </div>
             )}
-
-            {/* 2D Character Avatar */}
-            <div className={`w-11 h-11 rounded-full ${agent.color} text-white flex items-center justify-center text-xl shadow-md border-2 ${
-              selectedAgentId === agent.id ? 'border-amber-400 ring-2 ring-amber-400' : 'border-white'
-            } transition-transform group-hover:scale-110 ${
-              agent.status === 'walking' ? 'animate-pulse' : ''
-            }`}>
-              {agent.avatar}
-            </div>
-
-            {/* Name Tag & Model Badge */}
-            <div className="bg-slate-900/85 backdrop-blur-xs text-white text-[9px] font-mono px-1.5 py-0.2 rounded-full mt-1 whitespace-nowrap shadow-xs flex items-center gap-1">
-              <span>{agent.name.split(' ')[0]}</span>
-              <span className="text-[8px] text-slate-400">N{agent.tier}</span>
-            </div>
-
-          </div>
-        ))}
-
-      </div>
-
-      {/* Selected Agent Quick Inspector */}
-      {selectedAgent && (
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">{selectedAgent.avatar}</span>
-            <div>
-              <div className="flex items-center gap-2">
-                <strong className="text-slate-900 font-bold">{selectedAgent.role}</strong>
-                <span className="px-2 py-0.2 rounded bg-indigo-50 text-indigo-700 font-mono text-[10px] font-semibold">
-                  Niveau {selectedAgent.tier}
-                </span>
-              </div>
-              <span className="text-slate-500 font-mono text-[11px]">{selectedAgent.modelId}</span>
-            </div>
+            <p className="border-t border-white/10 px-3.5 py-1.5 font-mono text-[9.5px] text-slate-500">
+              molette : zoom · glisser : déplacer · clic sur un agent : ouvrir sa fiche
+            </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <a
-              href="/agents"
-              className="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium transition-colors"
-            >
-              Éditer Ame.md & Job.md
-            </a>
+          {/* Actions & flux réel */}
+          <div
+            className={`pointer-events-auto absolute bottom-3 w-[min(92vw,380px)] ${GLASS}`}
+            style={{ right: selected ? 'calc(min(92vw, 390px) + 1.5rem)' : '0.75rem' }}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 px-3.5 py-2 text-[11px] font-semibold text-slate-200">
+              <span className="flex items-center gap-1.5">
+                <span>📡</span>
+                <span>Flux réel</span>
+              </span>
+              <span className="font-mono text-[10px] text-slate-400">{realLogs.length} événements</span>
+            </div>
+
+            <div className="max-h-32 space-y-1 overflow-y-auto px-3.5 py-2 font-mono text-[10.5px]">
+              {realLogs.length > 0 ? (
+                realLogs.slice(0, 12).map((log) => (
+                  <div key={log.id} className="flex justify-between gap-2">
+                    <span className="truncate">
+                      <span className="text-indigo-300">{log.fromAgentName.split(' ')[0]}</span>
+                      <span className="mx-1 text-slate-500">→</span>
+                      <span className="text-emerald-300">{log.toAgentName.split(' ')[0]}</span>
+                      <span className="ml-1 text-slate-300">{log.actionSummary}</span>
+                    </span>
+                    <span className="shrink-0 text-emerald-400">${log.costUsd.toFixed(5)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="py-1 italic text-slate-500">Aucune activité réelle enregistrée.</p>
+              )}
+            </div>
+
+            <form onSubmit={handleExecuteLiveTask} className="flex items-center gap-1.5 border-t border-white/10 p-2">
+              <input
+                type="text"
+                value={liveTestQuery}
+                onChange={(event) => setLiveTestQuery(event.target.value)}
+                placeholder="loom.com…"
+                className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 font-mono text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isExecutingLiveTest || !liveTestQuery.trim()}
+                className="rounded-lg bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-400 disabled:opacity-40"
+              >
+                {isExecutingLiveTest ? '…' : '⚡ Tâche réelle'}
+              </button>
+              {realLogs.length > 0 && (
+                <button type="button" onClick={clearRealAgentLogs} className={CHIP} title="Vider le flux">
+                  ✕
+                </button>
+              )}
+            </form>
+
+            <div className="flex items-center justify-between gap-2 border-t border-white/10 px-3.5 py-2">
+              <span className="text-[10px] text-slate-400">
+                {topicCount > 0 ? `${topicCount} sujets en banque` : 'banque de sujets par défaut'}
+                {topicModel ? ` · ${topicModel}` : ''}
+              </span>
+              <button type="button" onClick={handleGenerateTopics} disabled={topicBusy} className={CHIP}>
+                {topicBusy ? 'Génération…' : '🗣️ Générer les sujets'}
+              </button>
+            </div>
           </div>
+
+          {/* Aide */}
         </div>
       )}
 
-      {/* REAL MESSAGES STREAM (0 FAKE DATA) */}
-      <div className="space-y-2 pt-1">
-        <div className="flex items-center justify-between text-xs text-slate-700">
-          <span className="font-bold flex items-center gap-1.5">
-            <span>📡</span>
-            <span>Flux Réel des Activités & Échanges de Tâches</span>
-          </span>
-          <span className="text-slate-400 font-mono text-[11px]">
-            {realLogs.length} événements réels
-          </span>
+      {/* ── Fiche agent ── */}
+      {selected && (
+        <div className="absolute bottom-3 right-3 top-3 z-40 flex">
+          <AgentPanel
+            agent={selected}
+            onClose={() => {
+              optionsRef.current.selectedId = null;
+              setSelectedId(null);
+            }}
+            onFollow={() => focusAgent(selected.id)}
+            onSpeak={(text) => simRef.current?.speak(selected.id, text, 10)}
+          />
         </div>
+      )}
 
-        <div className="p-4 bg-slate-900 rounded-xl font-mono text-xs text-slate-200 space-y-2 max-h-48 overflow-y-auto shadow-inner">
-          {realLogs.length > 0 ? (
-            realLogs.map((log) => (
-              <div key={log.id} className="flex items-start justify-between gap-3 text-[11px] border-b border-slate-800/80 pb-1.5">
-                <div>
-                  <span className="text-slate-500 mr-2">[{log.timestamp}]</span>
-                  <strong className="text-indigo-400">{log.fromAgentName}</strong>
-                  <span className="text-slate-400 mx-1">➔</span>
-                  <strong className="text-emerald-400">{log.toAgentName} : </strong>
-                  <span className="text-slate-200">{log.actionSummary}</span>
-                </div>
-                <div className="text-right text-slate-400 whitespace-nowrap text-[10px]">
-                  {log.modelUsed && <span className="text-slate-400 mr-2">({log.modelUsed})</span>}
-                  <span className="text-emerald-400">${log.costUsd.toFixed(5)}</span>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-slate-500 italic text-center py-4 space-y-1">
-              <div>Aucune activité réelle enregistrée pour l'instant.</div>
-              <div className="text-[11px] text-slate-600">
-                Lancez une analyse dans <a href="/market" className="text-indigo-400 underline">Analyse Concurrents</a> ou cliquez sur <strong>"Déclencher Tâche Réelle"</strong> ci-dessus.
-              </div>
-            </div>
-          )}
+      {notification && (
+        <div className="absolute bottom-16 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900/90 px-4 py-2 text-xs text-white shadow-lg backdrop-blur">
+          {notification}
         </div>
-      </div>
-
+      )}
     </div>
   );
 };

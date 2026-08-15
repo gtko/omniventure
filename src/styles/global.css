@@ -10,3 +10,111 @@
     margin: 0;
   }
 }
+
+/* ------------------------------------------------------------------
+   MODE IMMERSIF (page /office)
+
+   Le bureau occupe tout l'écran et sert d'interface : la navigation de
+   l'application doit donc passer en verre sombre au lieu de rester blanche.
+   On ne réécrit pas SidebarNav (utilisée par toutes les autres pages, en
+   thème clair) : on remappe ici ses classes utilitaires, uniquement sous
+   `.office-immersive`.
+   ------------------------------------------------------------------ */
+
+.office-immersive {
+  background-color: #020617;
+  color: #e2e8f0;
+}
+
+/* La nav sort du flux et flotte AU-DESSUS du bureau : sans plateau derrière
+   elle, un backdrop-filter n'aurait rien à flouter et rendrait un aplat. */
+.office-immersive .app-nav {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 30;
+  background-color: rgba(2, 6, 23, 0.42);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border-right-color: rgba(255, 255, 255, 0.1);
+  transition: opacity 0.25s ease;
+}
+
+/* Le calque d'interface du bureau démarre après la nav pour ne pas passer dessous. */
+.office-immersive .office-ui-layer {
+  left: 16rem;
+}
+
+/* « Masquer l'UI » : on ne garde que le bureau. */
+.office-immersive.office-ui-hidden .app-nav {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Surfaces claires -> voiles blancs très légers */
+.office-immersive .app-nav .bg-white,
+.office-immersive .app-nav .bg-slate-50,
+.office-immersive .app-nav .bg-slate-50\/70,
+.office-immersive .app-nav .bg-slate-100 {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.office-immersive .app-nav .bg-amber-50\/70 {
+  background-color: rgba(251, 191, 36, 0.1);
+}
+
+/* Bordures */
+.office-immersive .app-nav .border-slate-100,
+.office-immersive .app-nav .border-slate-200,
+.office-immersive .app-nav .border-slate-300 {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.office-immersive .app-nav .border-amber-200 {
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+/* Textes */
+.office-immersive .app-nav .text-slate-900 {
+  color: #e2e8f0;
+}
+
+.office-immersive .app-nav .text-slate-700,
+.office-immersive .app-nav .text-slate-600 {
+  color: #cbd5e1;
+}
+
+.office-immersive .app-nav .text-slate-500,
+.office-immersive .app-nav .text-slate-400 {
+  color: #94a3b8;
+}
+
+.office-immersive .app-nav .text-amber-900,
+.office-immersive .app-nav .text-amber-800 {
+  color: #fcd34d;
+}
+
+/* États de survol et lien actif */
+.office-immersive .app-nav .hover\:bg-slate-50:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.office-immersive .app-nav .hover\:text-slate-900:hover {
+  color: #f8fafc;
+}
+
+.office-immersive .app-nav .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.18);
+}
+
+.office-immersive .app-nav .text-indigo-700 {
+  color: #a5b4fc;
+}
+
+/* Boutons et champs */
+.office-immersive .app-nav button,
+.office-immersive .app-nav select,
+.office-immersive .app-nav input {
+  color: inherit;
+}

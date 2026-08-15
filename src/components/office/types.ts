@@ -61,6 +61,12 @@ export interface Placed {
   type: string;
   col: number;
   row: number;
+  /**
+   * Rotation de teinte en degrés appliquée au sprite. Le pack d'assets est
+   * volontairement compact : décaler la teinte donne des canapés, chaises et
+   * bureaux de couleurs différentes à partir du même PNG.
+   */
+  hue?: number;
 }
 
 export interface OfficeMap {
@@ -71,6 +77,8 @@ export interface OfficeMap {
   /** Teinte par tuile (parallèle à tiles), null = teinte neutre. */
   tints: Array<Tint | null>;
   furniture: Placed[];
-  /** Étiquettes de zones dessinées sur le sol. */
-  zones: Array<{ label: string; col: number; row: number; w: number; h: number; ink: string }>;
+  /** Plaques de salle posées sur le sol : col/row = centre, en tuiles. */
+  zones: Array<{ label: string; col: number; row: number; ink: string }>;
+  /** Aplats peints sur le sol (marquage routier), en pixels monde. */
+  overlays?: Array<{ x: number; y: number; w: number; h: number; color: string }>;
 }

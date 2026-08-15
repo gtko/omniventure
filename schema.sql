@@ -89,6 +89,41 @@ CREATE TABLE IF NOT EXISTS media_assets (
     FOREIGN KEY(venture_id) REFERENCES ventures(id) ON DELETE CASCADE
 );
 
+-- ── Bureau virtuel 2D ──────────────────────────────────────────────
+-- Position et état de chaque collaborateur, pour reprendre la simulation
+-- exactement là où elle s'était arrêtée.
+CREATE TABLE IF NOT EXISTS office_agents (
+    agent_id TEXT PRIMARY KEY,
+    col INTEGER NOT NULL,
+    row INTEGER NOT NULL,
+    dir INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    activity TEXT NOT NULL,
+    spot_id TEXT,
+    until_at REAL DEFAULT 0,
+    decide_at REAL DEFAULT 0,
+    partner_id TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Horloge de simulation partagée.
+CREATE TABLE IF NOT EXISTS office_runtime (
+    id TEXT PRIMARY KEY,
+    clock REAL NOT NULL,
+    saved_at INTEGER NOT NULL,
+    agent_count INTEGER DEFAULT 0
+);
+
+-- Banque de sujets de conversation pré-générée (DeepSeek via OpenRouter).
+-- Générée une fois, rejouée localement : aucun token pendant l'animation.
+CREATE TABLE IF NOT EXISTS office_topics (
+    id TEXT PRIMARY KEY,
+    topic TEXT NOT NULL,
+    theme TEXT,
+    model_used TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS api_vault (
     id TEXT PRIMARY KEY,
     service_name TEXT UNIQUE NOT NULL,

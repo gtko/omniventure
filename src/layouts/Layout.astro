@@ -6,12 +6,15 @@ interface Props {
   title: string;
   description?: string;
   currentPath?: string;
+  /** Page pleine hauteur sans marges ni pied de page (bureau virtuel). */
+  fullBleed?: boolean;
 }
 
-const { 
-  title, 
-  description = "OmniVenture AI - Autonomous Money Factory on Cloudflare", 
-  currentPath = '/' 
+const {
+  title,
+  description = "OmniVenture AI - Autonomous Money Factory on Cloudflare",
+  currentPath = '/',
+  fullBleed = false
 } = Astro.props;
 ---
 
@@ -31,21 +34,28 @@ const {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
-  <body class="h-full bg-slate-50 text-slate-900 flex font-sans antialiased overflow-hidden">
+  <body
+    class:list={[
+      'h-full text-slate-900 flex font-sans antialiased overflow-hidden',
+      fullBleed ? 'office-immersive bg-slate-950' : 'bg-slate-50'
+    ]}
+  >
     
     <!-- Left Sidebar (Full Height with Integrated Project Switcher and Telemetry) -->
     <Sidebar currentPath={currentPath} />
 
     <!-- Right Area: Full Height Main Scrollable Content -->
-    <div class="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
-      <main class="flex-1 max-w-7xl w-full mx-auto px-8 py-8">
+    <div class={`flex-1 flex flex-col min-w-0 h-full ${fullBleed ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <main class={fullBleed ? 'flex-1 min-h-0 w-full' : 'flex-1 max-w-7xl w-full mx-auto px-8 py-8'}>
         <slot />
       </main>
 
-      <footer class="border-t border-slate-200 py-3.5 px-8 text-xs text-slate-500 font-mono flex items-center justify-between bg-white">
-        <div>OmniVenture Cloudflare OS</div>
-        <div class="text-[11px] text-slate-400">Grok 4.6 • Qwen 3.8-Max • Gemini 3.7 Flash • DeepSeek V4 Flash</div>
-      </footer>
+      {!fullBleed && (
+        <footer class="border-t border-slate-200 py-3.5 px-8 text-xs text-slate-500 font-mono flex items-center justify-between bg-white">
+          <div>OmniVenture Cloudflare OS</div>
+          <div class="text-[11px] text-slate-400">Grok 4.6 • Qwen 3.8-Max • Gemini 3.7 Flash • DeepSeek V4 Flash</div>
+        </footer>
+      )}
     </div>
 
   </body>

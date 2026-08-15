@@ -75,7 +75,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
   const hasActiveProject = !!activeVenture;
 
   return (
-    <aside className="w-64 bg-white border-r border-slate-200 min-h-screen flex flex-col justify-between flex-shrink-0 z-30">
+    <aside className="app-nav w-64 bg-white border-r border-slate-200 min-h-screen flex flex-col justify-between flex-shrink-0 z-30">
       <div className="p-4 space-y-5">
         
         {/* Brand Logo */}

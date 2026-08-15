@@ -1,0 +1,840 @@
+/**
+ * Simulation du bureau : déplacements, poses et vie sociale de l'agence.
+ *
+ * ⚠️ La boucle est 100 % locale : aucune requête réseau, aucun appel de modèle,
+ * aucun token consommé pendant l'animation. Les sujets de conversation sont
+ * puisés dans une banque pré-générée (voir /api/office/topics) ou, à défaut,
+ * dans la liste écrite en dur ci-dessous.
+ */
+
+import {
+  ACTIVITY_DURATION,
+  BUBBLE_SEC,
+  CHAT_LINE_MAX_SEC,
+  CHAT_LINE_MIN_SEC,
+  DESK_PAUSE_MAX_SEC,
+  DESK_PAUSE_MIN_SEC,
+  DESK_THOUGHT_CHANCE,
+  MAX_DELTA_SEC,
+  POSE_FRAME_SEC,
+  REAL_TASK_SEC,
+  SOLO_LINE_MAX_SEC,
+  SOLO_LINE_MIN_SEC,
+  TILE,
+  WALK_FRAME_SEC,
+  WALK_SPEED_JITTER,
+  WALK_SPEED_PX_S
+} from './constants';
+import { directionTo, findPath, isWalkable, type Nav, type Step } from './grid';
+import type { Seat } from './layout';
+import { Direction, type ActivityKind, type OfficeMap, type Pose, type Spot } from './types';
+
+/* ------------------------------------------------------------------ */
+/* Dialogues de secours — utilisés tant que la banque n'est pas générée */
+/* ------------------------------------------------------------------ */
+
+const FALLBACK_TALK: string[] = [
+  'Tu as vu le taux de conversion ?',
+  'Le canary est tout vert ✅',
+  'Café ? ☕',
+  'Mon crawl vient de finir 🕷️',
+  'Le CEO veut le MVP demain 😅',
+  "J'ai trouvé une niche 👀",
+  'Ce prompt coûte trop cher…',
+  'On déploie vendredi ? 😬',
+  'Stripe a validé le webhook 💳',
+  'Les avis G2 sont sévères',
+  'Le build passe enfin 🎉',
+  'Qui a cassé le lint ? 😤',
+  'Objectif : 100 € de MRR',
+  'Joli, ce nouveau modèle !',
+  'On garde le trial à 0,50 € ?'
+];
+
+const ACTIVITY_BUBBLES: Record<ActivityKind, string[]> = {
+  desk: ['💭', '⌨️', '📊', '…', '😌'],
+  coffee: ['☕', 'Petite pause café', 'Il est bon aujourd’hui ☕', 'Un dernier ☕ ?'],
+  tv: ['📺', 'Ce doc est fou 😮', '🍿', 'Encore un épisode…'],
+  music: ['🎵', '♪ ♫ ♪', '🎧 Lo-fi beats', 'Ça groove 🎶'],
+  read: ['📚', 'Note pour plus tard 📝', 'Intéressant…', '📖'],
+  chat: FALLBACK_TALK,
+  plant: ['🌱', 'Elle avait soif 💧', '🪴'],
+  meeting: ['💬', 'On récapitule 📊', 'Prochaine étape ?', 'Validé ✅'],
+  window: ['📝', 'Idée !', '✏️ Schéma', 'Hmm…'],
+  work: ['⚡']
+};
+
+const ACTIVITY_LABEL: Record<ActivityKind, string> = {
+  desk: 'reste à son poste',
+  coffee: 'va boire un café',
+  tv: 'regarde une vidéo au lounge',
+  music: 'écoute de la musique',
+  read: 'feuillette la documentation',
+  chat: 'discute',
+  plant: 'arrose les plantes',
+  meeting: 'passe en salle de réunion',
+  window: 'griffonne au tableau blanc',
+  work: 'travaille'
+};
+
+/**
+ * Pondération du tirage. « desk » domine largement : dans une agence, on reste
+ * à sa place l'essentiel de la journée.
+ */
+const ACTIVITY_WEIGHTS: Array<{ kind: ActivityKind; weight: number }> = [
+  { kind: 'desk', weight: 52 },
+  { kind: 'chat', weight: 14 },
+  { kind: 'coffee', weight: 12 },
+  // Les réunions formelles passent surtout par les rituels programmés.
+  { kind: 'meeting', weight: 3 },
+  { kind: 'tv', weight: 5 },
+  { kind: 'music', weight: 5 },
+  { kind: 'read', weight: 5 },
+  { kind: 'window', weight: 3 },
+  { kind: 'plant', weight: 2 }
+];
+
+/* ------------------------------------------------------------------ */
+/* Types                                                               */
+/* ------------------------------------------------------------------ */
+
+export interface AgentProfile {
+  id: string;
+  /** Nom affiché sous le personnage. */
+  short: string;
+  name: string;
+  role: string;
+  emoji: string;
+  tier: 1 | 2 | 3;
+  modelId: string;
+  /** Couleur d'accent (badges, contour de sélection). */
+  accent: string;
+  /** Agent réel du système (par opposition aux collaborateurs de l'agence). */
+  key?: boolean;
+  /** Pôle d'affectation en open space. */
+  room?: string;
+  department?: string;
+  /** Niveau hiérarchique issu du graphe. */
+  level?: string;
+  /** Droit à un bureau fermé individuel (C-level, VP, Head of). */
+  senior?: boolean;
+}
+
+/** Rituels d'équipe joués en salle de réunion. */
+interface Ritual {
+  name: string;
+  /** Nombre de participants visé. */
+  size: number;
+  /** Durée en minutes. */
+  duration: [number, number];
+  /** Restreint aux profils seniors. */
+  seniorOnly?: boolean;
+}
+
+const RITUALS: Ritual[] = [
+  { name: 'Daily stand-up', size: 5, duration: [10, 18] },
+  { name: 'Revue de sprint', size: 5, duration: [25, 45] },
+  { name: 'Rétrospective', size: 6, duration: [30, 50] },
+  { name: 'Comité de direction', size: 3, duration: [30, 60], seniorOnly: true },
+  { name: 'Point veille concurrentielle', size: 4, duration: [15, 30] },
+  { name: "Revue d'incident", size: 4, duration: [15, 30] },
+  { name: 'Grooming produit', size: 4, duration: [20, 35] }
+];
+
+export type ActorMode = 'desk' | 'goto' | 'activity' | 'return' | 'work';
+
+export interface Actor {
+  profile: AgentProfile;
+  palette: number;
+  hueShift: number;
+  seat: Seat;
+  speed: number;
+
+  col: number;
+  row: number;
+  x: number;
+  y: number;
+  dir: Direction;
+  pose: Pose;
+  frame: number;
+  frameTimer: number;
+
+  path: Step[];
+  moveProgress: number;
+
+  mode: ActorMode;
+  activity: ActivityKind;
+  spot: Spot | null;
+  partnerId: string | null;
+  untilAt: number;
+  decideAt: number;
+  nextLineAt: number;
+  /** Rituel en cours (réunion d'équipe), sinon null. */
+  ritual: string | null;
+  ritualDuration: number;
+
+  bubble: string | null;
+  bubbleTone: 'idle' | 'chat' | 'real';
+  bubbleUntil: number;
+}
+
+export interface OfficeEvent {
+  id: number;
+  at: string;
+  text: string;
+  tone: 'idle' | 'real';
+}
+
+/** État sérialisé, stocké en base pour reprendre la simulation où elle s'était arrêtée. */
+export interface OfficeSnapshot {
+  version: 2;
+  clock: number;
+  savedAt: number;
+  actors: Array<{
+    id: string;
+    col: number;
+    row: number;
+    dir: number;
+    mode: ActorMode;
+    activity: ActivityKind;
+    spotId: string | null;
+    untilAt: number;
+    decideAt: number;
+    partnerId: string | null;
+  }>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Utilitaires                                                         */
+/* ------------------------------------------------------------------ */
+
+const rand = (min: number, max: number) => min + Math.random() * (max - min);
+const pick = <T,>(list: T[]): T => list[Math.floor(Math.random() * list.length)];
+const tileCenter = (index: number) => index * TILE + TILE / 2;
+
+/* ------------------------------------------------------------------ */
+/* Simulation                                                          */
+/* ------------------------------------------------------------------ */
+
+export class OfficeSim {
+  readonly actors: Actor[] = [];
+  readonly byId = new Map<string, Actor>();
+  readonly events: OfficeEvent[] = [];
+
+  /** Horloge de simulation en secondes. */
+  clock = 0;
+  paused = false;
+  idleEnabled = true;
+  /** x1 = temps réel. Accélérer sert à montrer une journée en quelques minutes. */
+  timeScale = 1;
+
+  private readonly nav: Nav;
+  private readonly map: OfficeMap;
+  private readonly spots: Spot[];
+  private readonly spotById = new Map<string, Spot>();
+  private readonly reserved = new Map<string, string>();
+  private topics: string[] = FALLBACK_TALK;
+  private eventSeq = 0;
+  /** Prochain rituel d'équipe, en secondes de simulation. */
+  private nextRitualAt = rand(20 * 60, 90 * 60);
+
+  constructor(map: OfficeMap, nav: Nav, profiles: AgentProfile[], seats: Seat[], spots: Spot[]) {
+    this.map = map;
+    this.nav = nav;
+    this.spots = spots;
+    for (const spot of spots) this.spotById.set(spot.id, spot);
+
+    const privateSeats = seats.filter((seat) => seat.kind === 'private');
+    const openSeats = seats.filter((seat) => seat.kind !== 'private');
+
+    /**
+     * Un senior prend un bureau fermé ; les autres s'installent dans l'open
+     * space de leur pôle, et à défaut sur n'importe quelle place libre.
+     */
+    const takeSeat = (profile: AgentProfile): Seat => {
+      if (profile.senior && privateSeats.length > 0) return privateSeats.shift() as Seat;
+      if (profile.room) {
+        const index = openSeats.findIndex((seat) => seat.room === profile.room);
+        if (index >= 0) return openSeats.splice(index, 1)[0];
+      }
+      return openSeats.shift() ?? privateSeats.shift() ?? seats[0];
+    };
+
+    // Les seniors sont placés en premier pour ne pas manquer de bureau fermé.
+    const ordered = [...profiles].sort((a, b) => Number(!!b.senior) - Number(!!a.senior));
+    ordered.forEach((profile, index) => {
+      const seat = takeSeat(profile);
+      this.actors.push({
+        profile,
+        palette: index % 6,
+        hueShift: Math.floor(index / 6) % 5 === 0 ? 0 : ((Math.floor(index / 6) * 67) % 300) + 30,
+        seat,
+        speed: WALK_SPEED_PX_S * (1 + (Math.random() * 2 - 1) * WALK_SPEED_JITTER),
+        col: seat.col,
+        row: seat.row,
+        x: tileCenter(seat.col),
+        y: tileCenter(seat.row),
+        dir: seat.dir,
+        pose: 'type',
+        frame: 0,
+        frameTimer: Math.random(),
+        path: [],
+        moveProgress: 0,
+        mode: 'desk',
+        activity: 'desk',
+        spot: null,
+        partnerId: null,
+        untilAt: 0,
+        // Décisions étalées : personne ne se lève en même temps au chargement.
+        decideAt: rand(30, DESK_PAUSE_MAX_SEC),
+        nextLineAt: 0,
+        ritual: null,
+        ritualDuration: 0,
+        bubble: null,
+        bubbleTone: 'idle',
+        bubbleUntil: 0
+      });
+      this.byId.set(profile.id, this.actors[this.actors.length - 1]);
+    });
+  }
+
+  /** Banque de sujets de conversation pré-générée (0 token à l'exécution). */
+  setTopics(topics: string[]): void {
+    const cleaned = topics.map((t) => t.trim()).filter((t) => t.length > 1 && t.length < 120);
+    if (cleaned.length > 0) this.topics = cleaned;
+  }
+
+  get topicCount(): number {
+    return this.topics.length;
+  }
+
+  /* ── Boucle ──────────────────────────────────────────────── */
+
+  update(rawDt: number): void {
+    if (this.paused) return;
+    const dt = Math.min(rawDt, MAX_DELTA_SEC) * this.timeScale;
+    this.clock += dt;
+    for (const actor of this.actors) this.stepActor(actor, dt);
+    if (this.idleEnabled && this.clock >= this.nextRitualAt) this.startRitual();
+  }
+
+  /**
+   * Rituels d'équipe : à intervalles réguliers, plusieurs agents se retrouvent
+   * en salle de réunion pour faire passer l'information (daily, revue, rétro,
+   * comité de direction). C'est la raison d'être des salles fermées.
+   */
+  private startRitual(): void {
+    this.nextRitualAt = this.clock + rand(60 * 60, 180 * 60);
+    const ritual = pick(RITUALS);
+
+    const groups = new Map<string, Spot[]>();
+    for (const spot of this.spots) {
+      if (spot.kind !== 'meeting' || this.reserved.has(spot.id)) continue;
+      const list = groups.get(spot.group) ?? [];
+      list.push(spot);
+      groups.set(spot.group, list);
+    }
+
+    let candidates = this.actors.filter((actor) => actor.mode === 'desk' && !actor.partnerId && !actor.ritual);
+    if (ritual.seniorOnly) candidates = candidates.filter((actor) => actor.profile.senior);
+    if (candidates.length < 2) return;
+
+    const size = Math.min(ritual.size, candidates.length);
+    const room = [...groups.values()].find((list) => list.length >= size);
+    if (!room) return;
+
+    const participants = candidates.sort(() => Math.random() - 0.5).slice(0, size);
+    const duration = rand(ritual.duration[0], ritual.duration[1]) * 60;
+
+    const joined = participants.filter((actor, index) => {
+      actor.ritual = ritual.name;
+      actor.ritualDuration = duration;
+      const ok = this.walkTo(actor, room[index], 'meeting');
+      if (!ok) actor.ritual = null;
+      return ok;
+    });
+
+    if (joined.length < 2) {
+      for (const actor of joined) actor.ritual = null;
+      return;
+    }
+    for (const actor of joined) {
+      actor.partnerId = joined.find((p) => p !== actor)?.profile.id ?? null;
+    }
+
+    const shorts = joined.map((p) => p.profile.short);
+    this.log(`🗓️ ${ritual.name} — ${shorts.slice(0, -1).join(', ')} et ${shorts[shorts.length - 1]}`, 'idle');
+  }
+
+  private stepActor(actor: Actor, dt: number): void {
+    actor.frameTimer += dt;
+    const frameDuration = actor.pose === 'walk' ? WALK_FRAME_SEC : POSE_FRAME_SEC;
+    if (actor.frameTimer >= frameDuration) {
+      actor.frameTimer -= frameDuration;
+      actor.frame = (actor.frame + 1) % (actor.pose === 'walk' ? 4 : 2);
+    }
+
+    if (actor.bubble && this.clock >= actor.bubbleUntil) actor.bubble = null;
+
+    if (actor.path.length > 0) {
+      this.advance(actor, dt);
+      return;
+    }
+
+    switch (actor.mode) {
+      case 'goto':
+        this.arriveAtSpot(actor);
+        break;
+      case 'activity':
+        this.tickActivity(actor);
+        break;
+      case 'return':
+        actor.mode = 'desk';
+        actor.activity = 'desk';
+        actor.dir = actor.seat.dir;
+        actor.pose = 'type';
+        actor.decideAt = this.clock + rand(DESK_PAUSE_MIN_SEC, DESK_PAUSE_MAX_SEC);
+        break;
+      case 'work':
+        if (this.clock >= actor.untilAt) this.sendHome(actor);
+        break;
+      case 'desk':
+      default:
+        if (this.idleEnabled && this.clock >= actor.decideAt) this.decide(actor);
+        break;
+    }
+  }
+
+  private advance(actor: Actor, dt: number): void {
+    const next = actor.path[0];
+    actor.pose = 'walk';
+    actor.dir = directionTo({ col: actor.col, row: actor.row }, next);
+    actor.moveProgress += (actor.speed / TILE) * dt;
+
+    const fromX = tileCenter(actor.col);
+    const fromY = tileCenter(actor.row);
+    const toX = tileCenter(next.col);
+    const toY = tileCenter(next.row);
+    const t = Math.min(actor.moveProgress, 1);
+    actor.x = fromX + (toX - fromX) * t;
+    actor.y = fromY + (toY - fromY) * t;
+
+    if (actor.moveProgress >= 1) {
+      actor.col = next.col;
+      actor.row = next.row;
+      actor.x = toX;
+      actor.y = toY;
+      actor.moveProgress = 0;
+      actor.path.shift();
+      if (actor.path.length === 0) {
+        actor.frame = 0;
+        actor.frameTimer = 0;
+      }
+    }
+  }
+
+  /* ── Décisions ───────────────────────────────────────────── */
+
+  private decide(actor: Actor): void {
+    const kind = this.rollActivity();
+
+    if (kind === 'desk') {
+      actor.decideAt = this.clock + rand(DESK_PAUSE_MIN_SEC, DESK_PAUSE_MAX_SEC);
+      if (Math.random() < DESK_THOUGHT_CHANCE) this.say(actor, pick(ACTIVITY_BUBBLES.desk), 'idle');
+      return;
+    }
+
+    if (kind === 'chat' || kind === 'meeting') {
+      if (this.startGathering(actor, kind)) return;
+      actor.decideAt = this.clock + rand(120, 420);
+      return;
+    }
+
+    const spot = this.claimSpot(kind, actor);
+    if (!spot) {
+      actor.decideAt = this.clock + rand(120, 420);
+      return;
+    }
+    this.walkTo(actor, spot, kind);
+  }
+
+  private rollActivity(): ActivityKind {
+    const total = ACTIVITY_WEIGHTS.reduce((sum, a) => sum + a.weight, 0);
+    let roll = Math.random() * total;
+    for (const entry of ACTIVITY_WEIGHTS) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry.kind;
+    }
+    return 'desk';
+  }
+
+  /** Réunit deux collègues (discussion) ou trois (réunion) au même endroit. */
+  private startGathering(initiator: Actor, kind: 'chat' | 'meeting'): boolean {
+    const wanted = kind === 'meeting' ? 3 : 2;
+
+    const groups = new Map<string, Spot[]>();
+    for (const spot of this.spots) {
+      if (spot.kind !== kind) continue;
+      if (this.reserved.has(spot.id)) continue;
+      const list = groups.get(spot.group) ?? [];
+      list.push(spot);
+      groups.set(spot.group, list);
+    }
+    const usable = [...groups.values()].filter((list) => list.length >= wanted);
+    if (usable.length === 0) return false;
+
+    // On cherche des collègues proches : un café se prend avec ses voisins.
+    const candidates = this.actors
+      .filter((a) => a !== initiator && a.mode === 'desk' && !a.partnerId)
+      .sort(
+        (a, b) =>
+          Math.abs(a.col - initiator.col) + Math.abs(a.row - initiator.row) -
+          (Math.abs(b.col - initiator.col) + Math.abs(b.row - initiator.row))
+      )
+      .slice(0, 12);
+    if (candidates.length < wanted - 1) return false;
+
+    const chosen = usable.sort(
+      (a, b) =>
+        Math.abs(a[0].col - initiator.col) + Math.abs(a[0].row - initiator.row) -
+        (Math.abs(b[0].col - initiator.col) + Math.abs(b[0].row - initiator.row))
+    )[0];
+
+    const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, wanted - 1);
+    const participants = [initiator, ...shuffled];
+    const joined = participants.filter((actor, index) => this.walkTo(actor, chosen[index], kind));
+    if (joined.length < 2) return joined.length > 0;
+
+    for (const actor of joined) {
+      actor.partnerId = joined.find((p) => p !== actor)?.profile.id ?? null;
+    }
+
+    const shorts = joined.map((p) => p.profile.short);
+    const names = `${shorts.slice(0, -1).join(', ')} et ${shorts[shorts.length - 1]}`;
+    this.log(`${names} ${kind === 'meeting' ? 'improvisent une réunion' : 'discutent ensemble'}`, 'idle');
+    return true;
+  }
+
+  private claimSpot(kind: ActivityKind, actor: Actor): Spot | null {
+    let best: Spot | null = null;
+    let bestDist = Infinity;
+    for (const spot of this.spots) {
+      if (spot.kind !== kind || this.reserved.has(spot.id)) continue;
+      // Un peu de hasard pour ne pas voir tout le monde converger au même endroit.
+      const dist = Math.abs(spot.col - actor.col) + Math.abs(spot.row - actor.row) + Math.random() * 40;
+      if (dist < bestDist) {
+        best = spot;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Réserve la place ET lance le trajet. La réservation est posée ici (et
+   * seulement ici) pour qu'un trajet impossible ne bloque jamais une place.
+   */
+  private walkTo(actor: Actor, spot: Spot, kind: ActivityKind): boolean {
+    const path = findPath(this.nav, { col: actor.col, row: actor.row }, { col: spot.col, row: spot.row });
+    if (path.length === 0 && (actor.col !== spot.col || actor.row !== spot.row)) {
+      actor.decideAt = this.clock + rand(120, 420);
+      return false;
+    }
+    this.release(actor);
+    this.reserved.set(spot.id, actor.profile.id);
+    actor.spot = spot;
+    actor.activity = kind;
+    actor.mode = 'goto';
+    actor.path = path;
+    actor.moveProgress = 0;
+    actor.pose = 'walk';
+    return true;
+  }
+
+  private arriveAtSpot(actor: Actor): void {
+    const spot = actor.spot;
+    if (!spot) {
+      actor.mode = 'desk';
+      actor.decideAt = this.clock + rand(DESK_PAUSE_MIN_SEC, DESK_PAUSE_MAX_SEC);
+      return;
+    }
+    actor.mode = 'activity';
+    actor.dir = spot.dir;
+    actor.pose = spot.pose;
+    actor.frame = 0;
+    if (actor.ritual) {
+      actor.untilAt = this.clock + actor.ritualDuration;
+    } else {
+      const [min, max] = ACTIVITY_DURATION[actor.activity] ?? ACTIVITY_DURATION.coffee;
+      actor.untilAt = this.clock + rand(min, max);
+    }
+    actor.nextLineAt = this.clock + rand(4, 25);
+
+    if (actor.activity !== 'chat' && actor.activity !== 'meeting' && actor.profile.key) {
+      this.log(`${actor.profile.short} ${ACTIVITY_LABEL[actor.activity]}`, 'idle');
+    }
+  }
+
+  private tickActivity(actor: Actor): void {
+    if (this.clock >= actor.untilAt) {
+      this.sendHome(actor);
+      return;
+    }
+    if (this.clock < actor.nextLineAt) return;
+
+    const isTalk = actor.activity === 'chat' || actor.activity === 'meeting';
+    const lines = isTalk ? this.topics : ACTIVITY_BUBBLES[actor.activity] ?? ACTIVITY_BUBBLES.desk;
+    this.say(actor, pick(lines), isTalk ? 'chat' : 'idle');
+    actor.nextLineAt =
+      this.clock + (isTalk ? rand(CHAT_LINE_MIN_SEC, CHAT_LINE_MAX_SEC) : rand(SOLO_LINE_MIN_SEC, SOLO_LINE_MAX_SEC));
+  }
+
+  private sendHome(actor: Actor): void {
+    this.release(actor);
+    actor.partnerId = null;
+    actor.ritual = null;
+    actor.mode = 'return';
+    actor.activity = 'desk';
+    actor.path = findPath(this.nav, { col: actor.col, row: actor.row }, { col: actor.seat.col, row: actor.seat.row });
+    actor.moveProgress = 0;
+    if (actor.path.length === 0) {
+      actor.mode = 'desk';
+      actor.col = actor.seat.col;
+      actor.row = actor.seat.row;
+      actor.x = tileCenter(actor.seat.col);
+      actor.y = tileCenter(actor.seat.row);
+      actor.dir = actor.seat.dir;
+      actor.pose = 'type';
+      actor.decideAt = this.clock + rand(DESK_PAUSE_MIN_SEC, DESK_PAUSE_MAX_SEC);
+    }
+  }
+
+  private release(actor: Actor): void {
+    if (actor.spot) this.reserved.delete(actor.spot.id);
+    actor.spot = null;
+  }
+
+  /* ── Tâches réelles ──────────────────────────────────────── */
+
+  /**
+   * Rejoue une activité RÉELLE : l'émetteur traverse le bureau pour porter la
+   * tâche au destinataire, qui se met au travail. Aucun texte n'est généré ici,
+   * le libellé provient de l'événement métier.
+   */
+  triggerRealTask(fromId: string, toId: string, bubble: string, summary: string): void {
+    const from = this.byId.get(fromId);
+    const to = this.byId.get(toId);
+    if (!from || !to || from === to) return;
+
+    const target = this.tileNextTo(to.seat, from);
+    this.release(from);
+    from.partnerId = to.profile.id;
+    from.mode = 'work';
+    from.activity = 'work';
+    from.untilAt = this.clock + REAL_TASK_SEC;
+    from.path = findPath(this.nav, { col: from.col, row: from.row }, target);
+    from.moveProgress = 0;
+    from.pose = from.path.length > 0 ? 'walk' : 'read';
+    this.say(from, bubble, 'real', REAL_TASK_SEC);
+
+    this.release(to);
+    to.partnerId = from.profile.id;
+    to.mode = 'work';
+    to.activity = 'work';
+    to.untilAt = this.clock + REAL_TASK_SEC + 10;
+    to.path = findPath(this.nav, { col: to.col, row: to.row }, { col: to.seat.col, row: to.seat.row });
+    to.moveProgress = 0;
+    to.pose = to.path.length > 0 ? 'walk' : 'type';
+    this.say(to, `⚡ Reçu de ${from.profile.short}`, 'real', REAL_TASK_SEC);
+
+    this.log(`${from.profile.short} → ${to.profile.short} : ${summary}`, 'real');
+  }
+
+  /** Case libre voisine d'un poste, pour venir parler à quelqu'un sans le pousser. */
+  private tileNextTo(seat: Seat, mover: Actor): Step {
+    const around: Step[] = [
+      { col: seat.col - 1, row: seat.row },
+      { col: seat.col + 1, row: seat.row },
+      { col: seat.col, row: seat.row + 1 },
+      { col: seat.col - 1, row: seat.row + 1 },
+      { col: seat.col + 1, row: seat.row + 1 }
+    ];
+    const taken = new Set(this.actors.filter((a) => a !== mover).map((a) => `${a.col},${a.row}`));
+    for (const tile of around) {
+      if (!isWalkable(this.nav, tile.col, tile.row)) continue;
+      if (taken.has(`${tile.col},${tile.row}`)) continue;
+      return tile;
+    }
+    return { col: seat.col, row: seat.row + 1 };
+  }
+
+  /* ── Bulles & journal ────────────────────────────────────── */
+
+  /** Fait parler un agent depuis l'extérieur (conversation avec l'opérateur). */
+  speak(agentId: string, text: string, duration = 8): boolean {
+    const actor = this.byId.get(agentId);
+    if (!actor) return false;
+    this.say(actor, text, 'real', duration);
+    if (actor.mode === 'desk') actor.pose = 'type';
+    return true;
+  }
+
+  private say(actor: Actor, text: string, tone: Actor['bubbleTone'], duration = BUBBLE_SEC): void {
+    actor.bubble = text;
+    actor.bubbleTone = tone;
+    actor.bubbleUntil = this.clock + duration;
+  }
+
+  private log(text: string, tone: OfficeEvent['tone']): void {
+    this.events.unshift({
+      id: ++this.eventSeq,
+      at: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      text,
+      tone
+    });
+    if (this.events.length > 40) this.events.length = 40;
+  }
+
+  /* ── Persistance ─────────────────────────────────────────── */
+
+  snapshot(): OfficeSnapshot {
+    return {
+      version: 2,
+      clock: Math.round(this.clock),
+      savedAt: Date.now(),
+      actors: this.actors.map((actor) => ({
+        id: actor.profile.id,
+        col: actor.col,
+        row: actor.row,
+        dir: actor.dir,
+        mode: actor.mode,
+        activity: actor.activity,
+        spotId: actor.spot?.id ?? null,
+        untilAt: Math.round(actor.untilAt),
+        decideAt: Math.round(actor.decideAt),
+        partnerId: actor.partnerId
+      }))
+    };
+  }
+
+  /**
+   * Restaure une session précédente. Le temps écoulé hors ligne est rejoué
+   * (plafonné à une heure) : les activités terminées entre-temps se soldent
+   * naturellement par un retour au poste.
+   */
+  restore(snapshot: OfficeSnapshot): number {
+    if (!snapshot || snapshot.version !== 2 || !Array.isArray(snapshot.actors)) return 0;
+
+    const offlineSec = Math.max(0, Math.min((Date.now() - snapshot.savedAt) / 1000, 3600));
+    this.clock = snapshot.clock + offlineSec;
+    this.reserved.clear();
+
+    let restored = 0;
+    for (const saved of snapshot.actors) {
+      const actor = this.byId.get(saved.id);
+      if (!actor) continue;
+      if (!isWalkable(this.nav, saved.col, saved.row)) continue;
+
+      actor.col = saved.col;
+      actor.row = saved.row;
+      actor.x = tileCenter(saved.col);
+      actor.y = tileCenter(saved.row);
+      actor.dir = (saved.dir as Direction) ?? actor.seat.dir;
+      actor.path = [];
+      actor.moveProgress = 0;
+      actor.partnerId = saved.partnerId;
+      actor.activity = saved.activity ?? 'desk';
+      actor.untilAt = saved.untilAt;
+      actor.decideAt = saved.decideAt;
+      actor.bubble = null;
+
+      const spot = saved.spotId ? this.spotById.get(saved.spotId) ?? null : null;
+      if (spot && !this.reserved.has(spot.id)) {
+        this.reserved.set(spot.id, actor.profile.id);
+        actor.spot = spot;
+      } else {
+        actor.spot = null;
+      }
+
+      // Un déplacement interrompu reprend depuis la position sauvegardée.
+      if (saved.mode === 'goto' && actor.spot) {
+        actor.mode = 'goto';
+        actor.path = findPath(this.nav, { col: actor.col, row: actor.row }, { col: actor.spot.col, row: actor.spot.row });
+        actor.pose = 'walk';
+      } else if (saved.mode === 'activity' && actor.spot && this.clock < actor.untilAt) {
+        actor.mode = 'activity';
+        actor.pose = actor.spot.pose;
+        actor.dir = actor.spot.dir;
+        actor.nextLineAt = this.clock + rand(10, 90);
+      } else if (saved.mode === 'desk' && actor.col === actor.seat.col && actor.row === actor.seat.row) {
+        actor.mode = 'desk';
+        actor.pose = 'type';
+        actor.dir = actor.seat.dir;
+        if (actor.decideAt < this.clock) actor.decideAt = this.clock + rand(60, DESK_PAUSE_MAX_SEC);
+      } else {
+        this.sendHome(actor);
+      }
+      restored++;
+    }
+
+    if (restored > 0) {
+      this.log(
+        `Reprise de la simulation — ${restored} collaborateurs replacés (${Math.round(offlineSec / 60)} min hors ligne)`,
+        'idle'
+      );
+    }
+    return restored;
+  }
+
+  /* ── Interaction & lecture ───────────────────────────────── */
+
+  actorAt(worldX: number, worldY: number): Actor | null {
+    let best: Actor | null = null;
+    let bestDist = Infinity;
+    for (const actor of this.actors) {
+      const dx = Math.abs(worldX - actor.x);
+      const dy = worldY - (actor.y - 20);
+      if (dx > 9 || dy < -6 || dy > 26) continue;
+      const dist = dx + Math.abs(dy);
+      if (dist < bestDist) {
+        best = actor;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  statusOf(actor: Actor): string {
+    if (actor.mode === 'work') return 'Tâche réelle en cours';
+    if (actor.ritual) return actor.mode === 'goto' ? `En route — ${actor.ritual}` : `${actor.ritual} en cours`;
+    if (actor.mode === 'goto') return `En route — ${ACTIVITY_LABEL[actor.activity]}`;
+    if (actor.mode === 'return') return 'Retourne à son poste';
+    if (actor.mode === 'activity') {
+      if (actor.activity === 'chat' || actor.activity === 'meeting') {
+        const partner = actor.partnerId ? this.byId.get(actor.partnerId)?.profile.short : null;
+        return partner ? `Discute avec ${partner}` : 'Discute';
+      }
+      return ACTIVITY_LABEL[actor.activity].replace(/^\w/, (c) => c.toUpperCase());
+    }
+    return 'À son poste';
+  }
+
+  /** Répartition des activités en cours, pour le tableau de bord. */
+  census(): Record<string, number> {
+    const counts: Record<string, number> = { desk: 0, moving: 0 };
+    for (const actor of this.actors) {
+      if (actor.mode === 'desk') counts.desk++;
+      else if (actor.mode === 'goto' || actor.mode === 'return') counts.moving++;
+      else counts[actor.activity] = (counts[actor.activity] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  get mapRef(): OfficeMap {
+    return this.map;
+  }
+
+  get reservedCount(): number {
+    return this.reserved.size;
+  }
+}
