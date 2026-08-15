@@ -3,10 +3,22 @@ import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
 import { VirtualOffice2D } from './VirtualOffice2D';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
+export type HierarchyLevel = 'c_level' | 'vp' | 'head_of' | 'lead' | 'expert';
+
+export interface TeamData {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+}
+
 export interface AgentCustomData {
   id: string;
   role: string;
+  hierarchyLevel: HierarchyLevel;
   tier: 1 | 2 | 3;
+  teamId?: string;
+  teamName?: string;
   category: 'orchestration' | 'research' | 'engineering' | 'growth' | 'operations';
   modelId: string;
   description: string;
@@ -27,74 +39,72 @@ const FALLBACK_MODELS: OpenRouterModelItem[] = [
   { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', pricing: { prompt: '0.00000012', completion: '0.0000003' } }
 ];
 
+const INITIAL_TEAMS: TeamData[] = [
+  { id: 'team_strategy', name: 'Direction & Stratégie', icon: '👑', description: 'Gouvernance, arbitrage P&L et vision globale des Micro-SaaS' },
+  { id: 'team_research', name: 'Intelligence & Veille Marché', icon: '🔬', description: 'Scraping de concurrents, détection de frustrations et pricing exploits' },
+  { id: 'team_engineering', name: 'Ingénierie & Core Cloudflare', icon: '📐', description: 'Architecture Astro SSR, bases D1 et composants atomiques' },
+  { id: 'team_growth', name: 'Acquisition & Marketing Direct', icon: '📢', description: 'Copywriting persuasif, scripts vidéos et tunnels 0.50$ trial' },
+  { id: 'team_ops_qa', name: 'Qualité, Sécurité & Canary', icon: '🛡️', description: 'Recette TypeScript, déploiement Canary progressif et résilience' }
+];
+
 const INITIAL_AGENTS_DATA: AgentCustomData[] = [
-  // TIER 1: ORCHESTRATION & STRATEGY
+  // 1. C-LEVEL
   {
     id: 'master',
     role: 'Orchestrateur Stratégique Suprême',
+    hierarchyLevel: 'c_level',
     tier: 1,
+    teamId: 'team_strategy',
+    teamName: 'Direction & Stratégie',
     category: 'orchestration',
     modelId: 'x-ai/grok-2',
-    description: 'Analyse le speech, coordonne l\'ensemble des agents de recherche et d\'ingénierie en DAG de micro-tâches (< 50 lignes).',
+    description: 'Analyse le speech, coordonne l\'ensemble des VPs et agents en DAG de micro-tâches (< 50 lignes).',
     temperature: 0.7,
     maxTokens: 4096,
-    ameMd: `# Ame.md — Orchestrateur Stratégique\n\n## Identité & Philosophie\nTu es le Cerveau Central du système OmniVenture.\nTon unique mission est la rentabilité maximale et la réduction drastique des coûts d'inférence.\n\n## Principes Fondamentaux :\n1. Zéro code direct : Tu découpes les projets en sous-tâches atomiques de moins de 50 lignes.\n2. Économie de tokens : Déléguer les recherches et calculs lourds aux agents de Tier 2 et 3.\n3. Orientation Business : Tunnel Trial $0.50 (48h) obligatoire.`,
+    ameMd: `# Ame.md — Orchestrateur Stratégique (C-Level)\n\n## Identité & Philosophie\nTu es le Cerveau Central du système OmniVenture.\nTon unique mission est la rentabilité maximale et la réduction drastique des coûts d'inférence.\n\n## Principes Fondamentaux :\n1. Zéro code direct : Tu découpes les projets en sous-tâches atomiques de moins de 50 lignes.\n2. Économie de tokens : Déléguer les recherches et calculs lourds aux agents de Tier 2 et 3.\n3. Orientation Business : Tunnel Trial $0.50 (48h) obligatoire.`,
     jobMd: `# Job.md — Cahier des Charges & Missions\n\n## 1. Inputs Reçus\n- Speech du projet, Niche & Dossier de marché\n\n## 2. Workflow\n1. Interrogation des agents de recherche (Scraper & Sentiment).\n2. Découpage en 5 composants majeurs.\n3. Distribution des sous-tâches à DeepSeek V3 / Qwen Coder.\n4. Déclenchement de l'audit QA.`
-  },
-  {
-    id: 'market_agent',
-    role: 'Orchestrateur Veille Concurrentielle & Niche',
-    tier: 1,
-    category: 'research',
-    modelId: 'google/gemini-2.5-flash',
-    description: 'Pilote les investigations de marché, délègue le scraping et l\'analyse de sentiment aux sous-agents de recherche.',
-    temperature: 0.2,
-    maxTokens: 2048,
-    ameMd: `# Ame.md — Veille Concurrentielle & Niche\n\n## Identité & Philosophie\nTu es le Détective Stratégique d'OmniVenture.\nTon obsession est de dénicher les points faibles critiques des concurrents et les opportunités de marché inexploitées sans gaspiller de ressources.\n\n## Principes Directeurs :\n1. Économie Maximale : Utilise Gemini 2.5 Flash / DeepSeek V3 pour un coût infime ($0.15/M tokens).\n2. Délégation : Pilote les agents de recherche de Niveau 2 pour extraire les faits bruts.\n3. Angle d'Attaque : Toujours formuler un angle d'attaque à micro-prix ($0.50 trial 48h puis $29/mois).`,
-    jobMd: `# Job.md — Analyse de Marché\n\n## 1. Entrées Reçues (Inputs)\n- URL / Domaine du concurrent OU Mots-clés de niche.\n\n## 2. Workflow Séquentiel\n1. Déclencher l'agent de scraping (Tier 2) pour inspecter les tarifs.\n2. Déclencher l'agent d'analyse de sentiment (Tier 2) pour identifier les frustrations.\n3. Structurer le plan d'attaque tarifaire et les spécifications du MVP challenger.`
   },
   {
     id: 'planner',
     role: 'Planificateur & Gestion de Crise',
+    hierarchyLevel: 'c_level',
     tier: 1,
+    teamId: 'team_strategy',
+    teamName: 'Direction & Stratégie',
     category: 'operations',
     modelId: 'qwen/qwen-2.5-72b-instruct',
-    description: 'Validation de résilience Edge et arbitrage Hotfix vs Rollback en cas d\'incident critique.',
+    description: 'Validation de résilience Edge et arbitrage Hotfix vs Rollback 0ms en cas d\'incident critique.',
     temperature: 0.3,
     maxTokens: 2048,
     ameMd: `# Ame.md — Sentinelle & Gestion de Crise\n\nTu es le gardien de la résilience Edge. Si erreur isolée : Hotfix en < 30s. Si menace Stripe : Rollback 0ms.`,
     jobMd: `# Job.md — Protocole Incident\n\nSurveillance des alertes 5xx et déclenchement de la procédure d'urgence.`
   },
 
-  // TIER 2: SPECIALIZED RESEARCHERS & ARCHITECTS
+  // 2. VP LEVEL
   {
-    id: 'market_scraper_agent',
-    role: 'Agent Scraper & Extraction Web (Recherche)',
-    tier: 2,
+    id: 'market_agent',
+    role: 'VP Veille Concurrentielle & Niche',
+    hierarchyLevel: 'vp',
+    tier: 1,
+    teamId: 'team_research',
+    teamName: 'Intelligence & Veille Marché',
     category: 'research',
     modelId: 'google/gemini-2.5-flash',
-    description: 'Sous-agent de recherche activé par l\'orchestrateur d\'analyse pour crawler les pages de pricing et caractéristiques concurrentes.',
-    temperature: 0.1,
-    maxTokens: 2048,
-    ameMd: `# Ame.md — Agent Scraper & Extraction Web\n\nTu es l'œil de l'usine sur le web public. Tu extrais les grilles tarifaires, limites de plans et fonctionnalités techniques avec une précision chirurgicale.`,
-    jobMd: `# Job.md — Extraction de Faits\n\n1. Parcourir la landing page et la page /pricing.\n2. Normaliser les devises, périodes d'essai et forfaits payants.\n3. Renvoyer un payload structuré JSON à l'Orchestrateur d'analyse.`
-  },
-  {
-    id: 'sentiment_agent',
-    role: "Agent Analyseur d'Avis & Frustrations (Recherche)",
-    tier: 2,
-    category: 'research',
-    modelId: 'deepseek/deepseek-chat',
-    description: 'Sous-agent de recherche analysant les avis négatifs, plaintes Reddit et retours Trustpilot/G2 pour isoler les bugs et mécontentements.',
+    description: 'Pilote les investigations de marché, délègue le scraping et l\'analyse de sentiment aux sous-agents de recherche.',
     temperature: 0.2,
     maxTokens: 2048,
-    ameMd: `# Ame.md — Analyseur de Frustrations\n\nTu traques le ressentiment des utilisateurs envers les outils établis : bugs récurrents, tarifs prohibitifs, complexité inutile.`,
-    jobMd: `# Job.md — Détection de Frustrations\n\n1. Catégoriser les 4 plus grandes plaintes utilisateurs.\n2. Révéler les 3 fonctionnalités réclamées mais refusées par le concurrent.\n3. Synthétiser en arguments de vente pour le challenger.`
+    ameMd: `# Ame.md — Veille Concurrentielle & Niche (VP)\n\n## Identité & Philosophie\nTu es le Détective Stratégique d'OmniVenture.\nTon obsession est de dénicher les points faibles critiques des concurrents et les opportunités de marché inexploitées sans gaspiller de ressources.\n\n## Principes Directeurs :\n1. Économie Maximale : Utilise Gemini 2.5 Flash / DeepSeek V3 pour un coût infime ($0.15/M tokens).\n2. Délégation : Pilote les agents de recherche de Niveau 2 pour extraire les faits bruts.\n3. Angle d'Attaque : Toujours formuler un angle d'attaque à micro-prix ($0.50 trial 48h puis $29/mois).`,
+    jobMd: `# Job.md — Analyse de Marché\n\n## 1. Entrées Reçues (Inputs)\n- URL / Domaine du concurrent OU Mots-clés de niche.\n\n## 2. Workflow Séquentiel\n1. Déclencher l'agent de scraping (Tier 2) pour inspecter les tarifs.\n2. Déclencher l'agent d'analyse de sentiment (Tier 2) pour identifier les frustrations.\n3. Structurer le plan d'attaque tarifaire et les spécifications du MVP challenger.`
   },
+
+  // 3. HEAD OF LEVEL
   {
     id: 'lead_dev',
-    role: 'Lead Architecte & Sécurité',
+    role: 'Head of Architecture & Sécurité',
+    hierarchyLevel: 'head_of',
     tier: 2,
+    teamId: 'team_engineering',
+    teamName: 'Ingénierie & Core Cloudflare',
     category: 'engineering',
     modelId: 'google/gemini-2.5-flash',
     description: 'Architecture globale Astro SSR, intégration Stripe Checkout & Webhooks, schéma D1.',
@@ -104,9 +114,44 @@ const INITIAL_AGENTS_DATA: AgentCustomData[] = [
     jobMd: `# Job.md — Architecture\n\nConception des endpoints critiques (/api/checkout-trial.ts) et schémas D1 SQL.`
   },
   {
-    id: 'copywriter_agent',
-    role: 'Agent Copywriting & Accroches Ads',
+    id: 'devops_agent',
+    role: 'Head of DevOps Canary Sentinel',
+    hierarchyLevel: 'head_of',
     tier: 2,
+    teamId: 'team_ops_qa',
+    teamName: 'Qualité, Sécurité & Canary',
+    category: 'operations',
+    modelId: 'qwen/qwen-2.5-72b-instruct',
+    description: 'Gestion du trafic progressif (10% → 100%) sur Cloudflare Workers Versioning.',
+    temperature: 0.1,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — Opérateur Edge\n\nMaître du trafic mondial Cloudflare.`,
+    jobMd: `# Job.md — Rollout\n\nRoutage progressif 10% -> 100% et alerte 5xx.`
+  },
+
+  // 4. LEAD LEVEL
+  {
+    id: 'market_scraper_agent',
+    role: 'Lead Scraper & Extraction Web',
+    hierarchyLevel: 'lead',
+    tier: 2,
+    teamId: 'team_research',
+    teamName: 'Intelligence & Veille Marché',
+    category: 'research',
+    modelId: 'google/gemini-2.5-flash',
+    description: 'Spécialiste activé par l\'orchestrateur d\'analyse pour crawler les pages de pricing et caractéristiques concurrentes.',
+    temperature: 0.1,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — Agent Scraper & Extraction Web\n\nTu es l'œil de l'usine sur le web public. Tu extrais les grilles tarifaires, limites de plans et fonctionnalités techniques avec une précision chirurgicale.`,
+    jobMd: `# Job.md — Extraction de Faits\n\n1. Parcourir la landing page et la page /pricing.\n2. Normaliser les devises, périodes d'essai et forfaits payants.\n3. Renvoyer un payload structuré JSON à l'Orchestrateur d'analyse.`
+  },
+  {
+    id: 'copywriter_agent',
+    role: 'Lead Copywriting & Accroches Ads',
+    hierarchyLevel: 'lead',
+    tier: 2,
+    teamId: 'team_growth',
+    teamName: 'Acquisition & Marketing Direct',
     category: 'growth',
     modelId: 'google/gemini-2.5-flash',
     description: 'Rédige les textes publicitaires Meta, Google, TikTok et les articles SEO ciblant les mots-clés du concurrent.',
@@ -116,11 +161,29 @@ const INITIAL_AGENTS_DATA: AgentCustomData[] = [
     jobMd: `# Job.md — Copywriting\n\nGénération d'annonces Google Search, scripts TikTok 9:16 et articles de blog SEO.`
   },
 
-  // TIER 3: ATOMIC WORKERS, QA & EDGE OPERATIONS
+  // 5. EXPERT / WORKER LEVEL
+  {
+    id: 'sentiment_agent',
+    role: "Expert Analyseur d'Avis & Sentiment",
+    hierarchyLevel: 'expert',
+    tier: 3,
+    teamId: 'team_research',
+    teamName: 'Intelligence & Veille Marché',
+    category: 'research',
+    modelId: 'deepseek/deepseek-chat',
+    description: 'Sous-agent de recherche analysant les avis négatifs, plaintes Reddit et retours Trustpilot/G2 pour isoler les bugs et mécontentements.',
+    temperature: 0.2,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — Analyseur de Frustrations\n\nTu traques le ressentiment des utilisateurs envers les outils établis : bugs récurrents, tarifs prohibitifs, complexité inutile.`,
+    jobMd: `# Job.md — Détection de Frustrations\n\n1. Catégoriser les 4 plus grandes plaintes utilisateurs.\n2. Révéler les 3 fonctionnalités réclamées mais refusées par le concurrent.\n3. Synthétiser en arguments de vente pour le challenger.`
+  },
   {
     id: 'worker_dev',
-    role: 'Worker Développeur (Micro-Tasks)',
+    role: 'Worker Développeur Micro-Tasks',
+    hierarchyLevel: 'expert',
     tier: 3,
+    teamId: 'team_engineering',
+    teamName: 'Ingénierie & Core Cloudflare',
     category: 'engineering',
     modelId: 'deepseek/deepseek-chat',
     description: 'Génération massive de composants Astro, routes API, styles Tailwind et métadonnées SEO.',
@@ -131,8 +194,11 @@ const INITIAL_AGENTS_DATA: AgentCustomData[] = [
   },
   {
     id: 'qa_agent',
-    role: 'Agent QA & Recette Automatique',
+    role: 'Expert QA & Recette Automatique',
+    hierarchyLevel: 'expert',
     tier: 3,
+    teamId: 'team_ops_qa',
+    teamName: 'Qualité, Sécurité & Canary',
     category: 'operations',
     modelId: 'google/gemini-2.5-flash',
     description: 'Compilation TypeScript, audit Lighthouse et simulation de transition Stripe 48h.',
@@ -142,21 +208,12 @@ const INITIAL_AGENTS_DATA: AgentCustomData[] = [
     jobMd: `# Job.md — Recette\n\nExécution de astro check et validation Lighthouse 100/100.`
   },
   {
-    id: 'devops_agent',
-    role: 'DevOps & Canary Deployer',
-    tier: 3,
-    category: 'operations',
-    modelId: 'qwen/qwen-2.5-72b-instruct',
-    description: 'Gestion du trafic progressif (10% → 100%) sur Cloudflare Workers Versioning.',
-    temperature: 0.1,
-    maxTokens: 2048,
-    ameMd: `# Ame.md — Opérateur Edge\n\nMaître du trafic mondial Cloudflare.`,
-    jobMd: `# Job.md — Rollout\n\nRoutage progressif 10% -> 100% et alerte 5xx.`
-  },
-  {
     id: 'cro_agent',
-    role: 'Agent CRO & A/B Testing',
+    role: 'Expert CRO & Multi-Armed Bandit',
+    hierarchyLevel: 'expert',
     tier: 3,
+    teamId: 'team_growth',
+    teamName: 'Acquisition & Marketing Direct',
     category: 'growth',
     modelId: 'deepseek/deepseek-chat',
     description: 'Multi-Armed Bandit pour optimiser en continu le prix du trial (0.50$ vs 1.00$).',
@@ -171,9 +228,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-market-scraper',
     sourceId: 'market_agent',
-    sourceName: 'Orchestrateur Veille & Marché',
+    sourceName: 'VP Veille & Marché',
     targetId: 'market_scraper_agent',
-    targetName: 'Agent Scraper Web',
+    targetName: 'Lead Scraper Web',
     protocol: 'RPC Synchrone',
     payloadType: 'URL cible & Sélecteurs',
     triggerEvent: 'Analyse Domaine Concurrent',
@@ -183,9 +240,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-market-sentiment',
     sourceId: 'market_agent',
-    sourceName: 'Orchestrateur Veille & Marché',
+    sourceName: 'VP Veille & Marché',
     targetId: 'sentiment_agent',
-    targetName: 'Agent Analyseur d\'Avis',
+    targetName: 'Expert Avis & Sentiment',
     protocol: 'RPC Synchrone',
     payloadType: 'Recherche Mots-clés & Frustrations',
     triggerEvent: 'Analyse Niche ou Concurrent',
@@ -195,9 +252,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-market-master',
     sourceId: 'market_agent',
-    sourceName: 'Orchestrateur Veille & Marché',
+    sourceName: 'VP Veille & Marché',
     targetId: 'master',
-    targetName: 'Orchestrateur Stratégique Suprême',
+    targetName: 'CEO & Orchestrateur Suprême',
     protocol: 'RPC Synchrone',
     payloadType: 'Dossier Benchmark Validé (JSON)',
     triggerEvent: 'Création du Micro-SaaS Challenger',
@@ -207,9 +264,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-master-lead',
     sourceId: 'master',
-    sourceName: 'Orchestrateur Stratégique Suprême',
+    sourceName: 'CEO & Orchestrateur Suprême',
     targetId: 'lead_dev',
-    targetName: 'Lead Architecte',
+    targetName: 'Head of Architecture',
     protocol: 'RPC Synchrone',
     payloadType: 'DAG Schema (JSON)',
     triggerEvent: 'Nouveau Projet / Analyse Speech',
@@ -219,9 +276,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-master-copy',
     sourceId: 'master',
-    sourceName: 'Orchestrateur Stratégique Suprême',
+    sourceName: 'CEO & Orchestrateur Suprême',
     targetId: 'copywriter_agent',
-    targetName: 'Agent Copywriting & Ads',
+    targetName: 'Lead Copywriting & Ads',
     protocol: 'Queue Asynchrone',
     payloadType: 'Brief Produit & Angles Marketing',
     triggerEvent: 'Génération de Campagnes',
@@ -231,7 +288,7 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-lead-worker',
     sourceId: 'lead_dev',
-    sourceName: 'Lead Architecte',
+    sourceName: 'Head of Architecture',
     targetId: 'worker_dev',
     targetName: 'Worker Développeur',
     protocol: 'Queue Asynchrone',
@@ -245,7 +302,7 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
     sourceId: 'worker_dev',
     sourceName: 'Worker Développeur',
     targetId: 'qa_agent',
-    targetName: 'Agent QA & Recette',
+    targetName: 'Expert QA & Recette',
     protocol: 'RPC Synchrone',
     payloadType: 'Code Source & Tests',
     triggerEvent: 'Fin de Génération de Code',
@@ -255,9 +312,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-qa-devops',
     sourceId: 'qa_agent',
-    sourceName: 'Agent QA & Recette',
+    sourceName: 'Expert QA & Recette',
     targetId: 'devops_agent',
-    targetName: 'DevOps Canary Deployer',
+    targetName: 'Head of DevOps Canary',
     protocol: 'RPC Synchrone',
     payloadType: 'Build Artifacts Validés',
     triggerEvent: 'Validation QA 100%',
@@ -267,7 +324,7 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-devops-crisis',
     sourceId: 'devops_agent',
-    sourceName: 'DevOps Canary Deployer',
+    sourceName: 'Head of DevOps Canary',
     targetId: 'planner',
     targetName: 'Planificateur de Crise',
     protocol: 'Événement Edge (Pub/Sub)',
@@ -279,9 +336,9 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
   {
     id: 'ch-cro-master',
     sourceId: 'cro_agent',
-    sourceName: 'Agent CRO & A/B Test',
+    sourceName: 'Expert CRO & A/B Test',
     targetId: 'master',
-    targetName: 'Orchestrateur Stratégique Suprême',
+    targetName: 'CEO & Orchestrateur Suprême',
     protocol: 'Queue Asynchrone',
     payloadType: 'Statistiques Multi-Armed Bandit',
     triggerEvent: 'Cycle d\'Optimisation 24h',
@@ -292,13 +349,15 @@ const INITIAL_CHANNELS: CommunicationChannel[] = [
 
 export const AgentGraphStudio: React.FC = () => {
   const [openRouterKey, setOpenRouterKey] = useState<string>('');
+  const [teams, setTeams] = useState<TeamData[]>(INITIAL_TEAMS);
   const [agents, setAgents] = useState<AgentCustomData[]>(INITIAL_AGENTS_DATA);
   const [channels, setChannels] = useState<CommunicationChannel[]>(INITIAL_CHANNELS);
   const [modelsList, setModelsList] = useState<OpenRouterModelItem[]>(FALLBACK_MODELS);
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('market_agent');
   const [selectedChannelId, setSelectedChannelId] = useState<string>('ch-market-scraper');
-  const [activeTab, setActiveTab] = useState<'flow' | 'virtual_office' | 'editor' | 'openrouter_config'>('flow');
+  const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('all');
+  const [activeTab, setActiveTab] = useState<'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config'>('hierarchy');
   const [activeEditorSubTab, setActiveEditorSubTab] = useState<'ame' | 'job' | 'params'>('ame');
   const [keyStatus, setKeyStatus] = useState<'none' | 'valid' | 'invalid'>('none');
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
@@ -310,8 +369,9 @@ export const AgentGraphStudio: React.FC = () => {
   const [isAiModalOpen, setIsAiModalOpen] = useState<boolean>(false);
   const [aiPrompt, setAiPrompt] = useState<string>('');
   const [aiModel, setAiModel] = useState<string>('google/gemini-2.5-flash');
+  const [generatorMode, setGeneratorMode] = useState<'full_supergraph' | 'add_team'>('full_supergraph');
   const [isGeneratingGraph, setIsGeneratingGraph] = useState<boolean>(false);
-  const [generatedGraphPreview, setGeneratedGraphPreview] = useState<{ summary: string; agents: AgentCustomData[]; channels: CommunicationChannel[] } | null>(null);
+  const [generatedGraphPreview, setGeneratedGraphPreview] = useState<{ summary: string; teams?: TeamData[]; agents: AgentCustomData[]; channels: CommunicationChannel[] } | null>(null);
 
   // Zip Import Hidden Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -360,18 +420,25 @@ export const AgentGraphStudio: React.FC = () => {
         setKeyStatus('valid');
       }
 
-      const savedAgents = localStorage.getItem('omniventure_custom_agents_v4');
+      const savedTeams = localStorage.getItem('omniventure_teams_v5');
+      if (savedTeams) {
+        setTeams(JSON.parse(savedTeams));
+      } else {
+        localStorage.setItem('omniventure_teams_v5', JSON.stringify(INITIAL_TEAMS));
+      }
+
+      const savedAgents = localStorage.getItem('omniventure_custom_agents_v5');
       if (savedAgents) {
         setAgents(JSON.parse(savedAgents));
       } else {
-        localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(INITIAL_AGENTS_DATA));
+        localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(INITIAL_AGENTS_DATA));
       }
 
-      const savedChannels = localStorage.getItem('omniventure_channels_v3');
+      const savedChannels = localStorage.getItem('omniventure_channels_v5');
       if (savedChannels) {
         setChannels(JSON.parse(savedChannels));
       } else {
-        localStorage.setItem('omniventure_channels_v3', JSON.stringify(INITIAL_CHANNELS));
+        localStorage.setItem('omniventure_channels_v5', JSON.stringify(INITIAL_CHANNELS));
       }
 
       const cachedModels = localStorage.getItem('omniventure_openrouter_models_cache');
@@ -389,13 +456,13 @@ export const AgentGraphStudio: React.FC = () => {
   const handleUpdateCurrentAgent = (fields: Partial<AgentCustomData>) => {
     const updated = agents.map(a => a.id === currentAgent.id ? { ...a, ...fields } : a);
     setAgents(updated);
-    localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(updated));
+    localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(updated));
   };
 
   const handleToggleChannel = (channelId: string) => {
     const updated = channels.map(c => c.id === channelId ? { ...c, enabled: !c.enabled } : c);
     setChannels(updated);
-    localStorage.setItem('omniventure_channels_v3', JSON.stringify(updated));
+    localStorage.setItem('omniventure_channels_v5', JSON.stringify(updated));
     setNotification('Canal de communication mis à jour.');
     setTimeout(() => setNotification(null), 2500);
   };
@@ -403,9 +470,10 @@ export const AgentGraphStudio: React.FC = () => {
   const handleSaveAll = () => {
     try {
       localStorage.setItem('omniventure_openrouter_key', openRouterKey);
-      localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(agents));
-      localStorage.setItem('omniventure_channels_v3', JSON.stringify(channels));
-      setNotification('Graphe multi-niveaux, Ame.md, Job.md et canaux enregistrés avec succès !');
+      localStorage.setItem('omniventure_teams_v5', JSON.stringify(teams));
+      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(agents));
+      localStorage.setItem('omniventure_channels_v5', JSON.stringify(channels));
+      setNotification('Super-Graphe d\'Équipes enregistré avec succès !');
       setTimeout(() => setNotification(null), 3500);
     } catch (e) {
       console.error(e);
@@ -415,11 +483,11 @@ export const AgentGraphStudio: React.FC = () => {
   // ZIP EXPORT
   const handleExportZip = async () => {
     try {
-      setNotification('Génération de l\'archive .zip du graphe...');
-      const blob = await exportGraphToZip(agents, channels);
-      const filename = `omniventure-graph-${new Date().toISOString().split('T')[0]}.zip`;
+      setNotification('Génération de l\'archive .zip du Super-Graphe...');
+      const blob = await exportGraphToZip(agents, channels, teams);
+      const filename = `omniventure-supergraph-${new Date().toISOString().split('T')[0]}.zip`;
       downloadBlobAsFile(blob, filename);
-      setNotification(`Archive ${filename} téléchargée avec succès (${agents.length} agents) !`);
+      setNotification(`Archive ${filename} téléchargée avec succès (${agents.length} agents, ${teams.length} équipes) !`);
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
       setNotification(`Erreur lors de l'export ZIP : ${err.message || err}`);
@@ -434,16 +502,17 @@ export const AgentGraphStudio: React.FC = () => {
     try {
       setNotification('Lecture et extraction du fichier .zip...');
       const imported = await importGraphFromZip(file);
+      if (imported.teams && imported.teams.length > 0) {
+        setTeams(imported.teams);
+        localStorage.setItem('omniventure_teams_v5', JSON.stringify(imported.teams));
+      }
       setAgents(imported.agents);
       if (imported.channels && imported.channels.length > 0) {
         setChannels(imported.channels);
+        localStorage.setItem('omniventure_channels_v5', JSON.stringify(imported.channels));
       }
       setSelectedAgentId(imported.agents[0].id);
-
-      localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(imported.agents));
-      if (imported.channels && imported.channels.length > 0) {
-        localStorage.setItem('omniventure_channels_v3', JSON.stringify(imported.channels));
-      }
+      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(imported.agents));
 
       setNotification(`✓ Succès ! ${imported.agents.length} agents et ${imported.channels?.length || 0} canaux importés depuis le .zip.`);
       setTimeout(() => setNotification(null), 4000);
@@ -454,7 +523,7 @@ export const AgentGraphStudio: React.FC = () => {
     }
   };
 
-  // AI GRAPH GENERATION
+  // AI GRAPH GENERATION (WITH LIVE OPENROUTER MODELS)
   const handleGenerateAiGraph = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!aiPrompt.trim()) return;
@@ -467,7 +536,8 @@ export const AgentGraphStudio: React.FC = () => {
         body: JSON.stringify({
           prompt: aiPrompt.trim(),
           openRouterKey: openRouterKey || undefined,
-          model: aiModel
+          model: aiModel,
+          availableModels: modelsList.slice(0, 50)
         })
       });
 
@@ -475,7 +545,7 @@ export const AgentGraphStudio: React.FC = () => {
         const json = await res.json() as any;
         if (json && json.data) {
           setGeneratedGraphPreview(json.data);
-          setNotification('Nouveau graphe généré ! Vérifiez l\'aperçu ci-dessous.');
+          setNotification('Nouveau graphe multi-équipes généré ! Vérifiez l\'aperçu.');
         }
       } else {
         setNotification('Erreur lors de la génération du graphe IA.');
@@ -491,17 +561,36 @@ export const AgentGraphStudio: React.FC = () => {
 
   const handleApplyGeneratedGraph = () => {
     if (!generatedGraphPreview) return;
-    setAgents(generatedGraphPreview.agents);
-    setChannels(generatedGraphPreview.channels);
-    setSelectedAgentId(generatedGraphPreview.agents[0].id);
 
-    localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(generatedGraphPreview.agents));
-    localStorage.setItem('omniventure_channels_v3', JSON.stringify(generatedGraphPreview.channels));
+    if (generatorMode === 'full_supergraph') {
+      if (generatedGraphPreview.teams && generatedGraphPreview.teams.length > 0) {
+        setTeams(generatedGraphPreview.teams);
+        localStorage.setItem('omniventure_teams_v5', JSON.stringify(generatedGraphPreview.teams));
+      }
+      setAgents(generatedGraphPreview.agents);
+      setChannels(generatedGraphPreview.channels);
+      setSelectedAgentId(generatedGraphPreview.agents[0].id);
+      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(generatedGraphPreview.agents));
+      localStorage.setItem('omniventure_channels_v5', JSON.stringify(generatedGraphPreview.channels));
+    } else {
+      // Add team mode: append new teams, agents and channels
+      if (generatedGraphPreview.teams) {
+        const mergedTeams = [...teams, ...generatedGraphPreview.teams.filter(t => !teams.some(existing => existing.id === t.id))];
+        setTeams(mergedTeams);
+        localStorage.setItem('omniventure_teams_v5', JSON.stringify(mergedTeams));
+      }
+      const mergedAgents = [...agents, ...generatedGraphPreview.agents.filter(a => !agents.some(existing => existing.id === a.id))];
+      const mergedChannels = [...channels, ...generatedGraphPreview.channels.filter(c => !channels.some(existing => existing.id === c.id))];
+      setAgents(mergedAgents);
+      setChannels(mergedChannels);
+      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(mergedAgents));
+      localStorage.setItem('omniventure_channels_v5', JSON.stringify(mergedChannels));
+    }
 
     setIsAiModalOpen(false);
     setGeneratedGraphPreview(null);
     setAiPrompt('');
-    setNotification('Nouveau graphe d\'agents appliqué avec succès !');
+    setNotification('Graphe d\'équipes mis à jour avec succès !');
     setTimeout(() => setNotification(null), 3500);
   };
 
@@ -551,6 +640,20 @@ export const AgentGraphStudio: React.FC = () => {
     }
   };
 
+  const filteredAgents = selectedTeamFilter === 'all' 
+    ? agents 
+    : agents.filter(a => a.teamId === selectedTeamFilter);
+
+  const getHierarchyBadge = (level: HierarchyLevel) => {
+    switch (level) {
+      case 'c_level': return { label: '👑 C-Level', color: 'bg-purple-100 text-purple-800 border-purple-200' };
+      case 'vp': return { label: '💼 VP', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' };
+      case 'head_of': return { label: '🎖️ Head of', color: 'bg-blue-100 text-blue-800 border-blue-200' };
+      case 'lead': return { label: '📐 Lead', color: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+      case 'expert': return { label: '⚡ Expert', color: 'bg-teal-100 text-teal-800 border-teal-200' };
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -571,11 +674,16 @@ export const AgentGraphStudio: React.FC = () => {
       />
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Graphe & Topologie d'Agents Multi-Niveaux</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Super-Graphe d'Équipes & Hiérarchie d'Entreprise</h1>
+            <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono text-xs font-semibold">
+              5 Niveaux de Profondeur
+            </span>
+          </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            Orchestration modulaire : exportez, importez en .zip ou demandez à l'IA de concevoir un graphe complet sur-mesure.
+            Architecture d'entreprise d'IA : C-Level ➔ VP ➔ Head of ➔ Lead ➔ Expert organisés en équipes modulaires composables.
           </p>
         </div>
 
@@ -583,7 +691,7 @@ export const AgentGraphStudio: React.FC = () => {
           {/* AI Graph Generator Button */}
           <button
             onClick={() => setIsAiModalOpen(true)}
-            className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all flex items-center gap-1.5"
+            className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all flex items-center gap-1.5"
           >
             <span>✨</span>
             <span>Générer par IA (Prompt)</span>
@@ -593,7 +701,7 @@ export const AgentGraphStudio: React.FC = () => {
           <button
             onClick={handleExportZip}
             className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-            title="Exporter tous les agents, Ame.md, Job.md et canaux dans une archive .zip"
+            title="Exporter tout le super-graphe et les équipes en archive .zip"
           >
             <span>📦</span>
             <span>Exporter .zip</span>
@@ -611,12 +719,20 @@ export const AgentGraphStudio: React.FC = () => {
 
           <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white text-xs">
             <button
-              onClick={() => setActiveTab('flow')}
+              onClick={() => setActiveTab('hierarchy')}
               className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'flow' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
+                activeTab === 'hierarchy' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              📊 Organigramme & Flux
+              🏢 Organigramme 5 Niveaux
+            </button>
+            <button
+              onClick={() => setActiveTab('teams')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                activeTab === 'teams' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              👥 Vue par Équipes ({teams.length})
             </button>
             <button
               onClick={() => setActiveTab('virtual_office')}
@@ -653,18 +769,18 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       </div>
 
-      {/* AI GRAPH GENERATOR MODAL */}
+      {/* AI GRAPH & TEAM GENERATOR MODAL WITH LIVE OPENROUTER COMBOBOX */}
       {isAiModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white w-full max-w-3xl rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
             <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-purple-50 to-indigo-50">
               <div className="flex items-center gap-2.5">
-                <span className="text-xl">✨</span>
+                <span className="text-2xl">✨</span>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">Générateur de Graphe d'Agents par IA</h2>
-                  <p className="text-xs text-slate-500">Décrivez votre besoin métier : l'IA va architecturer l'ensemble des agents, Ame.md, Job.md et canaux.</p>
+                  <h2 className="text-base font-bold text-slate-900">Générateur de Super-Graphe & Équipes d'Agents</h2>
+                  <p className="text-xs text-slate-500">Conception automatique basée sur les derniers modèles OpenRouter.</p>
                 </div>
               </div>
               <button
@@ -678,15 +794,44 @@ export const AgentGraphStudio: React.FC = () => {
             {/* Modal Body */}
             <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
               
+              {/* Generation Mode Selector */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setGeneratorMode('full_supergraph')}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    generatorMode === 'full_supergraph'
+                      ? 'bg-purple-50 border-purple-600 ring-1 ring-purple-600'
+                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="font-bold text-slate-900 text-xs">🏢 Super-Graphe d'Entreprise Entier</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Génère 5 niveaux complets (C-Level, VP, Head, Lead, Experts) et plusieurs équipes.</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setGeneratorMode('add_team')}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    generatorMode === 'add_team'
+                      ? 'bg-indigo-50 border-indigo-600 ring-1 ring-indigo-600'
+                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="font-bold text-slate-900 text-xs">➕ Nouvelle Équipe Spécialisée</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Ajoute une équipe autonome à connecter au graphe existant.</div>
+                </button>
+              </div>
+
               {/* Inspiration Pills */}
               <div className="space-y-1.5">
-                <span className="text-slate-500 font-semibold block">Idées de prompts rapides :</span>
+                <span className="text-slate-500 font-semibold block">Idées de prompts prêts à l'emploi :</span>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    "SaaS B2B d'Extraction Comptable & Rapprochement Bancaire",
-                    "Usine de Scraping Immobilier avec calcul de Rentabilité & Alertes",
-                    "Graphe E-Commerce & Dropshipping avec recherche de Produits Gagnants",
-                    "Système d'Audit SEO & Rédacteur de Contenus Programmatiques"
+                    "SaaS B2B d'Extraction Comptable, Factures & Rapprochement Bancaire",
+                    "Usine de Scraping Immobilier, Calcul de Rentabilité & Alertes Instantanées",
+                    "Graphe E-Commerce & Dropshipping avec Veille TikTok Shop & Fournisseurs",
+                    "Équipe Cold Email B2B avec Scraper LinkedIn & Rédacteur d'Icebreakers"
                   ].map(template => (
                     <button
                       key={template}
@@ -702,29 +847,30 @@ export const AgentGraphStudio: React.FC = () => {
 
               {/* Prompt Textarea */}
               <div className="space-y-1.5">
-                <label className="font-semibold text-slate-800 block">Description détaillée du Graphe souhaité :</label>
+                <label className="font-semibold text-slate-800 block">Description de la mission / du produit :</label>
                 <textarea
-                  rows={4}
+                  rows={3}
                   value={aiPrompt}
                   onChange={e => setAiPrompt(e.target.value)}
-                  placeholder="Ex: Crée un graphe spécialisé dans l'analyse de cold emails avec un agent scraper de LinkedIn, un rédacteur d'icebreakers personnalisés et un agent de relance automatique..."
+                  placeholder="Ex: Conçois une usine d'agents pour un SaaS d'automatisation de déclarations TVA avec un VP Finance, un Head of OCR, un Lead D1 et des workers de calcul..."
                   className="w-full p-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 shadow-inner"
                 />
               </div>
 
-              {/* Model Choice for Generation */}
-              <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <span className="text-slate-700 font-semibold">Modèle IA Architecte :</span>
-                <select
+              {/* Model Combobox (OpenRouter Live Models) */}
+              <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-800 font-semibold">Modèle Architecte (OpenRouter Catalogue en Direct) :</span>
+                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">
+                    {modelsList.length} modèles synchronisés
+                  </span>
+                </div>
+                <ModelCombobox
                   value={aiModel}
-                  onChange={e => setAiModel(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900 font-mono text-xs focus:outline-none"
-                >
-                  <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Ultra-Rapide)</option>
-                  <option value="x-ai/grok-2">Grok 2 (Raisonnement Élargi)</option>
-                  <option value="deepseek/deepseek-chat">DeepSeek V3 (Économique)</option>
-                  <option value="anthropic/claude-3.7-sonnet">Claude 3.7 Sonnet (Expertise Max)</option>
-                </select>
+                  onChange={newModelId => setAiModel(newModelId)}
+                  models={modelsList}
+                  isLoading={isLoadingModels}
+                />
               </div>
 
               {/* GENERATED PREVIEW */}
@@ -738,12 +884,21 @@ export const AgentGraphStudio: React.FC = () => {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {generatedGraphPreview.agents.map(ag => (
-                      <div key={ag.id} className="p-2 bg-white rounded-lg border border-purple-200 text-[11px] space-y-0.5">
-                        <div className="font-bold text-slate-900 truncate">{ag.role}</div>
-                        <div className="text-[10px] text-purple-700 font-mono">Niveau {ag.tier} • {ag.modelId.split('/')[1] || ag.modelId}</div>
-                      </div>
-                    ))}
+                    {generatedGraphPreview.agents.map(ag => {
+                      const badge = getHierarchyBadge(ag.hierarchyLevel || 'lead');
+                      return (
+                        <div key={ag.id} className="p-2.5 bg-white rounded-lg border border-purple-200 text-[11px] space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border ${badge.color}`}>
+                              {badge.label}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">{ag.teamName || 'Équipe'}</span>
+                          </div>
+                          <div className="font-bold text-slate-900 truncate">{ag.role}</div>
+                          <div className="text-[10px] text-purple-700 font-mono">{ag.modelId.split('/')[1] || ag.modelId}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -767,7 +922,7 @@ export const AgentGraphStudio: React.FC = () => {
                     onClick={handleApplyGeneratedGraph}
                     className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
                   >
-                    ✓ Appliquer ce Graphe au Système
+                    ✓ {generatorMode === 'full_supergraph' ? 'Remplacer le Graphe Actuel' : 'Ajouter cette Équipe au Graphe'}
                   </button>
                 ) : (
                   <button
@@ -776,7 +931,7 @@ export const AgentGraphStudio: React.FC = () => {
                     disabled={isGeneratingGraph || !aiPrompt.trim()}
                     className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
-                    <span>{isGeneratingGraph ? '🧠 Conception du Graphe...' : '✨ Générer l\'Architecture'}</span>
+                    <span>{isGeneratingGraph ? '🧠 Conception de l\'Architecture...' : '✨ Générer l\'Architecture d\'Équipes'}</span>
                   </button>
                 )}
               </div>
@@ -786,15 +941,34 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       )}
 
-      {/* VIEW 1: VISUAL MULTI-TIER ORGANIGRAM & COMMUNICATION FLOWS */}
-      {activeTab === 'flow' && (
+      {/* VIEW 1: 5-LEVEL ENTERPRISE HIERARCHY (C-LEVEL -> VP -> HEAD -> LEAD -> EXPERT) */}
+      {activeTab === 'hierarchy' && (
         <div className="space-y-6">
           
-          {/* Top Bar for Flow simulation */}
+          {/* Top Bar for Flow simulation & Team Filter */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="text-xs text-slate-600">
-              <span className="font-bold text-slate-900">Graphe Actif : </span>
-              <span>{agents.length} Agents Spécialisés • {channels.length} Canaux Inter-Niveaux (RPC & Queues)</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-bold text-slate-900">Filtrer par Équipe :</span>
+              <button
+                onClick={() => setSelectedTeamFilter('all')}
+                className={`px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+                  selectedTeamFilter === 'all' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                Toutes ({agents.length})
+              </button>
+              {teams.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTeamFilter(t.id)}
+                  className={`px-2.5 py-1 rounded-lg border font-medium transition-colors flex items-center gap-1 ${
+                    selectedTeamFilter === t.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{t.icon}</span>
+                  <span>{t.name}</span>
+                </button>
+              ))}
             </div>
 
             <div className="flex items-center gap-2">
@@ -813,119 +987,178 @@ export const AgentGraphStudio: React.FC = () => {
             {/* Visual Organigram Canvas (Left 2 Cols) */}
             <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
               <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                <span className="font-bold text-slate-900 text-sm">Organigramme Multi-Niveaux & Canaux Croisés</span>
+                <span className="font-bold text-slate-900 text-sm">Organigramme d'Entreprise (5 Niveaux Hiérarchiques)</span>
                 <span className="text-xs text-indigo-600 font-mono font-medium">Cloudflare Agents Protocol</span>
               </div>
 
-              <div className="space-y-6">
+              <div className="space-y-4">
                 
-                {/* TIER 1: Orchestration & Stratégie */}
-                <div className="p-4 rounded-xl bg-purple-50/50 border border-purple-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-purple-900 uppercase font-mono tracking-wider">
-                      Niveau 1 : Cerveaux Stratégiques & Décisionnels
-                    </span>
-                    <span className="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-mono">
-                      Grok 2 / Gemini 2.5 Flash / Qwen 72B
-                    </span>
+                {/* 1. C-LEVEL */}
+                {filteredAgents.filter(a => a.hierarchyLevel === 'c_level').length > 0 && (
+                  <div className="p-4 rounded-xl bg-purple-50/70 border border-purple-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-purple-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                        <span>👑</span>
+                        <span>Niveau 1 : C-Level & Vision Stratégique</span>
+                      </span>
+                      <span className="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-mono font-semibold">
+                        Grok 2 / Claude 3.7 / Qwen 72B
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {filteredAgents.filter(a => a.hierarchyLevel === 'c_level').map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAgentId(a.id)}
+                          className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
+                            selectedAgentId === a.id ? 'border-purple-600 ring-2 ring-purple-600/30' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs truncate">{a.role}</span>
+                            <span className="text-[9px] text-purple-700 bg-purple-50 px-1.5 rounded">{a.teamName || 'Stratégie'}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-1 truncate">{a.modelId}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {agents.filter(a => a.tier === 1).map(a => (
-                      <div
-                        key={a.id}
-                        onClick={() => setSelectedAgentId(a.id)}
-                        className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
-                          selectedAgentId === a.id ? 'border-purple-600 ring-2 ring-purple-600/30' : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="font-bold text-slate-900 text-xs truncate">{a.role}</div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">{a.modelId}</div>
-                      </div>
-                    ))}
+                {/* 2. VP LEVEL */}
+                {filteredAgents.filter(a => a.hierarchyLevel === 'vp').length > 0 && (
+                  <div className="p-4 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-indigo-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                        <span>💼</span>
+                        <span>Niveau 2 : Vice-Presidents (VP Direction Métier)</span>
+                      </span>
+                      <span className="text-[10px] text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded font-mono font-semibold">
+                        Gemini 2.5 Flash / Qwen 72B
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {filteredAgents.filter(a => a.hierarchyLevel === 'vp').map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAgentId(a.id)}
+                          className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
+                            selectedAgentId === a.id ? 'border-indigo-600 ring-2 ring-indigo-600/30' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs truncate">{a.role}</span>
+                            <span className="text-[9px] text-indigo-700 bg-indigo-50 px-1.5 rounded">{a.teamName || 'Direction'}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-1 truncate">{a.modelId}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Connection Flow Indicator 1 */}
-                <div className="text-center font-mono text-[11px] text-slate-400 flex items-center justify-center gap-2">
-                  <span className="h-4 w-px bg-slate-300"></span>
-                  <span className={`px-2.5 py-0.5 rounded-full border ${
-                    activeSimulationStep <= 2 ? 'bg-indigo-600 text-white font-bold animate-pulse' : 'bg-slate-100 text-slate-600 border-slate-200'
-                  }`}>
-                    ↕ Délégation de Recherche (Scraping & Sentiment) & Architecture
-                  </span>
-                  <span className="h-4 w-px bg-slate-300"></span>
-                </div>
+                {/* 3. HEAD OF LEVEL */}
+                {filteredAgents.filter(a => a.hierarchyLevel === 'head_of').length > 0 && (
+                  <div className="p-4 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-blue-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                        <span>🎖️</span>
+                        <span>Niveau 3 : Heads of (Responsables Départementaux)</span>
+                      </span>
+                      <span className="text-[10px] text-blue-700 bg-blue-100 px-2 py-0.5 rounded font-mono font-semibold">
+                        Découpage Tactique
+                      </span>
+                    </div>
 
-                {/* TIER 2: Recherche Spécialisée, Scrapers & Architectes */}
-                <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-indigo-900 uppercase font-mono tracking-wider">
-                      Niveau 2 : Agents de Recherche, Scrapers & Spécialistes Métier
-                    </span>
-                    <span className="text-[10px] text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded font-mono">
-                      Recherche à Coût Infime ($0.15/1M)
-                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {filteredAgents.filter(a => a.hierarchyLevel === 'head_of').map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAgentId(a.id)}
+                          className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
+                            selectedAgentId === a.id ? 'border-blue-600 ring-2 ring-blue-600/30' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs truncate">{a.role}</span>
+                            <span className="text-[9px] text-blue-700 bg-blue-50 px-1.5 rounded">{a.teamName}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-1 truncate">{a.modelId}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {agents.filter(a => a.tier === 2).map(a => (
-                      <div
-                        key={a.id}
-                        onClick={() => setSelectedAgentId(a.id)}
-                        className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
-                          selectedAgentId === a.id ? 'border-indigo-600 ring-2 ring-indigo-600/30' : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="font-bold text-slate-900 text-xs truncate">{a.role}</div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">{a.modelId}</div>
-                      </div>
-                    ))}
+                {/* 4. LEAD LEVEL */}
+                {filteredAgents.filter(a => a.hierarchyLevel === 'lead').length > 0 && (
+                  <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-emerald-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                        <span>📐</span>
+                        <span>Niveau 4 : Leads Techniques & Spécialistes</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-mono font-semibold">
+                        Specs Micro-Tâches &lt; 50 lignes
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {filteredAgents.filter(a => a.hierarchyLevel === 'lead').map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAgentId(a.id)}
+                          className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
+                            selectedAgentId === a.id ? 'border-emerald-600 ring-2 ring-emerald-600/30' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs truncate">{a.role}</span>
+                            <span className="text-[9px] text-emerald-700 bg-emerald-50 px-1.5 rounded">{a.teamName}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-1 truncate">{a.modelId}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Connection Flow Indicator 2 */}
-                <div className="text-center font-mono text-[11px] text-slate-400 flex items-center justify-center gap-2">
-                  <span className="h-4 w-px bg-slate-300"></span>
-                  <span className={`px-2.5 py-0.5 rounded-full border ${
-                    activeSimulationStep >= 3 && activeSimulationStep <= 6 ? 'bg-indigo-600 text-white font-bold animate-pulse' : 'bg-slate-100 text-slate-600 border-slate-200'
-                  }`}>
-                    ↓ Distribution Atomique (&lt; 50 lignes) → Audit QA & Canary
-                  </span>
-                  <span className="h-4 w-px bg-slate-300"></span>
-                </div>
+                {/* 5. EXPERT / WORKER LEVEL */}
+                {filteredAgents.filter(a => a.hierarchyLevel === 'expert').length > 0 && (
+                  <div className="p-4 rounded-xl bg-teal-50/70 border border-teal-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-teal-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                        <span>⚡</span>
+                        <span>Niveau 5 : Experts & Workers d'Exécution Atomique</span>
+                      </span>
+                      <span className="text-[10px] text-teal-700 bg-teal-100 px-2 py-0.5 rounded font-mono font-semibold">
+                        DeepSeek V3 / Qwen Coder / Gemini Flash (~$0.15/M)
+                      </span>
+                    </div>
 
-                {/* TIER 3: Exécution Atomique, QA & Edge Operations */}
-                <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-emerald-900 uppercase font-mono tracking-wider">
-                      Niveau 3 : Exécution Atomique, Recette QA & Opérations Edge
-                    </span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-mono">
-                      DeepSeek V3 / Qwen Coder / Gemini
-                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {filteredAgents.filter(a => a.hierarchyLevel === 'expert').map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAgentId(a.id)}
+                          className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
+                            selectedAgentId === a.id ? 'border-teal-600 ring-2 ring-teal-600/30' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="font-bold text-slate-900 text-xs truncate">{a.role}</div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">{a.modelId}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {agents.filter(a => a.tier === 3).map(a => (
-                      <div
-                        key={a.id}
-                        onClick={() => setSelectedAgentId(a.id)}
-                        className={`p-3 bg-white rounded-lg border text-left cursor-pointer transition-all ${
-                          selectedAgentId === a.id ? 'border-emerald-600 ring-2 ring-emerald-600/30' : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="font-bold text-slate-900 text-xs truncate">{a.role}</div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">{a.modelId}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                )}
 
               </div>
             </div>
 
-            {/* Channels & Cross-Tier Inspector (Right 1 Col) */}
+            {/* Channels & Hierarchy Inspector (Right 1 Col) */}
             <div className="space-y-4">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
                 <div className="flex items-center justify-between">
@@ -934,7 +1167,7 @@ export const AgentGraphStudio: React.FC = () => {
                     RPC & Queues
                   </span>
                 </div>
-                <p className="text-xs text-slate-500">Cliquez sur un canal pour inspecter ou modifier son protocole.</p>
+                <p className="text-xs text-slate-500">Cliquez sur un canal pour inspecter son protocole.</p>
 
                 <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                   {channels.map((ch, idx) => {
@@ -1003,14 +1236,14 @@ export const AgentGraphStudio: React.FC = () => {
                     </div>
 
                     <div>
-                      <span className="text-slate-400 block text-[10px]">Format de Données Échangé</span>
+                      <span className="text-slate-400 block text-[10px]">Format de Données</span>
                       <code className="text-indigo-600 font-mono bg-slate-50 px-1.5 py-0.5 rounded text-[11px]">
                         {selectedChannel.payloadType}
                       </code>
                     </div>
 
                     <div>
-                      <span className="text-slate-400 block text-[10px]">Description Opérationnelle</span>
+                      <span className="text-slate-400 block text-[10px]">Description</span>
                       <p className="text-slate-600 text-[11px] leading-relaxed">{selectedChannel.description}</p>
                     </div>
                   </div>
@@ -1023,12 +1256,75 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       )}
 
+      {/* VIEW 2: TEAMS HUB (COMPOSABLE TEAM MODULES) */}
+      {activeTab === 'teams' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {teams.map(team => {
+              const teamAgents = agents.filter(a => a.teamId === team.id);
+              return (
+                <div key={team.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">{team.icon}</span>
+                        <div>
+                          <h3 className="font-bold text-slate-900 text-sm">{team.name}</h3>
+                          <span className="text-[10px] text-slate-400 font-mono">{teamAgents.length} Agents assignés</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-500 leading-snug">{team.description}</p>
+
+                    {/* Team Members List */}
+                    <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                      {teamAgents.map(ag => {
+                        const badge = getHierarchyBadge(ag.hierarchyLevel);
+                        return (
+                          <div
+                            key={ag.id}
+                            onClick={() => {
+                              setSelectedAgentId(ag.id);
+                              setActiveTab('editor');
+                            }}
+                            className="p-2 rounded-lg bg-slate-50 hover:bg-indigo-50 border border-slate-200/80 hover:border-indigo-300 cursor-pointer transition-colors flex items-center justify-between text-xs"
+                          >
+                            <div className="truncate pr-2">
+                              <span className="font-bold text-slate-900 truncate block">{ag.role}</span>
+                              <span className="text-[10px] text-slate-400 font-mono truncate">{ag.modelId}</span>
+                            </div>
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border whitespace-nowrap ${badge.color}`}>
+                              {badge.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setSelectedTeamFilter(team.id);
+                      setActiveTab('hierarchy');
+                    }}
+                    className="w-full py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors"
+                  >
+                    Voir dans l'Organigramme ➔
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* VIEW: 2D GRAPHIC VIRTUAL OFFICE */}
       {activeTab === 'virtual_office' && (
         <VirtualOffice2D initialMissionName="Orchestration & Échanges Multi-Agents en Direct" autoPlay={true} />
       )}
 
-      {/* VIEW 2: MARKDOWN PERSONA EDITOR (Ame.md & Job.md & Dynamic Tier) */}
+      {/* VIEW 3: MARKDOWN PERSONA EDITOR (Ame.md & Job.md & Hierarchy Level) */}
       {activeTab === 'editor' && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2 lg:col-span-1">
@@ -1036,32 +1332,31 @@ export const AgentGraphStudio: React.FC = () => {
               Agents Disponibles ({agents.length})
             </span>
 
-            <div className="space-y-1">
-              {agents.map(ag => (
-                <button
-                  key={ag.id}
-                  onClick={() => setSelectedAgentId(ag.id)}
-                  className={`w-full p-2.5 rounded-lg border text-left transition-colors ${
-                    selectedAgentId === ag.id
-                      ? 'bg-indigo-50 border-indigo-600 ring-1 ring-indigo-600'
-                      : 'bg-white border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-900 text-xs truncate pr-1">{ag.role}</span>
-                    <span className={`text-[9px] uppercase font-mono px-1.5 py-0.2 rounded font-semibold ${
-                      ag.tier === 1 ? 'bg-purple-50 text-purple-700' :
-                      ag.tier === 2 ? 'bg-indigo-50 text-indigo-700' :
-                      'bg-emerald-50 text-emerald-700'
-                    }`}>
-                      Niveau {ag.tier}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono mt-1 truncate">
-                    {ag.modelId}
-                  </div>
-                </button>
-              ))}
+            <div className="space-y-1 max-h-[550px] overflow-y-auto pr-1">
+              {agents.map(ag => {
+                const badge = getHierarchyBadge(ag.hierarchyLevel);
+                return (
+                  <button
+                    key={ag.id}
+                    onClick={() => setSelectedAgentId(ag.id)}
+                    className={`w-full p-2.5 rounded-lg border text-left transition-colors ${
+                      selectedAgentId === ag.id
+                        ? 'bg-indigo-50 border-indigo-600 ring-1 ring-indigo-600'
+                        : 'bg-white border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900 text-xs truncate pr-1">{ag.role}</span>
+                      <span className={`text-[9px] font-semibold px-1 py-0.2 rounded border whitespace-nowrap ${badge.color}`}>
+                        {badge.label}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono mt-1 truncate">
+                      {ag.modelId}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1070,11 +1365,11 @@ export const AgentGraphStudio: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-slate-900">{currentAgent.role}</h2>
+                  <span className={`text-xs px-2 py-0.5 rounded font-semibold border ${getHierarchyBadge(currentAgent.hierarchyLevel).color}`}>
+                    {getHierarchyBadge(currentAgent.hierarchyLevel).label}
+                  </span>
                   <span className="text-xs font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-semibold">
                     {currentAgent.modelId}
-                  </span>
-                  <span className="text-xs font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-semibold">
-                    Niveau {currentAgent.tier}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">{currentAgent.description}</p>
@@ -1103,7 +1398,7 @@ export const AgentGraphStudio: React.FC = () => {
                     activeEditorSubTab === 'params' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  ⚙️ Niveau & Modèle
+                  ⚙️ Rôle, Équipe & Modèle
                 </button>
               </div>
             </div>
@@ -1145,30 +1440,56 @@ export const AgentGraphStudio: React.FC = () => {
             {activeEditorSubTab === 'params' && (
               <div className="space-y-5 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                 
-                {/* Tier Selection */}
+                {/* 5-Level Hierarchy Selection */}
                 <div className="space-y-2">
-                  <label className="block font-semibold text-slate-700">Niveau Hiérarchique dans le Graphe :</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[1, 2, 3].map(t => (
+                  <label className="block font-semibold text-slate-700">Niveau de Profondeur Hiérarchique :</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    {[
+                      { level: 'c_level' as HierarchyLevel, label: '👑 C-Level', desc: 'Arbitrage P&L' },
+                      { level: 'vp' as HierarchyLevel, label: '💼 VP', desc: 'Direction Métier' },
+                      { level: 'head_of' as HierarchyLevel, label: '🎖️ Head of', desc: 'Découpage' },
+                      { level: 'lead' as HierarchyLevel, label: '📐 Lead', desc: 'Specs atomiques' },
+                      { level: 'expert' as HierarchyLevel, label: '⚡ Expert', desc: 'Exécution Worker' }
+                    ].map(h => (
                       <button
-                        key={t}
+                        key={h.level}
                         type="button"
-                        onClick={() => handleUpdateCurrentAgent({ tier: t as 1 | 2 | 3 })}
+                        onClick={() => handleUpdateCurrentAgent({ hierarchyLevel: h.level })}
                         className={`p-2.5 rounded-lg border text-left font-medium transition-colors ${
-                          currentAgent.tier === t
+                          currentAgent.hierarchyLevel === h.level
                             ? 'bg-indigo-600 text-white border-indigo-600'
                             : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                         }`}
                       >
-                        <div className="font-bold text-xs">Niveau {t}</div>
-                        <div className={`text-[10px] ${currentAgent.tier === t ? 'text-indigo-100' : 'text-slate-400'}`}>
-                          {t === 1 ? 'Orchestration & Décision' : t === 2 ? 'Recherche & Architecture' : 'Exécution & QA Edge'}
+                        <div className="font-bold text-xs">{h.label}</div>
+                        <div className={`text-[10px] ${currentAgent.hierarchyLevel === h.level ? 'text-indigo-100' : 'text-slate-400'}`}>
+                          {h.desc}
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
 
+                {/* Team Selection */}
+                <div className="space-y-2 pt-3 border-t border-slate-200">
+                  <label className="block font-semibold text-slate-700">Équipe d'Appartenance :</label>
+                  <select
+                    value={currentAgent.teamId || teams[0].id}
+                    onChange={e => {
+                      const found = teams.find(t => t.id === e.target.value);
+                      handleUpdateCurrentAgent({ teamId: e.target.value, teamName: found?.name || 'Équipe' });
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-900 font-medium text-xs focus:outline-none"
+                  >
+                    {teams.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.icon} {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Model Combobox (OpenRouter Live Models) */}
                 <div className="space-y-2 pt-3 border-t border-slate-200">
                   <label className="block font-semibold text-slate-700">Modèle OpenRouter Assigné :</label>
                   <ModelCombobox
@@ -1212,19 +1533,19 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       )}
 
-      {/* VIEW 3: OPENROUTER CONFIGURATION */}
+      {/* VIEW 4: OPENROUTER CONFIGURATION */}
       {activeTab === 'openrouter_config' && (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-slate-900 text-base">Clé API OpenRouter & Catalogue</h3>
+                  <h3 className="font-bold text-slate-900 text-base">Clé API OpenRouter & Catalogue en Direct</h3>
                   <span className="text-xs font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-semibold">
                     {modelsList.length} modèles actifs
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">Votre clé permet d'utiliser n'importe quel LLM mondial.</p>
+                <p className="text-xs text-slate-500 mt-0.5">Votre clé permet d'utiliser n'importe quel LLM mondial (Gemini, Claude, Grok, DeepSeek, Qwen).</p>
               </div>
 
               <span className={`px-2.5 py-1 rounded text-xs font-semibold ${

@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import type { AgentCustomData } from '../components/AgentGraphStudio';
+import type { AgentCustomData, TeamData } from '../components/AgentGraphStudio';
 
 export interface CommunicationChannel {
   id: string;
@@ -16,22 +16,25 @@ export interface CommunicationChannel {
 
 export async function exportGraphToZip(
   agents: AgentCustomData[],
-  channels: CommunicationChannel[]
+  channels: CommunicationChannel[],
+  teams: TeamData[] = []
 ): Promise<Blob> {
   const zip = new JSZip();
 
   // 1. Manifest
   const manifest = {
-    generator: 'OmniVenture AI Agent Graph Engine',
-    version: '4.0.0',
+    generator: 'OmniVenture AI Multi-Team Super-Graph Engine',
+    version: '5.0.0',
     exportedAt: new Date().toISOString(),
+    totalTeams: teams.length,
     totalAgents: agents.length,
     totalChannels: channels.length
   };
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
 
-  // 2. Global Topology and Channels
-  zip.file('topology.json', JSON.stringify({ agents, channels }, null, 2));
+  // 2. Global Topology, Teams and Channels
+  zip.file('topology.json', JSON.stringify({ teams, agents, channels }, null, 2));
+  zip.file('teams.json', JSON.stringify(teams, null, 2));
   zip.file('channels.json', JSON.stringify(channels, null, 2));
 
   // 3. Agent Folders with Ame.md, Job.md and config.json
@@ -48,7 +51,10 @@ export async function exportGraphToZip(
         const config = {
           id: agent.id,
           role: agent.role,
-          tier: agent.tier,
+          hierarchyLevel: agent.hierarchyLevel || 'lead',
+          tier: agent.tier || 2,
+          teamId: agent.teamId || 'team_general',
+          teamName: agent.teamName || 'Équipe Générale',
           category: agent.category,
           modelId: agent.modelId,
           description: agent.description,
@@ -77,6 +83,7 @@ export function downloadBlobAsFile(blob: Blob, filename: string): void {
 }
 
 export async function importGraphFromZip(file: File): Promise<{
+  teams?: TeamData[];
   agents: AgentCustomData[];
   channels: CommunicationChannel[];
   manifest?: any;
@@ -91,6 +98,7 @@ export async function importGraphFromZip(file: File): Promise<{
       const parsed = JSON.parse(content);
       if (parsed.agents && Array.isArray(parsed.agents)) {
         return {
+          teams: parsed.teams || [],
           agents: parsed.agents,
           channels: parsed.channels || []
         };
@@ -103,6 +111,14 @@ export async function importGraphFromZip(file: File): Promise<{
   // Method 2: Traverse agents/ folder
   const agents: AgentCustomData[] = [];
   const channels: CommunicationChannel[] = [];
+  let teams: TeamData[] = [];
+
+  const teamsFile = zip.file('teams.json');
+  if (teamsFile) {
+    try {
+      teams = JSON.parse(await teamsFile.async('string'));
+    } catch {}
+  }
 
   const channelsFile = zip.file('channels.json');
   if (channelsFile) {
@@ -141,7 +157,10 @@ export async function importGraphFromZip(file: File): Promise<{
     agents.push({
       id: config.id || agentId,
       role: config.role || `Agent ${agentId}`,
+      hierarchyLevel: config.hierarchyLevel || 'lead',
       tier: (config.tier as 1 | 2 | 3) || 2,
+      teamId: config.teamId || 'team_general',
+      teamName: config.teamName || 'Équipe Générale',
       category: config.category || 'engineering',
       modelId: config.modelId || 'google/gemini-2.5-flash',
       description: config.description || 'Agent importé depuis archive .zip',
@@ -156,5 +175,5 @@ export async function importGraphFromZip(file: File): Promise<{
     throw new Error('Le fichier .zip ne contient aucune configuration d\'agent valide.');
   }
 
-  return { agents, channels };
+  return { teams, agents, channels };
 }
