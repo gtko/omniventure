@@ -1,0 +1,11 @@
+---
+import { SidebarNav } from './SidebarNav';
+
+interface Props {
+  currentPath?: string;
+}
+
+const { currentPath = '/' } = Astro.props;
+---
+
+<SidebarNav currentPath={currentPath} client:load />

@@ -1,0 +1,35 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { VirtualOffice2D } from '../components/VirtualOffice2D';
+---
+
+<Layout title="Bureau Virtuel 2D — Live Multi-Agents" currentPath="/office">
+  <div class="space-y-6">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Bureau Virtuel 2D — Centre d'Opérations Multi-Agents</h1>
+        <p class="text-sm text-slate-500 mt-0.5">
+          Vue dédiée plein écran : observez en direct les déplacements, les discussions dans les bulles et la collaboration des agents.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <a
+          href="/agents"
+          class="px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+        >
+          ⚙️ Configurer les Agents & Modèles
+        </a>
+        <a
+          href="/market"
+          class="px-3.5 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors shadow-xs"
+        >
+          🔍 Lancer une Analyse de Marché
+        </a>
+      </div>
+    </div>
+
+    <!-- Fullscreen Dedicated 2D Office Component -->
+    <VirtualOffice2D initialMissionName="Orchestration & Échanges Multi-Agents en Direct" autoPlay={true} client:load />
+  </div>
+</Layout>

@@ -1,0 +1,98 @@
+-- Cloudflare D1 Database Schema for OmniVenture AI
+
+CREATE TABLE IF NOT EXISTS ventures (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    niche TEXT NOT NULL,
+    type TEXT CHECK(type IN ('saas', 'dropship', 'affiliate', 'ebook', 'viral_campaign')) NOT NULL,
+    business_model TEXT CHECK(business_model IN ('trial_rebill', 'freemium', 'one_time', 'affiliate_commission')) NOT NULL,
+    status TEXT CHECK(status IN ('draft', 'building', 'canary', 'live', 'paused', 'error')) DEFAULT 'draft',
+    domain TEXT,
+    stripe_account_id TEXT,
+    price_trial_cents INTEGER DEFAULT 50,
+    price_recurring_cents INTEGER DEFAULT 2900,
+    trial_duration_hours INTEGER DEFAULT 48,
+    canary_traffic_pct INTEGER DEFAULT 0,
+    active_version TEXT DEFAULT 'v1.0.0',
+    visitors_count INTEGER DEFAULT 0,
+    subscribers_count INTEGER DEFAULT 0,
+    mrr_cents INTEGER DEFAULT 0,
+    total_revenue_cents INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id TEXT PRIMARY KEY,
+    venture_id TEXT,
+    agent_role TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    status TEXT CHECK(status IN ('pending', 'running', 'success', 'failed')) DEFAULT 'pending',
+    prompt_summary TEXT,
+    tokens_input INTEGER DEFAULT 0,
+    tokens_output INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0.0,
+    latency_ms INTEGER DEFAULT 0,
+    output_preview TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(venture_id) REFERENCES ventures(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS incident_reports (
+    id TEXT PRIMARY KEY,
+    venture_id TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    stack_trace TEXT,
+    root_cause TEXT,
+    decision TEXT CHECK(decision IN ('hotfix_applied', 'instant_rollback', 'escalated')) NOT NULL,
+    resolved_by_model TEXT,
+    latency_seconds INTEGER DEFAULT 0,
+    status TEXT CHECK(status IN ('investigating', 'resolved', 'monitoring')) DEFAULT 'resolved',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(venture_id) REFERENCES ventures(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ab_tests (
+    id TEXT PRIMARY KEY,
+    venture_id TEXT NOT NULL,
+    element_tested TEXT CHECK(element_tested IN ('pricing', 'trial_duration', 'hero_headline', 'cta_button')) NOT NULL,
+    variant_a_label TEXT NOT NULL,
+    variant_a_value TEXT NOT NULL,
+    variant_a_impressions INTEGER DEFAULT 0,
+    variant_a_conversions INTEGER DEFAULT 0,
+    variant_b_label TEXT NOT NULL,
+    variant_b_value TEXT NOT NULL,
+    variant_b_impressions INTEGER DEFAULT 0,
+    variant_b_conversions INTEGER DEFAULT 0,
+    current_winner TEXT CHECK(current_winner IN ('A', 'B', 'inconclusive')) DEFAULT 'inconclusive',
+    auto_promoted BOOLEAN DEFAULT FALSE,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(venture_id) REFERENCES ventures(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS media_assets (
+    id TEXT PRIMARY KEY,
+    venture_id TEXT,
+    asset_type TEXT CHECK(asset_type IN ('tiktok_9_16', 'youtube_16_9', 'kdp_cover', 'kdp_epub', 'product_banner')) NOT NULL,
+    title TEXT NOT NULL,
+    video_script TEXT,
+    audio_tts_voice TEXT,
+    media_url TEXT,
+    model_used TEXT,
+    duration_seconds INTEGER,
+    status TEXT CHECK(status IN ('generating', 'ready', 'failed')) DEFAULT 'ready',
+    views_count INTEGER DEFAULT 0,
+    clicks_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(venture_id) REFERENCES ventures(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS api_vault (
+    id TEXT PRIMARY KEY,
+    service_name TEXT UNIQUE NOT NULL,
+    key_masked TEXT NOT NULL,
+    status TEXT CHECK(status IN ('active', 'invalid', 'quota_exceeded')) DEFAULT 'active',
+    last_verified DATETIME DEFAULT CURRENT_TIMESTAMP
+);

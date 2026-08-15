@@ -1,0 +1,75 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "omniventure-factory",
+  "main": "./dist/_worker.js/index.js",
+  "compatibility_date": "2026-03-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VentureAutonomousAgent",
+        "class_name": "VentureAutonomousAgent"
+      },
+      {
+        "name": "OrchestratorAgent",
+        "class_name": "OrchestratorAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["VentureAutonomousAgent", "OrchestratorAgent"]
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "QUEUE_AGENT_TASKS",
+        "queue": "omniventure-agent-tasks-queue"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "omniventure-agent-tasks-queue",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5
+      }
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "omniventure_prod",
+      "database_id": "omniventure-d1-db"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV_CACHE",
+      "id": "omniventure_kv_cache"
+    },
+    {
+      "binding": "KV_SECRETS",
+      "id": "omniventure_kv_secrets"
+    },
+    {
+      "binding": "SESSION",
+      "id": "omniventure_session"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2_MEDIA",
+      "bucket_name": "omniventure-media-assets"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "APP_NAME": "OmniVenture AI Control Tower"
+  }
+}

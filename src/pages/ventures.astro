@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { VenturesList } from '../components/VenturesList';
+---
+
+<Layout title="Mes Business — Liste Complète" currentPath="/ventures">
+  <VenturesList client:load />
+</Layout>

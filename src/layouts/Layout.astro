@@ -1,0 +1,52 @@
+---
+import Sidebar from '../components/Sidebar.astro';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  currentPath?: string;
+}
+
+const { 
+  title, 
+  description = "OmniVenture AI - Autonomous Money Factory on Cloudflare", 
+  currentPath = '/' 
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="fr" class="bg-slate-50 text-slate-900 h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    
+    <title>{title} — OmniVenture AI</title>
+    <meta name="description" content={description} />
+
+    <!-- Google Fonts Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body class="h-full bg-slate-50 text-slate-900 flex font-sans antialiased overflow-hidden">
+    
+    <!-- Left Sidebar (Full Height with Integrated Project Switcher and Telemetry) -->
+    <Sidebar currentPath={currentPath} />
+
+    <!-- Right Area: Full Height Main Scrollable Content -->
+    <div class="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
+      <main class="flex-1 max-w-7xl w-full mx-auto px-8 py-8">
+        <slot />
+      </main>
+
+      <footer class="border-t border-slate-200 py-3.5 px-8 text-xs text-slate-500 font-mono flex items-center justify-between bg-white">
+        <div>OmniVenture Cloudflare OS</div>
+        <div class="text-[11px] text-slate-400">Grok 4.6 • Qwen 3.8-Max • Gemini 3.7 Flash • DeepSeek V4 Flash</div>
+      </footer>
+    </div>
+
+  </body>
+</html>

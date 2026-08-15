@@ -1,0 +1,29 @@
+# Node & Build
+node_modules/
+dist/
+.astro/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Cloudflare & Wrangler
+.wrangler/
+.mf/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.local
+
+# AntiGravity CLI & Logs
+.system_generated/
+.gemini/
