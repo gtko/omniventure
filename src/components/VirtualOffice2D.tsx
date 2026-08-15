@@ -39,8 +39,6 @@ export const VirtualOffice2D: React.FC<Props> = () => {
   const [agents, setAgents] = useState<OfficeAgent[]>([]);
   const [realLogs, setRealLogs] = useState<RealAgentActivity[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [isExecutingLiveTest, setIsExecutingLiveTest] = useState<boolean>(false);
-  const [liveTestQuery, setLiveTestQuery] = useState<string>('loom.com');
   const [edgeTelemetry, setEdgeTelemetry] = useState<any>(null);
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -165,66 +163,6 @@ export const VirtualOffice2D: React.FC<Props> = () => {
     };
   }, []);
 
-  // Execute a Real Live Test Task
-  const handleExecuteLiveTask = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!liveTestQuery.trim()) return;
-
-    setIsExecutingLiveTest(true);
-    try {
-      const storedKey = localStorage.getItem('omniventure_openrouter_key') || undefined;
-
-      // Broadcast Step 1
-      saveRealAgentLog({
-        fromAgentId: 'market_agent',
-        fromAgentName: 'Alex (Orchestrateur Veille)',
-        toAgentId: 'market_scraper_agent',
-        toAgentName: 'Sam (Scraper Web)',
-        actionSummary: `Inspection réelle de "${liveTestQuery}"`,
-        bubbleText: `🕷️ Crawl des tarifs de "${liveTestQuery}"`,
-        payloadSummary: JSON.stringify({ target: liveTestQuery }),
-        costUsd: 0.00005,
-        modelUsed: 'google/gemini-2.5-flash'
-      });
-
-      const res = await fetch('/api/market/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: liveTestQuery.trim(),
-          searchType: 'domain',
-          openRouterKey: storedKey,
-          model: 'google/gemini-2.5-flash'
-        })
-      });
-
-      if (res.ok) {
-        const json = await res.json() as any;
-        if (json && json.data) {
-          // Broadcast Step 2
-          saveRealAgentLog({
-            fromAgentId: 'market_scraper_agent',
-            fromAgentName: 'Sam (Scraper Web)',
-            toAgentId: 'master',
-            toAgentName: 'Victoria (CEO)',
-            actionSummary: `Données réelles extraites pour "${json.data.name}" (${json.source})`,
-            bubbleText: `🎯 Tarifs : ${json.data.pricing}`,
-            payloadSummary: JSON.stringify({ exploit: json.data.pricingExploit }),
-            costUsd: json.source === 'openrouter_live' ? 0.00025 : 0.00008,
-            modelUsed: json.modelUsed || 'google/gemini-2.5-flash'
-          });
-          setNotification(`Tâche réelle exécutée avec succès pour "${liveTestQuery}" !`);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      setNotification('Erreur lors de l\'exécution réelle.');
-    } finally {
-      setIsExecutingLiveTest(false);
-      setTimeout(() => setNotification(null), 3500);
-    }
-  };
-
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
   return (
@@ -238,13 +176,13 @@ export const VirtualOffice2D: React.FC<Props> = () => {
       )}
 
       {/* Real Live Top Control Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
             <span className={`w-2.5 h-2.5 rounded-full ${edgeTelemetry?.edgeStatus === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-indigo-500'}`}></span>
             <span className="font-bold text-slate-900">État Réel : </span>
             <span className="text-slate-600 font-mono">
-              {edgeTelemetry ? `Cloudflare Edge En Ligne (Loop 30s) • ${agents.length} Agents Configurés` : 'Prêt'}
+              {edgeTelemetry ? `Cloudflare Edge En Ligne (Loop 30s) • ${agents.length} Agents Actifs` : 'Prêt'}
             </span>
           </div>
 
@@ -255,35 +193,16 @@ export const VirtualOffice2D: React.FC<Props> = () => {
           </span>
         </div>
 
-        {/* Real Live Execution Form */}
-        <form onSubmit={handleExecuteLiveTask} className="flex items-center gap-2 text-xs">
-          <input
-            type="text"
-            value={liveTestQuery}
-            onChange={e => setLiveTestQuery(e.target.value)}
-            placeholder="Ex: loom.com, notion.so..."
-            className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 font-mono text-xs focus:bg-white focus:outline-none focus:border-indigo-600"
-          />
+        {realLogs.length > 0 && (
           <button
-            type="submit"
-            disabled={isExecutingLiveTest || !liveTestQuery.trim()}
-            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-xs transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            type="button"
+            onClick={clearRealAgentLogs}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-slate-50 text-xs font-medium transition-colors"
+            title="Vider l'historique des activités réelles"
           >
-            <span>⚡</span>
-            <span>{isExecutingLiveTest ? 'Exécution Réelle...' : 'Déclencher Tâche Réelle'}</span>
+            Vider l'historique
           </button>
-
-          {realLogs.length > 0 && (
-            <button
-              type="button"
-              onClick={clearRealAgentLogs}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-slate-50 transition-colors"
-              title="Vider l'historique des activités réelles"
-            >
-              Vider
-            </button>
-          )}
-        </form>
+        )}
       </div>
 
       {/* 2D VIRTUAL OFFICE FLOOR CANVAS (REAL STATE) */}
