@@ -201,6 +201,8 @@ export interface OfficeSnapshot {
     untilAt: number;
     decideAt: number;
     partnerId: string | null;
+    /** Poste occupé : une affectation manuelle doit survivre au rechargement. */
+    seatId: string;
   }>;
 }
 
@@ -228,9 +230,12 @@ export class OfficeSim {
   /** x1 = temps réel. Accélérer sert à montrer une journée en quelques minutes. */
   timeScale = 1;
 
-  private readonly nav: Nav;
-  private readonly map: OfficeMap;
-  private readonly spots: Spot[];
+  /** Postes du plan — exposés pour l'affectation depuis la carte. */
+  seats: Seat[];
+
+  private nav: Nav;
+  private map: OfficeMap;
+  private spots: Spot[];
   private readonly spotById = new Map<string, Spot>();
   private readonly reserved = new Map<string, string>();
   private topics: string[] = FALLBACK_TALK;
@@ -242,6 +247,7 @@ export class OfficeSim {
     this.map = map;
     this.nav = nav;
     this.spots = spots;
+    this.seats = seats;
     for (const spot of spots) this.spotById.set(spot.id, spot);
 
     const privateSeats = seats.filter((seat) => seat.kind === 'private');
@@ -712,7 +718,8 @@ export class OfficeSim {
         spotId: actor.spot?.id ?? null,
         untilAt: Math.round(actor.untilAt),
         decideAt: Math.round(actor.decideAt),
-        partnerId: actor.partnerId
+        partnerId: actor.partnerId,
+        seatId: actor.seat.id
       }))
     };
   }
@@ -734,6 +741,12 @@ export class OfficeSim {
       const actor = this.byId.get(saved.id);
       if (!actor) continue;
       if (!isWalkable(this.nav, saved.col, saved.row)) continue;
+
+      // Poste réaffecté à la main lors d'une session précédente.
+      const savedSeat = saved.seatId ? this.seats.find((s) => s.id === saved.seatId) : undefined;
+      if (savedSeat && !this.actors.some((a) => a !== actor && a.seat.id === savedSeat.id)) {
+        actor.seat = savedSeat;
+      }
 
       actor.col = saved.col;
       actor.row = saved.row;
@@ -784,6 +797,69 @@ export class OfficeSim {
       );
     }
     return restored;
+  }
+
+  /* ── Postes : affectation depuis la carte ────────────────── */
+
+  /** Poste situé sous un point du monde. */
+  seatAt(worldX: number, worldY: number): Seat | null {
+    const col = Math.floor(worldX / TILE);
+    const row = Math.floor(worldY / TILE);
+    return this.seats.find((seat) => seat.col === col && seat.row === row) ?? null;
+  }
+
+  seatOwner(seatId: string): Actor | null {
+    return this.actors.find((actor) => actor.seat.id === seatId) ?? null;
+  }
+
+  /**
+   * Affecte un agent à un poste. Si la place est déjà prise, les deux agents
+   * échangent leur bureau — personne ne se retrouve sans place.
+   */
+  assignSeat(agentId: string, seatId: string): boolean {
+    const actor = this.byId.get(agentId);
+    const seat = this.seats.find((s) => s.id === seatId);
+    if (!actor || !seat || actor.seat.id === seat.id) return false;
+
+    const occupant = this.seatOwner(seat.id);
+    const previous = actor.seat;
+
+    actor.seat = seat;
+    this.sendHome(actor);
+
+    if (occupant) {
+      occupant.seat = previous;
+      this.sendHome(occupant);
+      this.log(`${actor.profile.short} et ${occupant.profile.short} échangent de poste`, 'idle');
+    } else {
+      this.log(`${actor.profile.short} déménage à un nouveau poste`, 'idle');
+    }
+    return true;
+  }
+
+  /** Remplace le monde après une édition de la carte, sans perdre la simulation. */
+  updateWorld(map: OfficeMap, nav: Nav, seats: Seat[], spots: Spot[]): void {
+    this.map = map;
+    this.nav = nav;
+    this.spots = spots;
+    this.seats = seats;
+    this.spotById.clear();
+    for (const spot of spots) this.spotById.set(spot.id, spot);
+    this.reserved.clear();
+
+    const taken = new Set<string>();
+    for (const actor of this.actors) {
+      // Le poste a pu disparaître ou bouger : on le retrouve par coordonnées.
+      const same = seats.find((s) => s.col === actor.seat.col && s.row === actor.seat.row);
+      const seat = same ?? seats.find((s) => !taken.has(s.id));
+      if (seat) {
+        actor.seat = seat;
+        taken.add(seat.id);
+      }
+      actor.spot = null;
+      if (actor.mode !== 'desk') this.sendHome(actor);
+      else if (!isWalkable(nav, actor.col, actor.row)) this.sendHome(actor);
+    }
   }
 
   /* ── Interaction & lecture ───────────────────────────────── */

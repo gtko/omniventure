@@ -2,6 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clearRealAgentLogs, getRealAgentLogs, saveRealAgentLog, type RealAgentActivity } from '../lib/agent-bus';
 import { loadGraphProfiles } from './office/agents';
 import { AgentPanel, type AgentView } from './office/AgentPanel';
+import {
+  DEFAULT_SEAT_DIR,
+  loadPatches,
+  patchSignature,
+  savePatches,
+  type Patch,
+  type ToolId
+} from './office/editor';
+import { EditorPalette } from './office/EditorPalette';
 import { loadOfficeAssets, type OfficeAssets } from './office/assets';
 import { SAVE_INTERVAL_SEC, TIME_SCALES, TILE, ZOOM_MAX, ZOOM_MIN } from './office/constants';
 import { buildNav } from './office/grid';
@@ -62,7 +71,22 @@ const CHIP =
   'rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-white/15';
 
 export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height }) => {
-  const blueprint = useMemo(() => buildOffice(), []);
+  // Aménagement
+  const [patches, setPatches] = useState<Patch[]>([]);
+  const [editMode, setEditMode] = useState(false);
+  const [tool, setTool] = useState<ToolId>('furniture');
+  const [furnitureType, setFurnitureType] = useState('DESK_FRONT');
+  const [floorPattern, setFloorPattern] = useState(2);
+  const [floorPalette, setFloorPalette] = useState(0);
+  const [layoutSaveState, setLayoutSaveState] = useState('plan d’origine');
+  const paintRef = useRef(false);
+  const lastPaintRef = useRef('');
+
+  const signature = patchSignature(patches);
+  const blueprint = useMemo(() => buildOffice(patches), [signature]);
+  const blueprintRef = useRef(blueprint);
+  blueprintRef.current = blueprint;
+  const worldReadyRef = useRef(false);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -79,7 +103,13 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   const fitPendingRef = useRef(true);
   const followRef = useRef<string | null>(null);
   const dragRef = useRef({ active: false, moved: 0, lastX: 0, lastY: 0 });
-  const optionsRef = useRef<RenderOptions>({ selectedId: null, hoveredId: null, showNames: true });
+  const optionsRef = useRef<RenderOptions>({
+    selectedId: null,
+    hoveredId: null,
+    showNames: true,
+    showSeats: false,
+    hoveredSeatId: null
+  });
 
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -92,6 +122,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   const [zoomLabel, setZoomLabel] = useState(1);
   const [uiVisible, setUiVisible] = useState(true);
   const [feedOpen, setFeedOpen] = useState(true);
+
 
   const [headcount, setHeadcount] = useState(0);
   const [capacity, setCapacity] = useState(0);
@@ -117,7 +148,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
   /* ── Simulation + boucle de rendu ────────────────────────── */
   useEffect(() => {
-    const { map, seats, spots, blocked } = blueprint;
+    const { map, seats, spots, blocked } = blueprintRef.current;
     // Postes ET spots doivent rester praticables : un canapé ou une chaise de
     // réunion est du mobilier bloquant, mais on doit pouvoir venir s'y asseoir.
     const nav = buildNav(map, [...seats, ...spots], blocked);
@@ -200,7 +231,45 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       cancelAnimationFrame(raf);
       simRef.current = null;
     };
+    // Volontairement monté une seule fois : les modifications de plan passent
+    // par updateWorld, sinon on repartirait de zéro à chaque coup de pinceau.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── Rechargement du plan après une retouche ─────────────── */
+  useEffect(() => {
+    const sim = simRef.current;
+    const scene = sceneRef.current;
+    if (!sim || !scene) return;
+    if (!worldReadyRef.current) {
+      worldReadyRef.current = true;
+      return;
+    }
+    const { map, seats, spots, blocked } = blueprint;
+    const nav = buildNav(map, [...seats, ...spots], blocked);
+    sim.updateWorld(map, nav, seats, spots);
+    scene.background = bakeBackground(map, scene.assets);
+    scene.furniture = buildFurnitureDraws(map);
+    setCapacity(seats.length);
   }, [blueprint]);
+
+  /* ── Aménagement : chargement puis sauvegarde différée ───── */
+  useEffect(() => {
+    void loadPatches().then((stored) => {
+      if (stored.length > 0) setPatches(stored);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (patches.length === 0 && layoutSaveState === 'plan d’origine') return;
+    const id = window.setTimeout(() => {
+      void savePatches(patches).then((where) =>
+        setLayoutSaveState(where === 'local' ? 'enregistré (navigateur)' : `enregistré (${where.toUpperCase()})`)
+      );
+    }, 900);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
 
   /* ── Sauvegarde ──────────────────────────────────────────── */
   useEffect(() => {
@@ -300,6 +369,26 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     };
   }, [notify]);
 
+  /* ── Aménagement : pose d'une retouche ───────────────────── */
+  const applyEdit = useCallback(
+    (col: number, row: number) => {
+      const key = `${tool}:${col},${row}`;
+      if (lastPaintRef.current === key) return;
+      lastPaintRef.current = key;
+
+      setPatches((prev) => {
+        let patch: Patch;
+        if (tool === 'furniture') patch = { k: 'add', type: furnitureType, col, row };
+        else if (tool === 'seat') patch = { k: 'seat', col, row, dir: DEFAULT_SEAT_DIR };
+        else if (tool === 'wall') patch = { k: 'wall', col, row };
+        else if (tool === 'floor') patch = { k: 'floor', col, row, pattern: floorPattern, palette: floorPalette };
+        else patch = { k: 'erase', col, row };
+        return [...prev, patch];
+      });
+    },
+    [floorPalette, floorPattern, furnitureType, tool]
+  );
+
   /* ── Caméra & interaction ────────────────────────────────── */
   const devicePoint = useCallback((event: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
@@ -309,9 +398,23 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     return { x: (event.clientX - rect.left) * dpr, y: (event.clientY - rect.top) * dpr, dpr };
   }, []);
 
-  const handlePointerDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
-    dragRef.current = { active: true, moved: 0, lastX: event.clientX, lastY: event.clientY };
-  }, []);
+  const handlePointerDown = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      // En aménagement, le bouton gauche peint et le bouton droit déplace la carte.
+      if (editMode && event.button === 0) {
+        const point = devicePoint(event);
+        const view = viewRef.current;
+        if (!point || !view) return;
+        const world = screenToWorld(view, point.x, point.y);
+        paintRef.current = true;
+        lastPaintRef.current = '';
+        applyEdit(Math.floor(world.x / TILE), Math.floor(world.y / TILE));
+        return;
+      }
+      dragRef.current = { active: true, moved: 0, lastX: event.clientX, lastY: event.clientY };
+    },
+    [applyEdit, devicePoint, editMode]
+  );
 
   const handlePointerMove = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -320,6 +423,29 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       const sim = simRef.current;
       const view = viewRef.current;
       if (!point || !canvas || !sim || !view) return;
+
+      if (editMode) {
+        const world = screenToWorld(view, point.x, point.y);
+        const col = Math.floor(world.x / TILE);
+        const row = Math.floor(world.y / TILE);
+        optionsRef.current.ghost = {
+          col,
+          row,
+          tool,
+          type: tool === 'furniture' ? furnitureType : undefined,
+          color:
+            tool === 'erase'
+              ? 'rgba(244,63,94,0.35)'
+              : tool === 'wall'
+                ? 'rgba(148,163,184,0.45)'
+                : tool === 'seat'
+                  ? 'rgba(52,211,153,0.35)'
+                  : 'rgba(99,102,241,0.3)'
+        };
+        if (paintRef.current) applyEdit(col, row);
+        canvas.style.cursor = 'crosshair';
+        if (!dragRef.current.active) return;
+      }
 
       const drag = dragRef.current;
       if (drag.active) {
@@ -341,13 +467,23 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       const world = screenToWorld(view, point.x, point.y);
       const actor = sim.actorAt(world.x, world.y);
       optionsRef.current.hoveredId = actor?.profile.id ?? null;
-      canvas.style.cursor = actor ? 'pointer' : 'grab';
+
+      // Avec un agent sélectionné, les postes deviennent des cibles d'affectation.
+      const seat = optionsRef.current.selectedId ? sim.seatAt(world.x, world.y) : null;
+      optionsRef.current.hoveredSeatId = actor ? null : seat?.id ?? null;
+
+      canvas.style.cursor = actor ? 'pointer' : seat ? 'copy' : 'grab';
     },
     [devicePoint]
   );
 
   const handlePointerUp = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
+      if (paintRef.current) {
+        paintRef.current = false;
+        lastPaintRef.current = '';
+        return;
+      }
       const drag = dragRef.current;
       const wasClick = drag.active && drag.moved <= 3;
       drag.active = false;
@@ -361,11 +497,31 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       if (!point || !sim || !view) return;
       const world = screenToWorld(view, point.x, point.y);
       const actor = sim.actorAt(world.x, world.y);
-      const id = actor?.profile.id ?? null;
-      optionsRef.current.selectedId = id;
-      setSelectedId(id);
+      if (actor) {
+        optionsRef.current.selectedId = actor.profile.id;
+        optionsRef.current.showSeats = true;
+        setSelectedId(actor.profile.id);
+        return;
+      }
+
+      // Clic sur un poste avec un agent sélectionné : on l'y installe.
+      const current = optionsRef.current.selectedId;
+      const seat = current ? sim.seatAt(world.x, world.y) : null;
+      if (current && seat) {
+        if (sim.assignSeat(current, seat.id)) {
+          const who = sim.byId.get(current)?.profile.short ?? 'Agent';
+          notify(`${who} rejoint ${seat.label ?? `un poste (${seat.room})`}.`);
+          void saveSnapshot(sim.snapshot(), false);
+        }
+        return;
+      }
+
+      optionsRef.current.selectedId = null;
+      optionsRef.current.hoveredSeatId = null;
+      optionsRef.current.showSeats = false;
+      setSelectedId(null);
     },
-    [devicePoint]
+    [devicePoint, notify]
   );
 
   const handleWheel = useCallback(
@@ -415,6 +571,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     const actor = simRef.current?.byId.get(id);
     if (!actor) return;
     optionsRef.current.selectedId = id;
+    optionsRef.current.showSeats = true;
     setSelectedId(id);
     followRef.current = id;
     setFollowId(id);
@@ -439,6 +596,36 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     setTimeScale(scale);
     if (simRef.current) simRef.current.timeScale = scale;
   };
+
+  const toggleEdit = useCallback(() => {
+    setEditMode((value) => {
+      const next = !value;
+      optionsRef.current.editMode = next;
+      if (next) {
+        // La fiche agent et la palette occupent le même côté de l'écran.
+        optionsRef.current.selectedId = null;
+        optionsRef.current.showSeats = false;
+        setSelectedId(null);
+      } else {
+        optionsRef.current.ghost = null;
+      }
+      return next;
+    });
+  }, []);
+
+  const undoEdit = useCallback(() => setPatches((prev) => prev.slice(0, -1)), []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && editMode) toggleEdit();
+      if (editMode && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        undoEdit();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editMode, toggleEdit, undoEdit]);
 
   const toggleFullscreen = () => {
     const node = wrapRef.current;
@@ -551,6 +738,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
           optionsRef.current.hoveredId = null;
         }}
         onWheel={handleWheel}
+        onContextMenu={(event) => event.preventDefault()}
         className="absolute inset-0 h-full w-full"
         style={{ imageRendering: 'pixelated', cursor: 'grab' }}
       />
@@ -671,6 +859,14 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
               </button>
               <button type="button" onClick={toggleNames} className={CHIP}>
                 {showNames ? 'Noms visibles' : 'Noms masqués'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleEdit}
+                title="Aménager le bureau : mobilier, postes, murs, sols"
+                className={`${CHIP} ${editMode ? 'border-indigo-400/40 bg-indigo-500/25 text-indigo-100' : ''}`}
+              >
+                {editMode ? '✓ Terminer' : '✏️ Aménager'}
               </button>
               <button type="button" onClick={toggleFullscreen} className={CHIP}>
                 ⛶
@@ -794,13 +990,37 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
         </div>
       )}
 
+      {/* ── Palette d'aménagement ── */}
+      {editMode && (
+        <div className="absolute bottom-3 right-3 top-3 z-40 flex">
+          <EditorPalette
+            assets={sceneRef.current?.assets ?? null}
+            tool={tool}
+            onTool={setTool}
+            furnitureType={furnitureType}
+            onFurnitureType={setFurnitureType}
+            floorPattern={floorPattern}
+            onFloorPattern={setFloorPattern}
+            floorPalette={floorPalette}
+            onFloorPalette={setFloorPalette}
+            patchCount={patches.length}
+            onUndo={undoEdit}
+            onReset={() => setPatches([])}
+            onClose={toggleEdit}
+            saveState={layoutSaveState}
+          />
+        </div>
+      )}
+
       {/* ── Fiche agent ── */}
-      {selected && (
+      {!editMode && selected && (
         <div className="absolute bottom-3 right-3 top-3 z-40 flex">
           <AgentPanel
             agent={selected}
             onClose={() => {
               optionsRef.current.selectedId = null;
+              optionsRef.current.showSeats = false;
+              optionsRef.current.hoveredSeatId = null;
               setSelectedId(null);
             }}
             onFollow={() => focusAgent(selected.id)}

@@ -47,6 +47,13 @@ export interface RenderOptions {
   selectedId: string | null;
   hoveredId: string | null;
   showNames: boolean;
+  /** Met en évidence les postes : actif dès qu'un agent est sélectionné. */
+  showSeats?: boolean;
+  /** Poste survolé, pour le retour visuel avant le clic. */
+  hoveredSeatId?: string | null;
+  /** Mode aménagement : grille visible et aperçu sous le curseur. */
+  editMode?: boolean;
+  ghost?: { col: number; row: number; tool: string; type?: string; color?: string } | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,6 +285,7 @@ export function renderFrame(
   ctx.imageSmoothingEnabled = false;
 
   drawZoneLabels(ctx, view, map);
+  if (options.showSeats || options.hoveredSeatId) drawSeatOverlay(ctx, view, sim, options);
 
   const margin = 48;
   const visible = (x: number, y: number, w: number, h: number) =>
@@ -337,6 +345,8 @@ export function renderFrame(
       actorDraws[j++].paint();
     }
   }
+
+  if (options.editMode) drawEditOverlay(ctx, view, map, assets, options);
 
   // Étiquettes et bulles au-dessus de la scène, du fond vers l'avant.
   const ordered = visibleActors.sort((a, b) => a.y - b.y);
@@ -404,6 +414,99 @@ function drawZoneLabels(ctx: CanvasRenderingContext2D, view: View, map: OfficeMa
     ctx.fill();
     ctx.fillStyle = zone.ink;
     ctx.fillText(zone.label, center.x, center.y + 0.5);
+  }
+  ctx.restore();
+}
+
+/** Grille d'aménagement + aperçu de l'objet sous le curseur. */
+function drawEditOverlay(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  map: OfficeMap,
+  assets: OfficeAssets,
+  options: RenderOptions
+): void {
+  const step = TILE * view.zoom;
+  ctx.save();
+
+  // Grille légère, seulement si les tuiles restent lisibles.
+  if (step >= 8) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const firstCol = Math.max(0, Math.floor(view.worldLeft / TILE));
+    const lastCol = Math.min(map.cols, Math.ceil(view.worldRight / TILE));
+    const firstRow = Math.max(0, Math.floor(view.worldTop / TILE));
+    const lastRow = Math.min(map.rows, Math.ceil(view.worldBottom / TILE));
+    for (let c = firstCol; c <= lastCol; c++) {
+      const x = Math.round(view.offsetX + c * step) + 0.5;
+      ctx.moveTo(x, view.offsetY + firstRow * step);
+      ctx.lineTo(x, view.offsetY + lastRow * step);
+    }
+    for (let r = firstRow; r <= lastRow; r++) {
+      const y = Math.round(view.offsetY + r * step) + 0.5;
+      ctx.moveTo(view.offsetX + firstCol * step, y);
+      ctx.lineTo(view.offsetX + lastCol * step, y);
+    }
+    ctx.stroke();
+  }
+
+  const ghost = options.ghost;
+  if (ghost) {
+    const x = view.offsetX + ghost.col * TILE * view.zoom;
+    const y = view.offsetY + ghost.row * TILE * view.zoom;
+
+    if (ghost.tool === 'furniture' && ghost.type) {
+      const sprite = furnitureSprite(assets, spriteKey(ghost.type, 0), 0);
+      if (sprite) {
+        ctx.globalAlpha = 0.55;
+        blit(ctx, sprite, ghost.col * TILE, ghost.row * TILE, view);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    ctx.fillStyle = ghost.color ?? 'rgba(99,102,241,0.35)';
+    ctx.fillRect(x, y, step, step);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(1.5, view.zoom * 0.5);
+    ctx.strokeRect(x + 1, y + 1, step - 2, step - 2);
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Pastilles sur les postes : vert = libre, bleu = poste de l'agent sélectionné,
+ * ambre = occupé par quelqu'un d'autre (un clic échangera les deux bureaux).
+ */
+function drawSeatOverlay(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  sim: OfficeSim,
+  options: RenderOptions
+): void {
+  const size = TILE * view.zoom;
+  ctx.save();
+  for (const seat of sim.seats) {
+    const x = view.offsetX + seat.col * TILE * view.zoom;
+    const y = view.offsetY + seat.row * TILE * view.zoom;
+    if (x + size < 0 || y + size < 0 || x > ctx.canvas.width || y > ctx.canvas.height) continue;
+
+    const owner = sim.seatOwner(seat.id);
+    const isSelectedSeat = owner?.profile.id === options.selectedId;
+    const hovered = options.hoveredSeatId === seat.id;
+
+    const stroke = isSelectedSeat ? '#60a5fa' : owner ? '#fbbf24' : '#34d399';
+    ctx.globalAlpha = hovered ? 0.95 : 0.5;
+    ctx.fillStyle = stroke;
+    ctx.globalAlpha = hovered ? 0.28 : 0.12;
+    roundRect(ctx, x + 1, y + 1, size - 2, size - 2, Math.max(2, size * 0.18));
+    ctx.fill();
+
+    ctx.globalAlpha = hovered ? 1 : 0.7;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = hovered ? Math.max(1.5, view.zoom * 0.6) : Math.max(1, view.zoom * 0.3);
+    ctx.stroke();
   }
   ctx.restore();
 }

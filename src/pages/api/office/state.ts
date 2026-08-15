@@ -28,6 +28,7 @@ interface ActorState {
   untilAt: number;
   decideAt: number;
   partnerId: string | null;
+  seatId?: string;
 }
 
 interface Snapshot {
@@ -65,6 +66,14 @@ async function ensureTables(db: any): Promise<void> {
       )`
     )
     .run();
+
+  // Migration idempotente : la colonne n'existe pas sur les bases créées
+  // avant l'affectation manuelle des postes.
+  try {
+    await db.prepare('ALTER TABLE office_agents ADD COLUMN seat_id TEXT').run();
+  } catch {
+    // colonne déjà présente
+  }
 }
 
 function isSnapshot(value: unknown): value is Snapshot {
@@ -90,7 +99,7 @@ export const GET: APIRoute = async ({ locals }) => {
         .first();
       if (runtime) {
         const result = await env.DB.prepare(
-          'SELECT agent_id, col, row, dir, mode, activity, spot_id, until_at, decide_at, partner_id FROM office_agents'
+          'SELECT agent_id, col, row, dir, mode, activity, spot_id, until_at, decide_at, partner_id, seat_id FROM office_agents'
         ).all();
         const rows = (result?.results ?? []) as any[];
         if (rows.length > 0) {
@@ -108,7 +117,8 @@ export const GET: APIRoute = async ({ locals }) => {
               spotId: row.spot_id ?? null,
               untilAt: row.until_at ?? 0,
               decideAt: row.decide_at ?? 0,
-              partnerId: row.partner_id ?? null
+              partnerId: row.partner_id ?? null,
+              seatId: row.seat_id ?? undefined
             }))
           };
           return json({ snapshot, source: 'd1' });
@@ -148,8 +158,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const statements = snapshot.actors.map((actor) =>
         env.DB.prepare(
           `INSERT OR REPLACE INTO office_agents
-             (agent_id, col, row, dir, mode, activity, spot_id, until_at, decide_at, partner_id, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+             (agent_id, col, row, dir, mode, activity, spot_id, until_at, decide_at, partner_id, seat_id, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
         ).bind(
           actor.id,
           actor.col,
@@ -160,7 +170,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
           actor.spotId,
           actor.untilAt,
           actor.decideAt,
-          actor.partnerId
+          actor.partnerId,
+          actor.seatId ?? null
         )
       );
       for (let i = 0; i < statements.length; i += 50) {

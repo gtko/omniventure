@@ -18,6 +18,7 @@
  */
 
 import { CATALOG } from './catalog';
+import { FLOOR_PALETTES, type Patch } from './editor';
 import { Direction, TileType, type OfficeMap, type Placed, type Spot, type Tint } from './types';
 
 /** Ceinture extérieure autour du bâtiment : pelouse, arbres, route. */
@@ -213,9 +214,16 @@ function mulberry32(seed: number): () => number {
 }
 
 let cached: OfficeBlueprint | null = null;
+let cachedSignature: string | null = null;
 
-export function buildOffice(): OfficeBlueprint {
-  if (cached) return cached;
+/**
+ * Construit le plan. Les `patches` sont les retouches faites dans l'éditeur :
+ * elles s'appliquent par-dessus le plan généré, juste avant le calcul des
+ * bandes non praticables (un mur ajouté doit produire son tampon).
+ */
+export function buildOffice(patches: Patch[] = []): OfficeBlueprint {
+  const signature = patches.length === 0 ? '' : JSON.stringify(patches);
+  if (cached && cachedSignature === signature) return cached;
 
   const random = mulberry32(20260816);
   const tiles = new Uint8Array(COLS * ROWS);
@@ -383,13 +391,18 @@ export function buildOffice(): OfficeBlueprint {
     });
   }
 
-  /* — Tampon : la rangée qui reçoit le chapeau d'un mur reste inaccessible — */
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (tiles[idx(c, r)] !== TileType.WALL) continue;
-      if (isFloorAbs(c, r - 1)) blocked.push({ col: c, row: r - 1 });
+  /* — Tampon : la rangée qui reçoit le chapeau d'un mur reste inaccessible.
+       Recalculé après les retouches de l'éditeur, qui peuvent ajouter des murs. — */
+  const computeBuffers = () => {
+    blocked.length = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (tiles[idx(c, r)] !== TileType.WALL) continue;
+        if (isFloorAbs(c, r - 1)) blocked.push({ col: c, row: r - 1 });
+      }
     }
-  }
+  };
+  computeBuffers();
 
   /* ── Mobilier ─────────────────────────────────────────────── */
 
@@ -459,16 +472,22 @@ export function buildOffice(): OfficeBlueprint {
     }
   };
 
+  /**
+   * Bench : deux bureaux dos à dos, six places en vis-à-vis, un écran par
+   * place (une seule colonne de bureau ne pourrait en accueillir que la moitié).
+   * Emprise : col-1 (chaises) .. col+2 (chaises).
+   */
   const islandBank = (island: Island) => {
     const { col, row, zone, hue } = island;
     place('DESK_SIDE', col, row, hue);
-    place('PC_SIDE', col, row + 1);
-    place('PC_SIDE:left', col, row + 3);
+    place('DESK_SIDE', col + 1, row, hue);
     for (let i = 1; i <= 3; i++) {
+      place('PC_SIDE', col, row + i);
+      place('PC_SIDE:left', col + 1, row + i);
       place('CUSHIONED_CHAIR_SIDE', col - 1, row + i, hue);
-      place('CUSHIONED_CHAIR_SIDE:left', col + 1, row + i, hue);
+      place('CUSHIONED_CHAIR_SIDE:left', col + 2, row + i, hue);
       addSeat(col - 1, row + i, Direction.RIGHT, zone, 'open');
-      addSeat(col + 1, row + i, Direction.LEFT, zone, 'open');
+      addSeat(col + 2, row + i, Direction.LEFT, zone, 'open');
     }
   };
 
@@ -742,6 +761,59 @@ export function buildOffice(): OfficeBlueprint {
   }
 
 
+  /* ── Retouches de l'éditeur ───────────────────────────────── */
+
+  const coversTile = (item: Placed, col: number, row: number) => {
+    const entry = CATALOG[item.type];
+    const fw = entry?.fw ?? 1;
+    const fh = entry?.fh ?? 1;
+    return col >= item.col && col < item.col + fw && row >= item.row && row < item.row + fh;
+  };
+
+  for (const patch of patches) {
+    switch (patch.k) {
+      case 'add':
+        furniture.push(
+          patch.hue ? { type: patch.type, col: patch.col, row: patch.row, hue: patch.hue } : { type: patch.type, col: patch.col, row: patch.row }
+        );
+        break;
+      case 'erase': {
+        for (let i = furniture.length - 1; i >= 0; i--) {
+          if (coversTile(furniture[i], patch.col, patch.row)) furniture.splice(i, 1);
+        }
+        for (let i = seats.length - 1; i >= 0; i--) {
+          if (seats[i].col === patch.col && seats[i].row === patch.row) seats.splice(i, 1);
+        }
+        break;
+      }
+      case 'wall':
+        setWallAbs(patch.col, patch.row);
+        break;
+      case 'floor':
+        setFloorAbs(patch.col, patch.row, patch.pattern, FLOOR_PALETTES[patch.palette % FLOOR_PALETTES.length].tint);
+        break;
+      case 'seat':
+        if (!seats.some((seat) => seat.col === patch.col && seat.row === patch.row)) {
+          seats.push({
+            id: `custom-${patch.col}-${patch.row}`,
+            col: patch.col,
+            row: patch.row,
+            dir: patch.dir,
+            room: 'custom',
+            kind: 'open',
+            label: 'Poste ajouté'
+          });
+        }
+        break;
+      case 'unseat':
+        for (let i = seats.length - 1; i >= 0; i--) {
+          if (seats[i].col === patch.col && seats[i].row === patch.row) seats.splice(i, 1);
+        }
+        break;
+    }
+  }
+  if (patches.length > 0) computeBuffers();
+
   const map: OfficeMap = {
     cols: COLS,
     rows: ROWS,
@@ -768,5 +840,6 @@ export function buildOffice(): OfficeBlueprint {
   };
 
   cached = { map, seats, spots, blocked, zones: ZONES, meetingGroups };
+  cachedSignature = signature;
   return cached;
 }
