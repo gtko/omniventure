@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
 import { VirtualOffice2D } from './VirtualOffice2D';
+import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
 export interface AgentCustomData {
   id: string;
@@ -13,19 +14,6 @@ export interface AgentCustomData {
   maxTokens: number;
   ameMd: string;
   jobMd: string;
-}
-
-interface CommunicationChannel {
-  id: string;
-  sourceId: string;
-  sourceName: string;
-  targetId: string;
-  targetName: string;
-  protocol: 'RPC Synchrone' | 'Queue Asynchrone' | 'Événement Edge (Pub/Sub)';
-  payloadType: string;
-  triggerEvent: string;
-  description: string;
-  enabled: boolean;
 }
 
 const FALLBACK_MODELS: OpenRouterModelItem[] = [
@@ -318,6 +306,16 @@ export const AgentGraphStudio: React.FC = () => {
   const [simulationActive, setSimulationActive] = useState<boolean>(false);
   const [activeSimulationStep, setActiveSimulationStep] = useState<number>(-1);
 
+  // AI Graph Generator Modal State
+  const [isAiModalOpen, setIsAiModalOpen] = useState<boolean>(false);
+  const [aiPrompt, setAiPrompt] = useState<string>('');
+  const [aiModel, setAiModel] = useState<string>('google/gemini-2.5-flash');
+  const [isGeneratingGraph, setIsGeneratingGraph] = useState<boolean>(false);
+  const [generatedGraphPreview, setGeneratedGraphPreview] = useState<{ summary: string; agents: AgentCustomData[]; channels: CommunicationChannel[] } | null>(null);
+
+  // Zip Import Hidden Ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const fetchOpenRouterModels = async (apiKey?: string) => {
     setIsLoadingModels(true);
     try {
@@ -407,11 +405,104 @@ export const AgentGraphStudio: React.FC = () => {
       localStorage.setItem('omniventure_openrouter_key', openRouterKey);
       localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(agents));
       localStorage.setItem('omniventure_channels_v3', JSON.stringify(channels));
-      setNotification('Graphe multi-niveaux, Ame.md, Job.md et canaux de communication enregistrés avec succès !');
+      setNotification('Graphe multi-niveaux, Ame.md, Job.md et canaux enregistrés avec succès !');
       setTimeout(() => setNotification(null), 3500);
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // ZIP EXPORT
+  const handleExportZip = async () => {
+    try {
+      setNotification('Génération de l\'archive .zip du graphe...');
+      const blob = await exportGraphToZip(agents, channels);
+      const filename = `omniventure-graph-${new Date().toISOString().split('T')[0]}.zip`;
+      downloadBlobAsFile(blob, filename);
+      setNotification(`Archive ${filename} téléchargée avec succès (${agents.length} agents) !`);
+      setTimeout(() => setNotification(null), 3500);
+    } catch (err: any) {
+      setNotification(`Erreur lors de l'export ZIP : ${err.message || err}`);
+    }
+  };
+
+  // ZIP IMPORT
+  const handleImportZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setNotification('Lecture et extraction du fichier .zip...');
+      const imported = await importGraphFromZip(file);
+      setAgents(imported.agents);
+      if (imported.channels && imported.channels.length > 0) {
+        setChannels(imported.channels);
+      }
+      setSelectedAgentId(imported.agents[0].id);
+
+      localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(imported.agents));
+      if (imported.channels && imported.channels.length > 0) {
+        localStorage.setItem('omniventure_channels_v3', JSON.stringify(imported.channels));
+      }
+
+      setNotification(`✓ Succès ! ${imported.agents.length} agents et ${imported.channels?.length || 0} canaux importés depuis le .zip.`);
+      setTimeout(() => setNotification(null), 4000);
+    } catch (err: any) {
+      setNotification(`Erreur lors de l'import : ${err.message || err}`);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // AI GRAPH GENERATION
+  const handleGenerateAiGraph = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!aiPrompt.trim()) return;
+
+    setIsGeneratingGraph(true);
+    try {
+      const res = await fetch('/api/agents/generate-graph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: aiPrompt.trim(),
+          openRouterKey: openRouterKey || undefined,
+          model: aiModel
+        })
+      });
+
+      if (res.ok) {
+        const json = await res.json() as any;
+        if (json && json.data) {
+          setGeneratedGraphPreview(json.data);
+          setNotification('Nouveau graphe généré ! Vérifiez l\'aperçu ci-dessous.');
+        }
+      } else {
+        setNotification('Erreur lors de la génération du graphe IA.');
+      }
+    } catch (err) {
+      console.error(err);
+      setNotification('Impossible de contacter le générateur IA.');
+    } finally {
+      setIsGeneratingGraph(false);
+      setTimeout(() => setNotification(null), 3500);
+    }
+  };
+
+  const handleApplyGeneratedGraph = () => {
+    if (!generatedGraphPreview) return;
+    setAgents(generatedGraphPreview.agents);
+    setChannels(generatedGraphPreview.channels);
+    setSelectedAgentId(generatedGraphPreview.agents[0].id);
+
+    localStorage.setItem('omniventure_custom_agents_v4', JSON.stringify(generatedGraphPreview.agents));
+    localStorage.setItem('omniventure_channels_v3', JSON.stringify(generatedGraphPreview.channels));
+
+    setIsAiModalOpen(false);
+    setGeneratedGraphPreview(null);
+    setAiPrompt('');
+    setNotification('Nouveau graphe d\'agents appliqué avec succès !');
+    setTimeout(() => setNotification(null), 3500);
   };
 
   const handleSimulateFlow = () => {
@@ -470,16 +561,54 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       )}
 
+      {/* Hidden File Input for Zip Import */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImportZip}
+        accept=".zip"
+        className="hidden"
+      />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Graphe & Topologie d'Agents Multi-Niveaux</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Orchestration modulaire : les cerveaux de Niveau 1 délèguent aux agents de recherche et d'ingénierie sans gaspiller de ressources.
+            Orchestration modulaire : exportez, importez en .zip ou demandez à l'IA de concevoir un graphe complet sur-mesure.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* AI Graph Generator Button */}
+          <button
+            onClick={() => setIsAiModalOpen(true)}
+            className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all flex items-center gap-1.5"
+          >
+            <span>✨</span>
+            <span>Générer par IA (Prompt)</span>
+          </button>
+
+          {/* Export Zip Button */}
+          <button
+            onClick={handleExportZip}
+            className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+            title="Exporter tous les agents, Ame.md, Job.md et canaux dans une archive .zip"
+          >
+            <span>📦</span>
+            <span>Exporter .zip</span>
+          </button>
+
+          {/* Import Zip Button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+            title="Importer une configuration complète depuis un fichier .zip"
+          >
+            <span>📥</span>
+            <span>Importer .zip</span>
+          </button>
+
           <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white text-xs">
             <button
               onClick={() => setActiveTab('flow')}
@@ -524,6 +653,139 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       </div>
 
+      {/* AI GRAPH GENERATOR MODAL */}
+      {isAiModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-purple-50 to-indigo-50">
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl">✨</span>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Générateur de Graphe d'Agents par IA</h2>
+                  <p className="text-xs text-slate-500">Décrivez votre besoin métier : l'IA va architecturer l'ensemble des agents, Ame.md, Job.md et canaux.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAiModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              
+              {/* Inspiration Pills */}
+              <div className="space-y-1.5">
+                <span className="text-slate-500 font-semibold block">Idées de prompts rapides :</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "SaaS B2B d'Extraction Comptable & Rapprochement Bancaire",
+                    "Usine de Scraping Immobilier avec calcul de Rentabilité & Alertes",
+                    "Graphe E-Commerce & Dropshipping avec recherche de Produits Gagnants",
+                    "Système d'Audit SEO & Rédacteur de Contenus Programmatiques"
+                  ].map(template => (
+                    <button
+                      key={template}
+                      type="button"
+                      onClick={() => setAiPrompt(template)}
+                      className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 text-[11px] border border-slate-200 transition-colors"
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Prompt Textarea */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-800 block">Description détaillée du Graphe souhaité :</label>
+                <textarea
+                  rows={4}
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                  placeholder="Ex: Crée un graphe spécialisé dans l'analyse de cold emails avec un agent scraper de LinkedIn, un rédacteur d'icebreakers personnalisés et un agent de relance automatique..."
+                  className="w-full p-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 shadow-inner"
+                />
+              </div>
+
+              {/* Model Choice for Generation */}
+              <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-700 font-semibold">Modèle IA Architecte :</span>
+                <select
+                  value={aiModel}
+                  onChange={e => setAiModel(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900 font-mono text-xs focus:outline-none"
+                >
+                  <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Ultra-Rapide)</option>
+                  <option value="x-ai/grok-2">Grok 2 (Raisonnement Élargi)</option>
+                  <option value="deepseek/deepseek-chat">DeepSeek V3 (Économique)</option>
+                  <option value="anthropic/claude-3.7-sonnet">Claude 3.7 Sonnet (Expertise Max)</option>
+                </select>
+              </div>
+
+              {/* GENERATED PREVIEW */}
+              {generatedGraphPreview && (
+                <div className="p-4 rounded-xl bg-purple-50/70 border border-purple-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-purple-900 text-xs">{generatedGraphPreview.summary}</span>
+                    <span className="px-2 py-0.5 rounded bg-purple-200 text-purple-800 font-mono text-[10px] font-semibold">
+                      {generatedGraphPreview.agents.length} Agents • {generatedGraphPreview.channels.length} Canaux
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {generatedGraphPreview.agents.map(ag => (
+                      <div key={ag.id} className="p-2 bg-white rounded-lg border border-purple-200 text-[11px] space-y-0.5">
+                        <div className="font-bold text-slate-900 truncate">{ag.role}</div>
+                        <div className="text-[10px] text-purple-700 font-mono">Niveau {ag.tier} • {ag.modelId.split('/')[1] || ag.modelId}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 flex items-center justify-between bg-slate-50">
+              <button
+                type="button"
+                onClick={() => setIsAiModalOpen(false)}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-medium transition-colors"
+              >
+                Annuler
+              </button>
+
+              <div className="flex items-center gap-2">
+                {generatedGraphPreview ? (
+                  <button
+                    type="button"
+                    onClick={handleApplyGeneratedGraph}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+                  >
+                    ✓ Appliquer ce Graphe au Système
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleGenerateAiGraph}
+                    disabled={isGeneratingGraph || !aiPrompt.trim()}
+                    className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <span>{isGeneratingGraph ? '🧠 Conception du Graphe...' : '✨ Générer l\'Architecture'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* VIEW 1: VISUAL MULTI-TIER ORGANIGRAM & COMMUNICATION FLOWS */}
       {activeTab === 'flow' && (
         <div className="space-y-6">
@@ -535,13 +797,15 @@ export const AgentGraphStudio: React.FC = () => {
               <span>{agents.length} Agents Spécialisés • {channels.length} Canaux Inter-Niveaux (RPC & Queues)</span>
             </div>
 
-            <button
-              onClick={handleSimulateFlow}
-              disabled={simulationActive}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              <span>{simulationActive ? '⚡ Simulation en cours...' : '▶ Simuler les Échanges en Direct'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSimulateFlow}
+                disabled={simulationActive}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                <span>{simulationActive ? '⚡ Simulation en cours...' : '▶ Simuler les Échanges en Direct'}</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
