@@ -28,7 +28,7 @@ export const WORKSPACE_EVENT = 'omniventure_workspace_updated';
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-export type TaskStatus = 'todo' | 'doing' | 'review' | 'done';
+export type TaskStatus = 'backlog' | 'todo' | 'doing' | 'review' | 'done' | 'annule';
 export type TaskPriority = 'basse' | 'moyenne' | 'haute' | 'urgente';
 
 export interface Task {
@@ -51,6 +51,8 @@ export interface Task {
   cycle?: number;
   /** Sprint dans lequel l'équipe s'est engagée à la livrer. */
   sprint?: number;
+  /** Numéro du ticket dans le produit : PW-12. Attribué à la volée. */
+  number?: number;
   labels: string[];
   createdAt: number;
   updatedAt: number;

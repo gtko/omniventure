@@ -22,6 +22,7 @@ const PROJECT_VIEWS = [
   { view: 'apercu', label: 'Aperçu', href: '/', icon: '👁️' },
   { view: 'direction', label: 'Direction', href: '/?vue=direction', icon: '🧭' },
   { view: 'chantier', label: 'Chantier', href: '/?vue=chantier', icon: '🔨' },
+  { view: 'tickets', label: 'Tickets', href: '/?vue=tickets', icon: '🎫' },
   { view: 'livrables', label: 'Livrables', href: '/?vue=livrables', icon: '📦' },
   { view: 'reglages', label: 'Réglages', href: '/?vue=reglages', icon: '⚙️' }
 ] as const;

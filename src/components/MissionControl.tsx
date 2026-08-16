@@ -8,6 +8,7 @@ import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { VentureFactoryModal } from './VentureFactoryModal';
 import { VentureLedger } from './VentureLedger';
+import { TicketsBoard } from './TicketsBoard';
 import { VentureOverview } from './VentureOverview';
 import { VentureReset } from './VentureReset';
 import { WorksitePanel } from './WorksitePanel';
@@ -16,10 +17,10 @@ const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 const FIELD =
   'w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none';
 
-type View = 'apercu' | 'direction' | 'chantier' | 'livrables' | 'reglages';
+type View = 'apercu' | 'direction' | 'chantier' | 'tickets' | 'livrables' | 'reglages';
 
 /** Les vues valides. Leur libellé et leur icône vivent dans la barre latérale. */
-const VIEWS: View[] = ['apercu', 'direction', 'chantier', 'livrables', 'reglages'];
+const VIEWS: View[] = ['apercu', 'direction', 'chantier', 'tickets', 'livrables', 'reglages'];
 
 const isView = (value: string | null): value is View => VIEWS.includes(value as View);
 
@@ -166,6 +167,8 @@ export const MissionControl: React.FC = () => {
       )}
 
       {view === 'chantier' && <WorksitePanel venture={identity} />}
+
+      {view === 'tickets' && <TicketsBoard venture={identity} />}
 
       {view === 'livrables' && (
         <>

@@ -22,7 +22,7 @@ import { cultureBlock, readCulture } from './culture';
 import { readGraph, type GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
 import { commit, sprintById, updateSprint, type Sprint } from './sprint';
-import { addTask, readTasks, removeTask, updateTask, upsertDoc } from './workspace';
+import { addTask, readTasks, updateTask, upsertDoc } from './workspace';
 
 export type MeetingKind = 'rituel' | 'un-a-un' | 'revue' | 'atelier' | 'incident' | 'comite';
 
@@ -464,10 +464,21 @@ function applyOutcomes(meeting: Meeting, raw: any[], graph: GraphAgent[]): Outco
 
     if (kind.startsWith('annul')) {
       // On n'annule que ce qui existe, et jamais ce qui est déjà livré.
+      //
+      // Le ticket passe en « annulé » au lieu d'être supprimé : une décision de
+      // ne pas faire quelque chose a autant de valeur que la décision inverse,
+      // et une suppression l'effacerait sans laisser de trace.
       const target = readTasks().find(
-        (task) => task.title.toLowerCase().includes(label.toLowerCase().slice(0, 30)) && task.status === 'todo'
+        (task) =>
+          task.title.toLowerCase().includes(label.toLowerCase().slice(0, 30)) &&
+          (task.status === 'todo' || task.status === 'backlog')
       );
-      if (target) removeTask(target.id);
+      if (target) {
+        updateTask(target.id, {
+          status: 'annule',
+          detail: `${target.detail ?? ''}\n\n⊘ Annulé en réunion « ${meeting.title} » : ${base.detail || 'sans motif'}`.trim()
+        });
+      }
       outcomes.push({
         ...base,
         kind: 'annulation',

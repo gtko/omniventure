@@ -25,7 +25,14 @@ const PRIORITY_STYLE: Record<TaskPriority, string> = {
   urgente: 'bg-rose-100 text-rose-700'
 };
 
-const NEXT: Record<TaskStatus, TaskStatus> = { todo: 'doing', doing: 'review', review: 'done', done: 'todo' };
+const NEXT: Record<TaskStatus, TaskStatus> = {
+  backlog: 'todo',
+  todo: 'doing',
+  doing: 'review',
+  review: 'done',
+  done: 'todo',
+  annule: 'todo'
+};
 
 /**
  * Suivi des tâches de l'agence.
