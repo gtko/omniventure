@@ -46,9 +46,36 @@ export const POST: APIRoute = async ({ request, locals }) => {
             openRouterKey: body?.openRouterKey
           };
 
-    const { response, host } = await callWorksite(env, ventureId, action === 'stop' ? 'stop' : 'start', payload);
+    const path = action === 'stop' ? 'stop' : 'start';
+    const { response, host } = await callWorksite(env, ventureId, path, payload);
     const result = (await response.json()) as Record<string, unknown>;
-    return json({ ...result, host }, response.status);
+
+    /*
+     * Lecture et pause commandent l'agence entière, pas seulement la chaîne :
+     * le battement — celui qui donne son tour à chaque agent — démarre et
+     * s'arrête avec elle. Deux boutons pour une même intention en feraient un
+     * de trop.
+     *
+     * Son échec n'empêche pas la production : la chaîne peut très bien tourner
+     * sans que personne ne se réunisse.
+     */
+    let heartbeat: unknown = null;
+    try {
+      const beat = await callWorksite(
+        env,
+        ventureId,
+        path,
+        action === 'stop'
+          ? undefined
+          : { ventureId, ventureName: String(body?.ventureName ?? ''), openRouterKey: body?.openRouterKey },
+        'battement'
+      );
+      heartbeat = await beat.response.json();
+    } catch (error) {
+      heartbeat = { error: error instanceof Error ? error.message : 'battement indisponible' };
+    }
+
+    return json({ ...result, host, heartbeat }, response.status);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Le chantier n’a pas pu démarrer.' }, 500);
   }

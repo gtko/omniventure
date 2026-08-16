@@ -27,6 +27,12 @@
       {
         "name": "WORKSITE_RUNNER",
         "class_name": "WorksiteRunner"
+      },
+      // Le battement : il donne son tour à chaque agent inactif, entre lecture
+      // et pause, et n'existe qu'à ce moment-là.
+      {
+        "name": "AGENCY_HEARTBEAT",
+        "class_name": "AgencyHeartbeat"
       }
     ]
   },
@@ -42,6 +48,10 @@
     {
       "tag": "v3",
       "new_sqlite_classes": ["WorksiteRunner"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["AgencyHeartbeat"]
     }
   ],
 

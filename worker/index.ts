@@ -19,7 +19,7 @@
 import astro from '../dist/_worker.js/index.js';
 
 /** Agents persistants de l'agence. */
-export { OrchestratorAgent, VentureAutonomousAgent, WorksiteRunner } from '../src/agents';
+export { AgencyHeartbeat, OrchestratorAgent, VentureAutonomousAgent, WorksiteRunner } from '../src/agents';
 
 /**
  * Bac à sable d'exécution : un conteneur piloté depuis le Worker.

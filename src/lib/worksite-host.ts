@@ -22,10 +22,14 @@
  * jamais, puisque le Durable Object y répond.
  */
 
+import { AgencyHeartbeat } from '../agents/AgencyHeartbeat';
 import { WorksiteRunner } from '../agents/WorksiteRunner';
 
+/** Ce qui peut être hébergé : la production, et la coordination. */
+type Hosted = WorksiteRunner | AgencyHeartbeat;
+
 interface Shim {
-  runner: WorksiteRunner;
+  runner: Hosted;
   store: Map<string, unknown>;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -38,11 +42,14 @@ interface Shim {
  */
 const hosted = new Map<string, Shim>();
 
-function localRunner(env: any, ventureId: string): WorksiteRunner {
-  const existing = hosted.get(ventureId);
+type Kind = 'chantier' | 'battement';
+
+function localRunner(env: any, ventureId: string, kind: Kind): Hosted {
+  const slot = `${kind}:${ventureId}`;
+  const existing = hosted.get(slot);
   if (existing) return existing.runner;
 
-  const shim: Shim = { runner: null as unknown as WorksiteRunner, store: new Map(), timer: null };
+  const shim: Shim = { runner: null as unknown as Hosted, store: new Map(), timer: null };
 
   const state = {
     storage: {
@@ -71,8 +78,11 @@ function localRunner(env: any, ventureId: string): WorksiteRunner {
     }
   };
 
-  shim.runner = new WorksiteRunner(state as unknown as DurableObjectState, env);
-  hosted.set(ventureId, shim);
+  shim.runner =
+    kind === 'battement'
+      ? new AgencyHeartbeat(state as unknown as DurableObjectState, env)
+      : new WorksiteRunner(state as unknown as DurableObjectState, env);
+  hosted.set(slot, shim);
   return shim.runner;
 }
 
@@ -87,24 +97,31 @@ export interface HostedCall {
  *
  * On tente d'abord le Durable Object ; son échec vaut détection.
  */
-export async function callWorksite(env: any, ventureId: string, path: string, body?: unknown): Promise<HostedCall> {
+export async function callWorksite(
+  env: any,
+  ventureId: string,
+  path: string,
+  body?: unknown,
+  kind: Kind = 'chantier'
+): Promise<HostedCall> {
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {})
   };
 
-  if (env?.WORKSITE_RUNNER) {
+  const binding = kind === 'battement' ? env?.AGENCY_HEARTBEAT : env?.WORKSITE_RUNNER;
+  if (binding) {
     try {
-      const stub = env.WORKSITE_RUNNER.get(env.WORKSITE_RUNNER.idFromName(`worksite:${ventureId}`));
-      const response = await stub.fetch(`https://worksite/${path}`, init);
+      const stub = binding.get(binding.idFromName(`${kind}:${ventureId}`));
+      const response = await stub.fetch(`https://agence/${path}`, init);
       return { response, host: 'durable-object' };
     } catch {
       /* pas d'hôte persistant ici : on prend le relais dans ce processus */
     }
   }
 
-  const runner = localRunner(env, ventureId);
-  const response = await runner.fetch(new Request(`https://worksite/${path}`, init));
+  const runner = localRunner(env, ventureId, kind);
+  const response = await runner.fetch(new Request(`https://agence/${path}`, init));
   return { response, host: 'processus-local' };
 }
