@@ -164,7 +164,10 @@ export const ImprovementBoard: React.FC = () => {
           .filter(Boolean)
           .join('\n'),
         undefined,
-        'improve'
+        'improve',
+        // Une proposition confiée doit pouvoir être implémentée : sans ce
+        // niveau, la CLI se contenterait de décrire ce qu'elle ferait.
+        'write'
       );
       await patch(item.id, { status: 'dispatched', runId });
     } catch (err) {

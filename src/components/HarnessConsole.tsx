@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AUTONOMY_LABEL,
   cancelRun,
   checkRunner,
   getRunnerToken,
@@ -8,6 +9,7 @@ import {
   setRunnerToken,
   startRun,
   streamRun,
+  type Autonomy,
   type HarnessInfo,
   type KnownRun,
   type RunEvent,
@@ -29,6 +31,7 @@ export const HarnessConsole: React.FC = () => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState('');
+  const [autonomy, setAutonomy] = useState<Autonomy>('write');
   const [runs, setRuns] = useState<KnownRun[]>([]);
   const stopRef = useRef<(() => void) | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -89,7 +92,7 @@ export const HarnessConsole: React.FC = () => {
     setEvents([]);
     setRunning(true);
     try {
-      const id = await startRun(harnessId, prompt.trim(), cwd.trim() || undefined, 'console');
+      const id = await startRun(harnessId, prompt.trim(), cwd.trim() || undefined, 'console', autonomy);
       attach(id);
       void listRuns().then((known) => setRuns([...known].reverse()));
     } catch (err) {
@@ -215,6 +218,29 @@ node runner/server.mjs
           </span>
         </div>
 
+        {/* Ce que le harnais a le droit de faire pendant ce run. */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-slate-600">Permissions :</span>
+          {(Object.keys(AUTONOMY_LABEL) as Autonomy[]).map((level) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => setAutonomy(level)}
+              title={AUTONOMY_LABEL[level].hint}
+              className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                autonomy === level
+                  ? level === 'full'
+                    ? 'border-rose-400 bg-rose-50 text-rose-700'
+                    : 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                  : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {AUTONOMY_LABEL[level].label}
+            </button>
+          ))}
+          <span className="text-[11px] text-slate-500">— {AUTONOMY_LABEL[autonomy].hint}</span>
+        </div>
+
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -244,8 +270,9 @@ node runner/server.mjs
         </div>
 
         <p className="text-[11px] leading-relaxed text-slate-500">
-          Le harnais s'exécute avec vos droits sur votre machine et peut modifier le dépôt. Relisez le diff avant de
-          committer : rien n'est poussé automatiquement.
+          Le harnais s'exécute avec vos droits sur votre machine. En <strong>lecture seule</strong> il ne fait
+          qu'analyser et rapporter ; à partir de <strong>Écriture</strong> il modifie le dépôt. Relisez le diff avant
+          de committer : rien n'est commité ni poussé automatiquement.
         </p>
       </form>
 
@@ -274,6 +301,19 @@ node runner/server.mjs
                 <span className="text-[11px] font-semibold text-slate-800">
                   {health?.harnesses.find((h) => h.id === run.harnessId)?.label ?? run.harnessId}
                 </span>
+                {run.autonomy && (
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] ${
+                      run.autonomy === 'read'
+                        ? 'bg-slate-100 text-slate-500'
+                        : run.autonomy === 'full'
+                          ? 'bg-rose-100 text-rose-700'
+                          : 'bg-indigo-100 text-indigo-700'
+                    }`}
+                  >
+                    {AUTONOMY_LABEL[run.autonomy].label}
+                  </span>
+                )}
                 <span className="min-w-0 flex-1 truncate text-[10px] text-slate-500">{run.prompt}</span>
                 <span
                   className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold ${

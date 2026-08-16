@@ -6,66 +6,179 @@
       "label": "Claude Code",
       "vendor": "Anthropic",
       "bin": "claude",
-      "versionArgs": ["--version"],
-      "runArgs": ["-p", "{prompt}"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "-p",
+        "{prompt}"
+      ],
       "install": "npm i -g @anthropic-ai/claude-code",
       "docs": "https://docs.claude.com/en/docs/claude-code",
-      "notes": "Mode print non interactif. Ajouter --output-format stream-json pour un flux structuré."
+      "notes": "Mode print non interactif. Ajouter --output-format stream-json pour un flux structuré.",
+      "autonomy": {
+        "write": {
+          "insert": 0,
+          "args": [
+            "--permission-mode",
+            "acceptEdits"
+          ]
+        },
+        "full": {
+          "insert": 0,
+          "args": [
+            "--permission-mode",
+            "bypassPermissions"
+          ]
+        }
+      }
     },
     {
       "id": "codex",
       "label": "Codex CLI",
       "vendor": "OpenAI",
       "bin": "codex",
-      "versionArgs": ["--version"],
-      "runArgs": ["exec", "{prompt}"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "exec",
+        "{prompt}"
+      ],
       "install": "npm i -g @openai/codex",
       "docs": "https://developers.openai.com/codex/cli",
-      "notes": "`codex exec` est la forme non interactive."
+      "notes": "`codex exec` est la forme non interactive.",
+      "autonomy": {
+        "write": {
+          "insert": 1,
+          "args": [
+            "--sandbox",
+            "workspace-write"
+          ]
+        },
+        "full": {
+          "insert": 1,
+          "args": [
+            "--full-auto"
+          ]
+        }
+      }
     },
     {
       "id": "opencode",
       "label": "opencode",
       "vendor": "SST",
       "bin": "opencode",
-      "versionArgs": ["--version"],
-      "runArgs": ["run", "{prompt}"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "run",
+        "{prompt}"
+      ],
       "install": "npm i -g opencode-ai",
       "docs": "https://opencode.ai/docs",
-      "notes": "`opencode run` exécute une tâche puis rend la main."
+      "notes": "`opencode run` execute une tache puis rend la main. Les permissions se reglent dans opencode.json, pas en option de ligne de commande.",
+      "autonomy": {
+        "write": {
+          "insert": 1,
+          "args": []
+        },
+        "full": {
+          "insert": 1,
+          "args": []
+        }
+      }
     },
     {
       "id": "gemini",
       "label": "Gemini CLI",
       "vendor": "Google",
       "bin": "gemini",
-      "versionArgs": ["--version"],
-      "runArgs": ["-p", "{prompt}"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "-p",
+        "{prompt}"
+      ],
       "install": "npm i -g @google/gemini-cli",
       "docs": "https://github.com/google-gemini/gemini-cli",
-      "notes": "Option -p pour un prompt unique."
+      "notes": "Option -p pour un prompt unique.",
+      "autonomy": {
+        "write": {
+          "insert": 0,
+          "args": [
+            "--approval-mode",
+            "auto_edit"
+          ]
+        },
+        "full": {
+          "insert": 0,
+          "args": [
+            "--approval-mode",
+            "yolo"
+          ]
+        }
+      }
     },
     {
       "id": "antigravity",
       "label": "Antigravity CLI",
       "vendor": "Google",
       "bin": "agy",
-      "versionArgs": ["--version"],
-      "runArgs": ["{prompt}"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "-p",
+        "{prompt}"
+      ],
       "install": "voir la documentation Antigravity",
       "docs": "https://antigravity.google",
-      "notes": "Invocation à confirmer selon votre version : ajustez runArgs dans src/lib/harnesses.json."
+      "notes": "Mode print non interactif. Verifiez l'invocation selon votre version en ajustant runArgs.",
+      "autonomy": {
+        "write": {
+          "insert": 0,
+          "args": [
+            "--mode",
+            "accept-edits"
+          ]
+        },
+        "full": {
+          "insert": 0,
+          "args": [
+            "--dangerously-skip-permissions"
+          ]
+        }
+      }
     },
     {
       "id": "aider",
       "label": "Aider",
       "vendor": "Communauté",
       "bin": "aider",
-      "versionArgs": ["--version"],
-      "runArgs": ["--message", "{prompt}", "--yes"],
+      "versionArgs": [
+        "--version"
+      ],
+      "runArgs": [
+        "--message",
+        "{prompt}",
+        "--yes"
+      ],
       "install": "pip install aider-install && aider-install",
       "docs": "https://aider.chat/docs",
-      "notes": "--message exécute une requête unique sans session interactive."
+      "notes": "--message exécute une requête unique sans session interactive.",
+      "autonomy": {
+        "write": {
+          "insert": 0,
+          "args": []
+        },
+        "full": {
+          "insert": 0,
+          "args": []
+        }
+      }
     }
   ]
 }

@@ -141,6 +141,7 @@ export interface KnownRun {
   harnessId: string;
   startedAt: number;
   exitCode: number | null;
+  autonomy?: Autonomy;
   prompt: string;
 }
 
@@ -156,11 +157,33 @@ export async function listRuns(): Promise<KnownRun[]> {
   }
 }
 
-export async function startRun(harnessId: string, prompt: string, cwd?: string, origin = 'app'): Promise<string> {
+/**
+ * Ce que le harnais a le droit de faire pendant son exécution.
+ *
+ * Sans terminal pour répondre à une demande d'autorisation, une CLI refuse ses
+ * outils d'écriture : en `read` elle ne fait donc que lire et rapporter. C'est
+ * la raison pour laquelle un run peut se terminer « avec succès » sans avoir
+ * touché un seul fichier.
+ */
+export type Autonomy = 'read' | 'write' | 'full';
+
+export const AUTONOMY_LABEL: Record<Autonomy, { label: string; hint: string }> = {
+  read: { label: 'Lecture seule', hint: 'analyse et rapporte, ne modifie rien' },
+  write: { label: 'Écriture', hint: 'modifie les fichiers du projet' },
+  full: { label: 'Autonomie complète', hint: 'modifie ET exécute des commandes (install, git, tests)' }
+};
+
+export async function startRun(
+  harnessId: string,
+  prompt: string,
+  cwd?: string,
+  origin = 'app',
+  autonomy: Autonomy = 'write'
+): Promise<string> {
   const res = await fetch(`${RUNNER_URL}/run`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ harnessId, prompt, cwd })
+    body: JSON.stringify({ harnessId, prompt, cwd, autonomy })
   });
   const json = (await res.json()) as { runId?: string; error?: string };
   if (!res.ok || !json.runId) throw new Error(json.error ?? `Erreur ${res.status}`);

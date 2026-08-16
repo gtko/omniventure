@@ -137,12 +137,40 @@ async function detectAll() {
 /* Exécution                                                           */
 /* ------------------------------------------------------------------ */
 
-function startRun({ harnessId, prompt, cwd }) {
+/**
+ * Niveau d'autonomie accordé au harnais.
+ *
+ *   read  — il lit et rapporte, sans rien modifier. C'est le défaut : sans
+ *           terminal pour répondre à une demande d'autorisation, une CLI refuse
+ *           ses outils d'écriture et se contente de décrire ce qu'elle ferait.
+ *   write — il modifie les fichiers du projet (édition auto-approuvée).
+ *   full  — il exécute aussi des commandes (installations, git, tests).
+ *
+ * Le niveau est choisi à chaque lancement : rien n'est autorisé de façon
+ * permanente, et `read` reste le comportement par défaut.
+ */
+const AUTONOMY_LEVELS = ['read', 'write', 'full'];
+
+function applyAutonomy(harness, args, autonomy) {
+  if (!autonomy || autonomy === 'read') return args;
+  if (!AUTONOMY_LEVELS.includes(autonomy)) throw new Error(`Niveau d'autonomie inconnu : ${autonomy}`);
+  const rule = harness.autonomy?.[autonomy];
+  if (!rule || !Array.isArray(rule.args) || rule.args.length === 0) return args;
+  const copy = [...args];
+  copy.splice(Math.min(rule.insert ?? 0, copy.length), 0, ...rule.args);
+  return copy;
+}
+
+function startRun({ harnessId, prompt, cwd, autonomy = 'read' }) {
   const harness = REGISTRY.harnesses.find((h) => h.id === harnessId);
   if (!harness) throw new Error(`Harnais inconnu : ${harnessId}`);
   if (!prompt || typeof prompt !== 'string') throw new Error('Prompt manquant');
 
-  const args = harness.runArgs.map((arg) => arg.replaceAll('{prompt}', prompt));
+  const args = applyAutonomy(
+    harness,
+    harness.runArgs.map((arg) => arg.replaceAll('{prompt}', prompt)),
+    autonomy
+  );
   const workdir = cwd ? resolve(PROJECT_ROOT, cwd) : PROJECT_ROOT;
   // Le harnais tourne avec vos droits : au minimum, il reste dans le projet.
   if (workdir !== PROJECT_ROOT && !workdir.startsWith(PROJECT_ROOT + sep)) {
@@ -156,6 +184,7 @@ function startRun({ harnessId, prompt, cwd }) {
     id,
     harnessId,
     prompt,
+    autonomy,
     cwd: workdir,
     startedAt: Date.now(),
     exitCode: null,
@@ -185,7 +214,9 @@ function startRun({ harnessId, prompt, cwd }) {
   });
 
   runs.set(id, run);
-  console.log(`▶ ${harness.label} — ${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''} (${id})`);
+  console.log(
+    `▶ ${harness.label} [${autonomy}] — ${prompt.slice(0, 55)}${prompt.length > 55 ? '…' : ''} (${id})`
+  );
   return run;
 }
 
@@ -237,7 +268,12 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/run') {
       const body = await readBody(req);
       const run = startRun(body);
-      return sendJson(res, 200, { runId: run.id, harnessId: run.harnessId, cwd: run.cwd });
+      return sendJson(res, 200, {
+        runId: run.id,
+        harnessId: run.harnessId,
+        cwd: run.cwd,
+        autonomy: run.autonomy
+      });
     }
 
     // Runs connus du pont : permet au bureau de se raccrocher aux exécutions
@@ -249,6 +285,7 @@ const server = createServer(async (req, res) => {
           harnessId: run.harnessId,
           startedAt: run.startedAt,
           exitCode: run.exitCode,
+          autonomy: run.autonomy,
           prompt: run.prompt.slice(0, 200)
         }))
       });
