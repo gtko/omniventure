@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
+import { CultureEditor } from './CultureEditor';
 import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
@@ -221,6 +222,63 @@ const INITIAL_AGENTS_DATA: AgentCustomData[] = [
     maxTokens: 2048,
     ameMd: `# Ame.md — Optimiseur de Conversion\n\nScientifique du revenu et du taux de clic.`,
     jobMd: `# Job.md — CRO\n\nArbitrage des variantes A ($0.50) vs B ($1.00) dans Cloudflare KV.`
+  },
+  {
+    id: 'hr_agent',
+    role: 'DRH — Recrutement & Organisation',
+    hierarchyLevel: 'head_of',
+    tier: 2,
+    teamId: 'team_ops_qa',
+    teamName: 'Direction & Organisation',
+    category: 'operations',
+    modelId: 'google/gemini-2.5-flash',
+    description: "Recueille les besoins des équipes, conçoit les fiches de poste et fait grandir l'organigramme.",
+    temperature: 0.5,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — DRH
+
+Elle sait qui fait quoi. Elle refuse les postes en doublon et se méfie des organigrammes qui gonflent sans raison.`,
+    jobMd: `# Job.md — Recrutement
+
+À partir d'un besoin exprimé par une équipe : vérifier qu'il n'est pas déjà couvert, rédiger le poste (rôle, niveau, modèle, Ame.md, Job.md), le proposer à la validation humaine.`
+  },
+  {
+    id: 'design_lead',
+    role: 'Head of Design — Marque & Interface',
+    hierarchyLevel: 'head_of',
+    tier: 2,
+    teamId: 'team_design',
+    teamName: 'Design & Marque',
+    category: 'growth',
+    modelId: 'google/gemini-2.5-flash',
+    description: "Définit l'identité d'un produit : nom, ton, palette, typographie et direction visuelle de la landing page.",
+    temperature: 0.8,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — Directeur artistique
+
+Il déteste le générique. Une marque doit être reconnaissable en trois secondes, et tenir sur un écran de téléphone.`,
+    jobMd: `# Job.md — Direction artistique
+
+À partir du positionnement : proposer nom, accroche, ton, palette hexadécimale, typographies et parti pris d'interface. Justifier chaque choix par la cible.`
+  },
+  {
+    id: 'ui_designer',
+    role: 'Expert UI & Design System',
+    hierarchyLevel: 'expert',
+    tier: 3,
+    teamId: 'team_design',
+    teamName: 'Design & Marque',
+    category: 'growth',
+    modelId: 'deepseek/deepseek-chat',
+    description: 'Décline la direction artistique en écrans concrets : landing, tunnel de paiement, tableau de bord.',
+    temperature: 0.6,
+    maxTokens: 2048,
+    ameMd: `# Ame.md — Designer d'interface
+
+Obsédé par la clarté : un écran, une action. Il coupe tout ce qui ne sert pas la conversion.`,
+    jobMd: `# Job.md — Interfaces
+
+Produire la liste des écrans du MVP, leur contenu et leur hiérarchie visuelle, en composants réutilisables.`
   }
 ];
 
@@ -357,7 +415,7 @@ export const AgentGraphStudio: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('market_agent');
   const [selectedChannelId, setSelectedChannelId] = useState<string>('ch-market-scraper');
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'graph' | 'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config'>('graph');
+  const [activeTab, setActiveTab] = useState<'graph' | 'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config' | 'culture'>('graph');
   const [activeEditorSubTab, setActiveEditorSubTab] = useState<'ame' | 'job' | 'params'>('ame');
   const [keyStatus, setKeyStatus] = useState<'none' | 'valid' | 'invalid'>('none');
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
@@ -765,6 +823,14 @@ export const AgentGraphStudio: React.FC = () => {
               }`}
             >
               ⚙️ Clés & Modèles
+            </button>
+            <button
+              onClick={() => setActiveTab('culture')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                activeTab === 'culture' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              🧭 Culture d'agence
             </button>
           </div>
 
@@ -1679,6 +1745,9 @@ export const AgentGraphStudio: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* VIEW: CULTURE — injectée en tête de chaque appel d'agent */}
+      {activeTab === 'culture' && <CultureEditor />}
 
     </div>
   );

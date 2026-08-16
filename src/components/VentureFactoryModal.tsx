@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import type { Venture, VentureType, BusinessModel } from '../types';
+import { saveRealAgentLog } from '../lib/agent-bus';
+import { readCulture } from '../lib/culture';
+import { addRequest, readGraph } from '../lib/hiring';
+import type { Venture } from '../types';
+import { Portal } from './Portal';
 
 interface Props {
   isOpen: boolean;
@@ -7,287 +11,567 @@ interface Props {
   onCreateVenture: (venture: Venture) => void;
 }
 
+/* ------------------------------------------------------------------ */
+/* Dossier produit par l'agence                                        */
+/* ------------------------------------------------------------------ */
+
+interface Dossier {
+  idea: string;
+  brief: string;
+  market: string;
+  name: string;
+  slug: string;
+  domain: string;
+  tagline: string;
+  positioning: string;
+  gap: string;
+  priceRange: string;
+  opportunityScore: number;
+  competitors: Array<{ name: string; url: string; price: string; strength: string; weakness: string }>;
+  differentiators: string[];
+  product: {
+    mvpFeatures: string[];
+    outOfScope: string[];
+    stack: string[];
+    integrations: string[];
+    effortDays: number;
+    mainTechnicalRisk: string;
+  };
+  design: {
+    tone: string;
+    palette: string[];
+    typography: { heading: string; body: string };
+    visualDirection: string;
+    screens: Array<{ name: string; goal: string; keyElements: string[] }>;
+  };
+  pricing: { businessModel: string; trialCents: number; recurringCents: number; trialHours: number; rationale: string };
+  growth: {
+    acquisition: Array<{ channel: string; angle: string; firstAction: string }>;
+    seoKeywords: string[];
+    hook: string;
+  };
+  hiring: {
+    covered: Array<{ need: string; byAgentId: string }>;
+    hires: Array<{ role: string; hierarchyLevel: string; teamName: string; why: string; urgency: string }>;
+  };
+  risks: string[];
+  sources: string[];
+  tokens: number;
+}
+
+interface StepView {
+  key: string;
+  label: string;
+  agentRole: string;
+  model: string;
+  status: 'start' | 'done';
+  summary?: string;
+}
+
+const euros = (cents: number) => `${(cents / 100).toFixed(2).replace('.', ',')} €`;
+
+const EXAMPLES = [
+  'Un SaaS qui humanise des textes IA et se positionne en SEO sur cette niche.',
+  'Un service qui surveille les prix des concurrents e-commerce et alerte par e-mail.',
+  'Un générateur de contrats freelance conformes, à la demande.'
+];
+
+/**
+ * Lancement d'un business : l'opérateur écrit une phrase, l'agence produit le
+ * dossier.
+ *
+ * Ce n'est pas un appel de modèle unique : chaque étape est menée par l'agent
+ * compétent avec son propre modèle, et l'agence va réellement lire les sites
+ * des concurrents avant d'analyser. La progression s'affiche au fil de l'eau.
+ */
 export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreateVenture }) => {
+  const [idea, setIdea] = useState('');
+  const [steps, setSteps] = useState<StepView[]>([]);
+  const [reads, setReads] = useState<Array<{ domain: string; pages?: number; done: boolean }>>([]);
+  const [dossier, setDossier] = useState<Dossier | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hiringSent, setHiringSent] = useState(false);
+
   if (!isOpen) return null;
 
-  const [type, setType] = useState<VentureType>('saas');
-  const [name, setName] = useState<string>('ContractGenius AI');
-  const [niche, setNiche] = useState<string>('Génération automatique de NDA & Contrats Freelances B2B');
-  const [speech, setSpeech] = useState<string>(
-    'Plateforme B2B pour freelances et agences : génération en 10s de contrats légaux et NDA conformes RGPD avec paiement par trial 0.50$ pendant 48h puis abonnement à 29$/mois.'
-  );
-  const [businessModel, setBusinessModel] = useState<BusinessModel>('trial_rebill');
-  const [priceTrial, setPriceTrial] = useState<number>(0.50);
-  const [priceRecurring, setPriceRecurring] = useState<number>(29.00);
-  const [trialHours, setTrialHours] = useState<number>(48);
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [generationStep, setGenerationStep] = useState<string>('');
+  const run = async (event?: React.FormEvent) => {
+    if (event) event.preventDefault();
+    if (idea.trim().length < 10 || busy) return;
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsGenerating(true);
+    setBusy(true);
+    setError(null);
+    setSteps([]);
+    setReads([]);
+    setDossier(null);
+    setHiringSent(false);
 
-    const steps = [
-      'Grok 4.6 & Qwen 3.8-Max : Analyse du Speech et découpage en 14 micro-tâches...',
-      'Gemini 3.7 Flash : Architecture Astro SSR et schéma Cloudflare D1...',
-      'DeepSeek V4 Flash : Écriture des composants UI, landing page et formulaires...',
-      'Stripe Hub : Configuration du Trial $0.50 et SetupIntent 48h...',
-      'Gemini 3.7 Flash : Audit QA & Tests Lighthouse 100/100...',
-      'Cloudflare Pages : Déploiement Canary 10% sur le réseau mondial Edge...'
-    ];
+    const graph = readGraph();
 
-    let currentStep = 0;
-    setGenerationStep(steps[currentStep]);
+    saveRealAgentLog({
+      fromAgentId: 'master',
+      fromAgentName: 'Victoria (CEO)',
+      toAgentId: 'market_agent',
+      toAgentName: 'Alex (Veille)',
+      actionSummary: `Nouvelle idée à instruire : "${idea.trim().slice(0, 60)}"`,
+      bubbleText: '🧭 On instruit cette idée',
+      payloadSummary: idea.trim().slice(0, 200),
+      costUsd: 0.00005,
+      modelUsed: 'x-ai/grok-2'
+    });
 
-    const interval = setInterval(() => {
-      currentStep++;
-      if (currentStep < steps.length) {
-        setGenerationStep(steps[currentStep]);
-      } else {
-        clearInterval(interval);
-        setIsGenerating(false);
+    try {
+      const res = await fetch('/api/ventures/blueprint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: idea.trim(),
+          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined,
+          culture: readCulture(),
+          graph: graph.map((agent) => ({
+            id: agent.id,
+            role: agent.role,
+            modelId: agent.modelId,
+            ameMd: agent.ameMd,
+            jobMd: agent.jobMd,
+            temperature: agent.temperature
+          }))
+        })
+      });
 
-        const newSlug = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const newVenture: Venture = {
-          id: `vnt-${Date.now()}`,
-          name,
-          slug: newSlug,
-          niche,
-          type,
-          businessModel,
-          status: 'canary',
-          domain: `${newSlug}.factory.dev`,
-          stripeAccountId: 'acct_1NvXAutoStripe',
-          priceTrialCents: Math.round(priceTrial * 100),
-          priceRecurringCents: Math.round(priceRecurring * 100),
-          trialDurationHours: trialHours,
-          canaryTrafficPct: 10,
-          activeVersion: 'v1.0.0-canary',
-          visitorsCount: 0,
-          subscribersCount: 0,
-          mrrCents: 0,
-          totalRevenueCents: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        onCreateVenture(newVenture);
-        onClose();
+      if (!res.ok || !res.body) {
+        const failure = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(failure.error ?? `Erreur ${res.status}`);
       }
-    }, 600);
+
+      // Flux ligne à ligne : on voit l'agence avancer au lieu d'attendre.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+
+        for (const frame of frames) {
+          const line = frame.trim();
+          if (!line.startsWith('data:')) continue;
+          let payload: any;
+          try {
+            payload = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+
+          if (payload.type === 'step') {
+            setSteps((prev) => {
+              const next = prev.filter((entry) => entry.key !== payload.key);
+              return [...next, payload as StepView].sort(
+                (a, b) => Number(a.status === 'done') - Number(b.status === 'done')
+              );
+            });
+            if (payload.status === 'done') {
+              saveRealAgentLog({
+                fromAgentId: payload.agentId,
+                fromAgentName: payload.agentRole,
+                toAgentId: 'master',
+                toAgentName: 'Victoria (CEO)',
+                actionSummary: `${payload.label} — ${payload.summary ?? 'terminé'}`,
+                bubbleText: `📎 ${payload.label}`,
+                payloadSummary: String(payload.summary ?? ''),
+                costUsd: 0.0004,
+                modelUsed: payload.model
+              });
+            }
+          } else if (payload.type === 'read') {
+            setReads((prev) => {
+              const next = prev.filter((entry) => entry.domain !== payload.domain);
+              return [...next, { domain: payload.domain, pages: payload.pages, done: payload.status === 'done' }];
+            });
+          } else if (payload.type === 'done') {
+            setDossier(payload.dossier as Dossier);
+          } else if (payload.type === 'error') {
+            setError(payload.message);
+          }
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Préparation impossible');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Les postes manquants partent chez la DRH, qui rédigera les fiches. */
+  const sendHiringToHr = () => {
+    if (!dossier) return;
+    for (const hire of dossier.hiring.hires) {
+      addRequest({
+        requestedById: 'master',
+        requestedByName: `Projet ${dossier.name}`,
+        teamName: hire.teamName || dossier.name,
+        need: `${hire.role} — ${hire.why}`,
+        urgency: (['basse', 'moyenne', 'haute'].includes(hire.urgency) ? hire.urgency : 'moyenne') as
+          | 'basse'
+          | 'moyenne'
+          | 'haute'
+      });
+    }
+    setHiringSent(true);
+  };
+
+  const create = () => {
+    if (!dossier) return;
+    const venture: Venture = {
+      id: `vnt-${Date.now()}`,
+      name: dossier.name,
+      slug: dossier.slug,
+      niche: dossier.positioning || dossier.market,
+      type: 'saas',
+      businessModel: (['trial_rebill', 'freemium', 'one_time', 'affiliate_commission'].includes(
+        dossier.pricing.businessModel
+      )
+        ? dossier.pricing.businessModel
+        : 'trial_rebill') as Venture['businessModel'],
+      status: 'draft',
+      domain: dossier.domain,
+      stripeAccountId: '',
+      priceTrialCents: dossier.pricing.trialCents,
+      priceRecurringCents: dossier.pricing.recurringCents,
+      trialDurationHours: dossier.pricing.trialHours,
+      canaryTrafficPct: 0,
+      activeVersion: 'v1.0.0',
+      visitorsCount: 0,
+      subscribersCount: 0,
+      mrrCents: 0,
+      totalRevenueCents: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    saveRealAgentLog({
+      fromAgentId: 'master',
+      fromAgentName: 'Victoria (CEO)',
+      toAgentId: 'lead_dev',
+      toAgentName: 'David (Architecte)',
+      actionSummary: `Projet validé : ${dossier.name}`,
+      bubbleText: `🚀 On construit ${dossier.name}`,
+      payloadSummary: JSON.stringify({ mvp: dossier.product.mvpFeatures }),
+      costUsd: 0.0001,
+      modelUsed: 'x-ai/grok-2'
+    });
+
+    onCreateVenture(venture);
+    onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-      <div className="bg-white w-full max-w-xl p-6 rounded-2xl border border-slate-200 shadow-xl relative max-h-[90vh] overflow-y-auto">
-        
-        {/* Modal Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-200">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">Générer un Nouveau Business</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Configuration du speech et déploiement 100% autonome sur Cloudflare.</p>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={isGenerating}
-            className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Progress or Form */}
-        {isGenerating ? (
-          <div className="py-10 space-y-4 text-center">
-            <div className="w-10 h-10 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-slate-900">Génération Multi-Agents en cours...</h3>
-              <p className="text-xs text-indigo-600 font-mono">{generationStep}</p>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4 pt-4 text-sm">
-            
-            {/* Asset Type */}
+    <Portal>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+        <div className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="flex items-start justify-between border-b border-slate-200 pb-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Type d'Asset</label>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { id: 'saas', label: 'Micro-SaaS' },
-                  { id: 'dropship', label: 'E-commerce' },
-                  { id: 'affiliate', label: 'Affiliation' },
-                  { id: 'ebook', label: 'KDP Ebook' }
-                ].map(t => (
+              <h2 className="text-lg font-bold text-slate-900">Lancer un nouveau business</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Écrivez ce que vous voulez lancer. L'agence instruit le dossier : elle lit vraiment les sites des
+                concurrents, puis chaque métier prend sa part.
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              disabled={busy}
+              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            >
+              ✕
+            </button>
+          </div>
+
+          <form onSubmit={run} className="space-y-3 pt-4">
+            <textarea
+              value={idea}
+              onChange={(event) => setIdea(event.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Ex. « Un SaaS qui humanise des textes IA et se positionne en SEO sur cette niche. »"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-3 text-sm text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none"
+            />
+
+            {!dossier && !busy && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Exemples</span>
+                {EXAMPLES.map((example) => (
                   <button
-                    key={t.id}
+                    key={example}
                     type="button"
-                    onClick={() => {
-                      setType(t.id as VentureType);
-                      if (t.id === 'saas') {
-                        setName('ContractGenius AI');
-                        setNiche('Génération automatique de NDA & Contrats Freelances B2B');
-                        setSpeech('Plateforme B2B pour freelances et agences : génération en 10s de contrats légaux et NDA conformes RGPD avec paiement par trial 0.50$ pendant 48h puis abonnement à 29$/mois.');
-                        setBusinessModel('trial_rebill');
-                      } else if (t.id === 'dropship') {
-                        setName('Orthocare Back Brace');
-                        setNiche('Santé posturale & correcteur ergonomique');
-                        setSpeech('Boutique mono-produit à haute conversion vendant un redresse-dos ergonomique avec compte à rebours et offre 1 acheté = 1 offert.');
-                        setBusinessModel('one_time');
-                      } else if (t.id === 'affiliate') {
-                        setName('TopCryptoTools 2026');
-                        setNiche('Comparatif des meilleurs outils de trading');
-                        setSpeech('Portail SEO de 200 articles comparatifs avec redirection masquée de liens affiliés et balisage Schema.org.');
-                        setBusinessModel('affiliate_commission');
-                      } else {
-                        setName('Guide Pratique IA 2026');
-                        setNiche('Ebook Kindle KDP pour solopreneurs');
-                        setSpeech('Livre complet de 8 chapitres au format EPUB et PDF print avec couverture haute résolution prête pour Amazon KDP.');
-                        setBusinessModel('one_time');
-                      }
-                    }}
-                    className={`py-2 px-3 rounded-lg border text-center text-xs transition-colors ${
-                      type === t.id
-                        ? 'bg-indigo-50 border-indigo-600 text-indigo-700 font-semibold'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                    onClick={() => setIdea(example)}
+                    className="rounded-full border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700"
                   >
-                    {t.label}
+                    {example.slice(0, 40)}…
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Name & Niche */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Nom du Business</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-900 text-sm focus:border-indigo-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Niche de Marché</label>
-                <input
-                  type="text"
-                  required
-                  value={niche}
-                  onChange={e => setNiche(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-900 text-sm focus:border-indigo-600 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Speech / Pitch / Vision Field */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                🎤 Speech & Vision du Projet (Prompt Maître pour les Agents)
-              </label>
-              <textarea
-                rows={3}
-                required
-                value={speech}
-                onChange={e => setSpeech(e.target.value)}
-                placeholder="Décrivez l'idée, la cible, la valeur ajoutée et le tunnel de conversion..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-900 text-xs focus:border-indigo-600 focus:outline-none leading-relaxed"
-              />
-              <span className="text-[11px] text-slate-500 block mt-0.5">
-                Ce speech sera transmis à Grok 4.6 / Qwen 3.8-Max pour décomposer l'application en composants Astro et configurer les tunnels.
-              </span>
-            </div>
-
-            {/* Pricing Parameters for SaaS */}
-            {type === 'saas' && (
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-700">Modèle Stripe</span>
-                  <div className="space-x-1">
-                    <button
-                      type="button"
-                      onClick={() => setBusinessModel('trial_rebill')}
-                      className={`px-2.5 py-1 text-xs rounded-md ${
-                        businessModel === 'trial_rebill' ? 'bg-indigo-600 text-white font-medium' : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      Trial 0.50$ → Rebill 48h
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBusinessModel('freemium')}
-                      className={`px-2.5 py-1 text-xs rounded-md ${
-                        businessModel === 'freemium' ? 'bg-indigo-600 text-white font-medium' : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      Freemium
-                    </button>
-                  </div>
-                </div>
-
-                {businessModel === 'trial_rebill' && (
-                  <div className="grid grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <span className="text-slate-500 block mb-1">Prix Trial ($)</span>
-                      <input
-                        type="number"
-                        step="0.10"
-                        value={priceTrial}
-                        onChange={e => setPriceTrial(parseFloat(e.target.value))}
-                        className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block mb-1">Durée Trial</span>
-                      <select
-                        value={trialHours}
-                        onChange={e => setTrialHours(parseInt(e.target.value))}
-                        className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                      >
-                        <option value={24}>24 Heures</option>
-                        <option value={48}>48 Heures</option>
-                        <option value={72}>72 Heures</option>
-                      </select>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block mb-1">Rebill Mensuel ($)</span>
-                      <input
-                        type="number"
-                        step="1"
-                        value={priceRecurring}
-                        onChange={e => setPriceRecurring(parseFloat(e.target.value))}
-                        className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
             )}
 
-            {/* Actions */}
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg"
-              >
-                Annuler
-              </button>
+            {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
-              <button
-                type="submit"
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
-              >
-                Lancer la Génération Multi-Agents
-              </button>
-            </div>
-
+            <button
+              type="submit"
+              disabled={busy || idea.trim().length < 10}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {busy ? "L'agence travaille…" : dossier ? '↻ Refaire le dossier' : "🧠 Faire travailler l'agence"}
+            </button>
           </form>
-        )}
 
+          {/* Progression : qui travaille, avec quel modèle */}
+          {(steps.length > 0 || reads.length > 0) && (
+            <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              {steps.map((step) => (
+                <div key={step.key} className="flex items-baseline gap-2 text-[11px]">
+                  <span className={step.status === 'done' ? 'text-emerald-600' : 'animate-pulse text-indigo-600'}>
+                    {step.status === 'done' ? '✓' : '●'}
+                  </span>
+                  <span className="font-semibold text-slate-800">{step.label}</span>
+                  <span className="text-slate-500">— {step.agentRole}</span>
+                  <span className="font-mono text-[9.5px] text-slate-400">{step.model}</span>
+                  {step.summary && <span className="ml-auto text-slate-500">{step.summary}</span>}
+                </div>
+              ))}
+              {reads.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 border-t border-slate-200 pt-1.5">
+                  {reads.map((read) => (
+                    <span
+                      key={read.domain}
+                      className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                        read.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {read.domain}
+                      {read.done && read.pages != null ? ` · ${read.pages}p` : ' …'}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dossier */}
+          {dossier && !busy && (
+            <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 text-sm">
+              <div>
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <h3 className="text-xl font-bold text-slate-900">{dossier.name}</h3>
+                  <span className="font-mono text-[11px] text-slate-400">{dossier.domain}</span>
+                  <span className="rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                    opportunité {dossier.opportunityScore}/100
+                  </span>
+                </div>
+                <p className="mt-1 text-sm italic text-slate-700">« {dossier.tagline} »</p>
+                <p className="mt-1.5 text-xs text-slate-600">{dossier.brief}</p>
+              </div>
+
+              {/* Concurrence réellement lue */}
+              <Block title="Concurrence" hint={dossier.priceRange}>
+                {dossier.competitors.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="text-[9px] uppercase tracking-wide text-slate-400">
+                        <tr>
+                          <th className="py-1 pr-2">Acteur</th>
+                          <th className="py-1 pr-2">Prix</th>
+                          <th className="py-1 pr-2">Force</th>
+                          <th className="py-1">Faiblesse</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 align-top">
+                        {dossier.competitors.map((competitor, index) => (
+                          <tr key={index}>
+                            <td className="py-1.5 pr-2 font-semibold text-slate-800">{competitor.name}</td>
+                            <td className="py-1.5 pr-2 font-mono text-indigo-700">{competitor.price}</td>
+                            <td className="py-1.5 pr-2 text-slate-600">{competitor.strength}</td>
+                            <td className="py-1.5 text-rose-700">{competitor.weakness}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-[11px] italic text-slate-400">Aucun acteur identifié.</p>
+                )}
+                <p className="mt-2 text-xs font-medium text-slate-900">Brèche : {dossier.gap}</p>
+                {dossier.sources.length > 0 && (
+                  <p className="mt-1 font-mono text-[10px] text-slate-400">
+                    Pages lues : {dossier.sources.map((source) => source.replace(/^https?:\/\//, '')).join(' · ')}
+                  </p>
+                )}
+              </Block>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Block title="Produit" hint={`${dossier.product.effortDays} j de MVP`}>
+                  <Bullets items={dossier.product.mvpFeatures} />
+                  {dossier.product.outOfScope.length > 0 && (
+                    <>
+                      <p className="mt-2 text-[9px] font-bold uppercase tracking-wide text-slate-400">Hors périmètre</p>
+                      <Bullets items={dossier.product.outOfScope} muted />
+                    </>
+                  )}
+                  {dossier.product.stack.length > 0 && (
+                    <p className="mt-2 font-mono text-[10px] text-slate-400">{dossier.product.stack.join(' · ')}</p>
+                  )}
+                </Block>
+
+                <Block title="Design & marque" hint={dossier.design.tone}>
+                  <div className="flex items-center gap-1.5">
+                    {dossier.design.palette.map((color) => (
+                      <span
+                        key={color}
+                        title={color}
+                        className="h-6 w-6 rounded border border-slate-300"
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <span className="ml-1 font-mono text-[10px] text-slate-400">
+                      {dossier.design.typography.heading} / {dossier.design.typography.body}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-slate-600">{dossier.design.visualDirection}</p>
+                  {dossier.design.screens.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5 text-[11px] text-slate-700">
+                      {dossier.design.screens.map((screen, index) => (
+                        <li key={index}>
+                          <strong>{screen.name}</strong> — {screen.goal}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Block>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Block title="Tarification">
+                  <p className="font-mono text-sm font-bold text-slate-900">
+                    {dossier.pricing.trialCents > 0
+                      ? `${euros(dossier.pricing.trialCents)} / ${dossier.pricing.trialHours} h`
+                      : 'Sans essai'}
+                    {dossier.pricing.recurringCents > 0 && ` → ${euros(dossier.pricing.recurringCents)}/mois`}
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-600">{dossier.pricing.rationale}</p>
+                </Block>
+
+                <Block title="Acquisition" hint={dossier.growth.hook}>
+                  <ul className="space-y-1 text-[11px] text-slate-700">
+                    {dossier.growth.acquisition.map((channel, index) => (
+                      <li key={index}>
+                        <strong>{channel.channel}</strong> — {channel.angle}
+                        {channel.firstAction && <em className="block text-slate-500">→ {channel.firstAction}</em>}
+                      </li>
+                    ))}
+                  </ul>
+                  {dossier.growth.seoKeywords.length > 0 && (
+                    <p className="mt-1.5 font-mono text-[10px] text-slate-400">
+                      {dossier.growth.seoKeywords.join(' · ')}
+                    </p>
+                  )}
+                </Block>
+              </div>
+
+              {/* Recrutements */}
+              <Block title="Recrutements nécessaires" hint="décidés par la DRH">
+                {dossier.hiring.hires.length === 0 ? (
+                  <p className="text-[11px] text-emerald-700">
+                    Aucun recrutement : l'organisation actuelle couvre le projet.
+                  </p>
+                ) : (
+                  <>
+                    <ul className="space-y-1.5 text-[11px]">
+                      {dossier.hiring.hires.map((hire, index) => (
+                        <li key={index} className="rounded border border-slate-200 p-2">
+                          <div className="flex flex-wrap items-baseline gap-1.5">
+                            <strong className="text-slate-900">{hire.role}</strong>
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600">
+                              {hire.hierarchyLevel}
+                            </span>
+                            <span className="text-slate-500">{hire.teamName}</span>
+                            <span
+                              className={`ml-auto rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                hire.urgency === 'haute'
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : hire.urgency === 'basse'
+                                    ? 'bg-slate-100 text-slate-600'
+                                    : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {hire.urgency}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-slate-600">{hire.why}</p>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={sendHiringToHr}
+                      disabled={hiringSent}
+                      className="mt-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 disabled:opacity-50"
+                    >
+                      {hiringSent ? '✓ Transmis à la DRH' : '→ Transmettre à la DRH'}
+                    </button>
+                  </>
+                )}
+                {dossier.hiring.covered.length > 0 && (
+                  <p className="mt-2 text-[10px] text-slate-400">
+                    Déjà couvert : {dossier.hiring.covered.map((entry) => entry.byAgentId).join(', ')}
+                  </p>
+                )}
+              </Block>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-4">
+                <span className="font-mono text-[10px] text-slate-400">
+                  {dossier.tokens.toLocaleString('fr-FR')} tokens · {steps.length} agents mobilisés
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={create}
+                    className="rounded-lg bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+                  >
+                    ✓ Créer ce projet
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </Portal>
   );
 };
+
+const Block: React.FC<{ title: string; hint?: string; children: React.ReactNode }> = ({ title, hint, children }) => (
+  <section className="rounded-lg border border-slate-200 p-3">
+    <header className="mb-1.5 flex items-baseline gap-2">
+      <h4 className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{title}</h4>
+      {hint && <span className="truncate text-[10px] text-slate-400">{hint}</span>}
+    </header>
+    {children}
+  </section>
+);
+
+const Bullets: React.FC<{ items: string[]; muted?: boolean }> = ({ items, muted }) =>
+  items.length === 0 ? null : (
+    <ul className={`list-disc space-y-0.5 pl-4 text-[11px] ${muted ? 'text-slate-400' : 'text-slate-700'}`}>
+      {items.map((item, index) => (
+        <li key={index}>{item}</li>
+      ))}
+    </ul>
+  );

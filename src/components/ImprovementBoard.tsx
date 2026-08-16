@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { readCulture } from '../lib/culture';
 import { checkRunner, startRun, type HarnessInfo } from '../lib/harness-client';
 
 interface Improvement {
@@ -127,6 +128,7 @@ export const ImprovementBoard: React.FC = () => {
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined,
           context,
           direction: direction.trim(),
+          culture: readCulture(),
           count: 6
         })
       });

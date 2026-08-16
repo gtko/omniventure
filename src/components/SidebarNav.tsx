@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getStoredVentures, getActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
+import { Portal } from './Portal';
 import { ProjectSwitcher } from './ProjectSwitcher';
 
 interface Props {
@@ -174,7 +175,8 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
-                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' }
+                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
+                  { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
                   return (
@@ -220,7 +222,8 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
-                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' }
+                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
+                  { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
                   return (
@@ -335,7 +338,10 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
 
       {/* DETAILED TELEMETRY MODAL */}
       {showTelemetryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+        // Portail : sans lui, le backdrop-filter de la nav enfermerait la
+        // modale dans les 16 rem de la barre latérale (voir Portal.tsx).
+        <Portal>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white w-full max-w-lg p-6 rounded-2xl border border-slate-200 shadow-xl space-y-4 relative">
             
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
@@ -425,6 +431,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
 
           </div>
         </div>
+        </Portal>
       )}
 
     </aside>

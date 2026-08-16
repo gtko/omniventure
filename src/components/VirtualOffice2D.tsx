@@ -8,6 +8,7 @@ import {
   type HarnessLineDetail,
   type HarnessStartDetail
 } from '../lib/harness-client';
+import { GRAPH_UPDATED_EVENT } from '../lib/hiring';
 import { harnessProfile, loadGraphProfiles } from './office/agents';
 import { drawHarnessBadge, harnessBrand } from './office/harnessMarks';
 import { AgentPanel, type AgentView } from './office/AgentPanel';
@@ -417,6 +418,25 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       window.removeEventListener('omniventure_real_agent_activity', onActivity);
       window.removeEventListener('omniventure_real_agent_activity_cleared', onCleared);
     };
+  }, [notify]);
+
+  /* ── Recrutement : une embauche fait arriver quelqu'un au bureau ── */
+  useEffect(() => {
+    const onGraphUpdated = () => {
+      const sim = simRef.current;
+      if (!sim) return;
+      // Seuls les profils absents du plateau entrent : les autres y sont déjà.
+      for (const profile of loadGraphProfiles()) {
+        if (sim.byId.has(profile.id)) continue;
+        const actor = sim.spawnAgent(profile, ENTRANCE);
+        if (actor) notify(`${profile.short} rejoint l'agence.`);
+        else notify('Plus aucun poste libre : agrandissez le bureau.');
+      }
+      setHeadcount(sim.actors.filter((actor) => !actor.profile.harness).length);
+    };
+
+    window.addEventListener(GRAPH_UPDATED_EVENT, onGraphUpdated);
+    return () => window.removeEventListener(GRAPH_UPDATED_EVENT, onGraphUpdated);
   }, [notify]);
 
   /* ── Harnais de code : un run = un intervenant sur le plateau ── */

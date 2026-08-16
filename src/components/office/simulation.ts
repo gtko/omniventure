@@ -745,11 +745,28 @@ export class OfficeSim {
    * temps de l'exécution, contrairement aux agents du graphe.
    */
   spawnHarness(profile: AgentProfile, entrance: Step): Actor | null {
+    return this.spawnActor(profile, entrance, true);
+  }
+
+  /**
+   * Fait entrer un collaborateur recruté en cours de session : il arrive par la
+   * porte comme n'importe qui, prend un poste libre, et vit ensuite sa journée
+   * normalement (il n'est pas cloué à sa place, contrairement à un harnais).
+   */
+  spawnAgent(profile: AgentProfile, entrance: Step): Actor | null {
+    return this.spawnActor(profile, entrance, false);
+  }
+
+  private spawnActor(profile: AgentProfile, entrance: Step, pinned: boolean): Actor | null {
     const existing = this.byId.get(profile.id);
     if (existing) return existing;
 
     const taken = new Set(this.actors.map((actor) => actor.seat.id));
+    const preferred = profile.senior
+      ? this.seats.find((s) => s.kind === 'private' && !taken.has(s.id))
+      : this.seats.find((s) => s.kind !== 'private' && s.room === profile.room && !taken.has(s.id));
     const seat =
+      preferred ??
       this.seats.find((s) => s.kind !== 'private' && !taken.has(s.id)) ??
       this.seats.find((s) => !taken.has(s.id));
     if (!seat) return null;
@@ -784,8 +801,9 @@ export class OfficeSim {
       bubble: null,
       bubbleTone: 'real',
       bubbleUntil: 0,
-      pinned: true
+      pinned
     };
+    if (!pinned) actor.decideAt = rand(60, DESK_PAUSE_MAX_SEC);
     if (actor.path.length === 0) {
       actor.col = seat.col;
       actor.row = seat.row;
@@ -798,8 +816,13 @@ export class OfficeSim {
 
     this.actors.push(actor);
     this.byId.set(profile.id, actor);
-    this.say(actor, `👋 ${profile.short} prend un poste`, 'real', 14);
-    this.log(`${profile.short} entre sur le plateau — ${profile.role}`, 'real');
+    this.say(actor, pinned ? `👋 ${profile.short} prend un poste` : `👋 Bonjour, je suis ${profile.short} !`, 'real', 14);
+    this.log(
+      pinned
+        ? `${profile.short} entre sur le plateau — ${profile.role}`
+        : `${profile.short} rejoint l'agence — ${profile.role}`,
+      'real'
+    );
     return actor;
   }
 

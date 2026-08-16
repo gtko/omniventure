@@ -17,6 +17,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
 
@@ -161,6 +162,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     context?: string;
     count?: number;
     direction?: string;
+    culture?: CulturePillar[];
   };
 
   const key = body.openRouterKey?.trim() || env?.OPENROUTER_API_KEY;
@@ -179,7 +181,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const count = Math.max(3, Math.min(12, body.count ?? 6));
   const model = body.model?.trim() || 'deepseek/deepseek-v4-flash';
 
-  const prompt = `Tu es le Chief of Staff d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS rentables.
+  const prompt = `${cultureBlock(body.culture)}
+
+Tu es le Chief of Staff d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS rentables.
 Tu n'as PAS autorité sur la feuille de route : elle est fixée par l'opérateur humain, ci-dessous.
 
 [DIRECTION DONNÉE PAR L'OPÉRATEUR — c'est la consigne qui prime sur tout le reste]

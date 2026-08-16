@@ -24,7 +24,7 @@ interface GraphAgent {
 }
 
 /** Composition livrée avec le graphe — utilisée tant que rien n'est enregistré. */
-const GRAPH_DEFAULTS: GraphAgent[] = [
+export const GRAPH_DEFAULTS: GraphAgent[] = [
   { id: 'master', role: 'Orchestrateur Stratégique Suprême', tier: 1, category: 'orchestration', hierarchyLevel: 'c_level', modelId: 'x-ai/grok-2' },
   { id: 'planner', role: 'Planificateur & Gestion de Crise', tier: 1, category: 'operations', hierarchyLevel: 'c_level', modelId: 'qwen/qwen-2.5-72b-instruct' },
   { id: 'market_agent', role: 'VP Veille Concurrentielle & Niche', tier: 1, category: 'research', hierarchyLevel: 'vp', modelId: 'google/gemini-2.5-flash' },
@@ -35,7 +35,10 @@ const GRAPH_DEFAULTS: GraphAgent[] = [
   { id: 'sentiment_agent', role: "Expert Analyseur d'Avis & Sentiment", tier: 3, category: 'research', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
   { id: 'worker_dev', role: 'Worker Développeur Micro-Tasks', tier: 3, category: 'engineering', hierarchyLevel: 'expert', modelId: 'qwen/qwen-2.5-coder-32b-instruct' },
   { id: 'qa_agent', role: 'Expert QA & Recette Automatique', tier: 3, category: 'operations', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
-  { id: 'cro_agent', role: 'Expert CRO & Multi-Armed Bandit', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' }
+  { id: 'cro_agent', role: 'Expert CRO & Multi-Armed Bandit', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
+  { id: 'hr_agent', role: 'DRH — Recrutement & Organisation', tier: 2, category: 'operations', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' },
+  { id: 'design_lead', role: 'Head of Design — Marque & Interface', tier: 2, category: 'growth', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
+  { id: 'ui_designer', role: 'Expert UI & Design System', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat', teamName: 'Design & Marque' }
 ];
 
 /** Prénom d'affichage des agents historiques du graphe. */
@@ -50,7 +53,10 @@ const KNOWN_NAMES: Record<string, string> = {
   worker_dev: 'Leo',
   qa_agent: 'Clara',
   devops_agent: 'Marc',
-  cro_agent: 'Nora'
+  cro_agent: 'Nora',
+  hr_agent: 'Camille',
+  design_lead: 'Iris',
+  ui_designer: 'Théo'
 };
 
 /** Pôle du bureau où s'installe chaque famille d'agents. */
@@ -129,8 +135,11 @@ function toProfile(agent: GraphAgent): AgentProfile {
 export function loadGraphProfiles(): AgentProfile[] {
   let stored: GraphAgent[] = [];
   try {
+    // Clés successives du studio d'agents : on lit la plus récente disponible.
     const raw =
-      localStorage.getItem('omniventure_custom_agents_v4') ?? localStorage.getItem('omniventure_custom_agents_v3');
+      localStorage.getItem('omniventure_custom_agents_v5') ??
+      localStorage.getItem('omniventure_custom_agents_v4') ??
+      localStorage.getItem('omniventure_custom_agents_v3');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) stored = parsed as GraphAgent[];

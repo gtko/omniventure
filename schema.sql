@@ -158,6 +158,14 @@ CREATE TABLE IF NOT EXISTS openrouter_usage_snapshots (
     total_credits REAL DEFAULT 0
 );
 
+-- Navigateurs vus récemment sur l'application : une ligne par onglet ouvert,
+-- rafraîchie à chaque relève du panneau de supervision. C'est ce qui rend
+-- « utilisateurs actifs » mesuré plutôt qu'estimé.
+CREATE TABLE IF NOT EXISTS service_presence (
+    client_id TEXT PRIMARY KEY,
+    last_seen INTEGER NOT NULL
+);
+
 -- Aménagement du bureau : retouches appliquées par-dessus le plan généré.
 CREATE TABLE IF NOT EXISTS office_layout (
     id TEXT PRIMARY KEY,

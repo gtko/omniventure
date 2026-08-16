@@ -15,20 +15,36 @@ interface PricingTier {
   includes: string[];
 }
 
+interface PricingModel {
+  type: string;
+  entryPrice: string;
+  freeTier: string;
+  freeTrial: string;
+  seatBased: string;
+  annualDiscount: string;
+}
+
 interface CompetitorResult {
   name: string;
   url: string;
   category: string;
   summary: string;
   pricing: string;
+  pricingModel: PricingModel;
   pricingTiers: PricingTier[];
   strengths: string[];
   weaknesses: string[];
   missingFeatures: string[];
+  featureMatrix: Array<{ feature: string; them: string; us: string; gap: string }>;
+  proofPoints: Array<{ claim: string; source: string }>;
   targetAudience: string;
   icp: Array<{ segment: string; pain: string; trigger: string }>;
   acquisitionChannels: Array<{ channel: string; evidence: string; ourAngle: string }>;
   seoKeywords: Array<{ keyword: string; intent: string; difficulty: string }>;
+  battlecard: Array<{ objection: string; response: string }>;
+  moat: string;
+  switchingCost: string;
+  whyNow: string;
   recommendedPositioning: string;
   pricingExploit: string;
   differentiators: string[];
@@ -41,6 +57,25 @@ interface CompetitorResult {
   scores: { opportunity: number; difficulty: number; timeToMarketDays: number; confidence: number };
 }
 
+/** Ce que l'agence a lu, et ce qu'elle y a relevé sans interprétation. */
+interface PageRead {
+  url: string;
+  role: string;
+  label: string;
+  title: string;
+  chars: number;
+}
+
+interface SiteFacts {
+  metaDescription: string;
+  headings: string[];
+  priceMentions: string[];
+  trustSignals: string[];
+  proofLinks: string[];
+  integrations: string[];
+  languages: string[];
+}
+
 interface AnalyzeResponse {
   success?: boolean;
   data?: CompetitorResult;
@@ -48,7 +83,9 @@ interface AnalyzeResponse {
   modelUsed?: string | null;
   sources?: string[];
   failedSources?: string[];
+  pagesRead?: PageRead[];
   techSignals?: string[];
+  facts?: SiteFacts | null;
   tokens?: { input: number; output: number };
   error?: string;
 }
@@ -111,6 +148,39 @@ const Bullets: React.FC<{ items: string[]; tone: 'red' | 'green' | 'slate' | 'in
       ))}
     </ul>
   );
+};
+
+/** Liste de faits relevés sur le site : pas d'interprétation, donc pas de mise en avant. */
+const Chips: React.FC<{ items: string[]; tone?: 'slate' | 'emerald' | 'indigo' }> = ({ items, tone = 'slate' }) => {
+  if (items.length === 0) return <span className="text-[11px] italic text-slate-400">rien de relevé</span>;
+  const color =
+    tone === 'emerald'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : tone === 'indigo'
+        ? 'border-indigo-200 bg-indigo-50 text-indigo-800'
+        : 'border-slate-200 bg-slate-50 text-slate-700';
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item, index) => (
+        <span key={index} className={`rounded-md border px-2 py-0.5 text-[11px] ${color}`}>
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const Fact: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <div>
+    <span className="block text-[10px] uppercase tracking-wide text-slate-400">{label}</span>
+    <span className="text-xs font-medium text-slate-800">{value || '—'}</span>
+  </div>
+);
+
+const GAP_STYLES: Record<string, string> = {
+  faible: 'bg-slate-100 text-slate-600',
+  moyen: 'bg-amber-100 text-amber-800',
+  fort: 'bg-emerald-100 text-emerald-800'
 };
 
 /* ------------------------------------------------------------------ */
@@ -199,9 +269,15 @@ export const MarketRadarStudio: React.FC = () => {
         fromAgentName: 'Sam (Scraper)',
         toAgentId: 'market_agent',
         toAgentName: 'Alex (Veille)',
-        actionSummary: `${json.sources?.length ?? 0} page(s) lue(s) · ${json.data.pricingTiers.length} paliers de prix`,
+        actionSummary: `${(json.pagesRead ?? []).map((page) => page.label).join(', ') || 'aucune page'} · ${
+          json.data.pricingTiers.length
+        } paliers de prix`,
         bubbleText: `📊 ${json.data.pricing}`,
-        payloadSummary: JSON.stringify({ sources: json.sources, tiers: json.data.pricingTiers.length }),
+        payloadSummary: JSON.stringify({
+          pages: (json.pagesRead ?? []).map((page) => page.url),
+          tiers: json.data.pricingTiers.length,
+          facts: json.facts?.priceMentions?.length ?? 0
+        }),
         costUsd: json.source === 'openrouter_live' ? 0.0008 : 0,
         modelUsed: json.modelUsed ?? activeModel
       });
@@ -276,6 +352,8 @@ export const MarketRadarStudio: React.FC = () => {
   const downloadReport = () => {
     if (!result) return;
     const line = (label: string, value: string) => `- **${label}** : ${value}`;
+    const facts = meta?.facts ?? null;
+    const model = result.pricingModel;
     const content = `# Dossier concurrentiel — ${result.name}
 
 ${result.summary}
@@ -289,12 +367,33 @@ ${result.summary}
 | Difficulté | ${result.scores.difficulty}/100 |
 | Time to market | ${result.scores.timeToMarketDays} jours |
 | Confiance | ${result.scores.confidence}/100 |
-| Sources lues | ${(meta?.sources ?? []).join(', ') || 'aucune (analyse de mémoire)'} |
+| Pages lues | ${(meta?.pagesRead ?? []).map((p) => `${p.label} (${p.url})`).join(', ') || 'aucune (analyse de mémoire)'} |
 | Technos détectées | ${(meta?.techSignals ?? []).join(', ') || '—'} |
 | Modèle | ${meta?.modelUsed ?? '—'} |
 
-## 1. Tarification
+## 1. Relevé factuel du site
+${
+  facts
+    ? [
+        line('Promesse affichée', facts.metaDescription || '—'),
+        line('Montants trouvés', facts.priceMentions.join(' · ') || '—'),
+        line('Réassurance annoncée', facts.trustSignals.join(' · ') || '—'),
+        line('Produits tiers cités', facts.integrations.join(' · ') || '—'),
+        line('Avis & communautés', facts.proofLinks.join(' · ') || '—'),
+        line('Langues du site', facts.languages.join(' · ') || '—')
+      ].join('\n')
+    : '_Aucune page lue : rien à relever mécaniquement._'
+}
+
+## 2. Tarification
 ${result.pricing}
+
+${line('Modèle', model.type)}
+${line("Prix d'entrée", model.entryPrice)}
+${line('Offre gratuite', model.freeTier)}
+${line('Essai', model.freeTrial)}
+${line('Par utilisateur', model.seatBased)}
+${line('Remise annuelle', model.annualDiscount)}
 
 ${
   result.pricingTiers.length
@@ -304,27 +403,47 @@ ${result.pricingTiers.map((t) => `| ${t.name} | ${t.price} | ${t.billing} | ${t.
     : '_Paliers non communiqués._'
 }
 
-## 2. Forces
+## 3. Forces
 ${result.strengths.map((s) => `- ${s}`).join('\n') || '—'}
 
-## 3. Faiblesses exploitables
+## 4. Faiblesses exploitables
 ${result.weaknesses.map((w) => `- ${w}`).join('\n') || '—'}
 
-## 4. Besoins non couverts
+## 5. Besoins non couverts
 ${result.missingFeatures.map((f) => `- ${f}`).join('\n') || '—'}
 
-## 5. Client cible
+## 6. Grille de comparaison
+${
+  result.featureMatrix.length
+    ? `| Fonctionnalité | Chez eux | Chez nous | Écart |
+|---|---|---|---|
+${result.featureMatrix.map((f) => `| ${f.feature} | ${f.them} | ${f.us} | ${f.gap} |`).join('\n')}`
+    : '_Non renseignée._'
+}
+
+## 7. Preuves affichées sur leur site
+${result.proofPoints.map((p) => `- ${p.claim}${p.source ? ` — source : ${p.source}` : ''}`).join('\n') || '—'}
+
+## 8. Client cible
 ${result.targetAudience}
 
 ${result.icp.map((i) => `- **${i.segment}** — douleur : ${i.pain} · déclencheur : ${i.trigger}`).join('\n')}
 
-## 6. Acquisition
+## 9. Acquisition
 ${result.acquisitionChannels.map((c) => `- **${c.channel}** — constat : ${c.evidence} · notre angle : ${c.ourAngle}`).join('\n') || '—'}
 
 ### Mots-clés
 ${result.seoKeywords.map((k) => `- ${k.keyword} (${k.intent}, difficulté ${k.difficulty})`).join('\n') || '—'}
 
-## 7. Notre position
+## 10. Ce qui les protège
+${line('Barrière à l’entrée', result.moat || '—')}
+${line('Coût de changement', result.switchingCost || '—')}
+${line('Pourquoi maintenant', result.whyNow || '—')}
+
+## 11. Argumentaire face à eux
+${result.battlecard.map((b) => `- **« ${b.objection} »** → ${b.response}`).join('\n') || '—'}
+
+## 12. Notre position
 ${line('Positionnement', result.recommendedPositioning)}
 ${line('Angle tarifaire', result.pricingExploit)}
 ${line('Accroche', result.viralMarketingHook)}
@@ -332,19 +451,19 @@ ${line('Accroche', result.viralMarketingHook)}
 ### Différenciateurs
 ${result.differentiators.map((d) => `- ${d}`).join('\n') || '—'}
 
-## 8. MVP
+## 13. MVP
 ${result.mvpCoreFeatures.map((m) => `- ${m}`).join('\n') || '—'}
 
 **Hors périmètre au départ**
 ${result.mvpOutOfScope.map((m) => `- ${m}`).join('\n') || '—'}
 
-## 9. Plan 90 jours
+## 14. Plan 90 jours
 ${result.plan90Days.map((p) => `### ${p.phase} — ${p.goal}\n${p.actions.map((a) => `- ${a}`).join('\n')}`).join('\n\n') || '—'}
 
-## 10. Risques
+## 15. Risques
 ${result.risks.map((r) => `- ${r}`).join('\n') || '—'}
 
-## 11. Autres acteurs
+## 16. Autres acteurs
 ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${c.angle}`).join('\n') || '—'}
 `;
 
@@ -358,6 +477,11 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
   };
 
   const scores = result?.scores;
+  const facts = meta?.facts ?? null;
+  /** Les analyses d'avant ce champ n'ont que `sources` : on retombe dessus. */
+  const pagesRead: PageRead[] =
+    meta?.pagesRead ??
+    (meta?.sources ?? []).map((url) => ({ url, role: 'accueil', label: 'Page', title: '', chars: 0 }));
 
   return (
     <div className="space-y-5">
@@ -373,8 +497,9 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Analyse concurrentielle</h1>
           <p className="mt-0.5 text-sm text-slate-500">
-            En mode domaine, l'agence <strong>lit réellement le site</strong> (accueil et page de tarifs) avant
-            d'analyser. Le rapport indique toujours ses sources et son niveau de confiance.
+            En mode domaine, l'agence <strong>lit réellement le site</strong> — elle suit les liens de l'accueil
+            jusqu'aux tarifs, aux fonctionnalités, aux clients, aux intégrations et aux nouveautés. Le rapport
+            sépare toujours les faits relevés dans les pages de l'interprétation du modèle.
           </p>
         </div>
         {openRouterKey ? (
@@ -450,7 +575,7 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
         {isAnalyzing && searchType === 'domain' && (
           <p className="font-mono text-[11px] text-slate-400">
-            Lecture de la page d'accueil, puis de la page de tarifs, puis analyse…
+            Lecture de l'accueil, repérage des liens internes, lecture des pages d'offre, puis analyse…
           </p>
         )}
       </div>
@@ -521,19 +646,25 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
               </div>
             )}
 
-            {/* Traçabilité : ce que l'agence a réellement lu. */}
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]">
-              <span className="font-semibold text-slate-500">Sources lues :</span>
-              {(meta?.sources ?? []).length > 0 ? (
-                meta!.sources!.map((source) => (
+            {/* Traçabilité : ce que l'agence a réellement lu, page par page. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
+              <span className="font-semibold text-slate-500">
+                {pagesRead.length > 0 ? `${pagesRead.length} page(s) lue(s) :` : 'Pages lues :'}
+              </span>
+              {pagesRead.length > 0 ? (
+                pagesRead.map((page) => (
                   <a
-                    key={source}
-                    href={source}
+                    key={page.url}
+                    href={page.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-mono text-indigo-600 underline decoration-dotted"
+                    title={`${page.title || page.url} · ${page.chars} caractères analysés`}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 hover:border-indigo-300"
                   >
-                    {source.replace(/^https?:\/\//, '')}
+                    <span className="font-semibold text-slate-700">{page.label}</span>
+                    <span className="font-mono text-indigo-600">
+                      {page.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 42)}
+                    </span>
                   </a>
                 ))
               ) : (
@@ -541,17 +672,82 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
                   aucune page lue — analyse fondée sur la mémoire du modèle
                 </span>
               )}
+              {(meta?.failedSources ?? []).length > 0 && (
+                <span className="text-amber-700" title={meta!.failedSources!.join(', ')}>
+                  · {meta!.failedSources!.length} page(s) inaccessible(s)
+                </span>
+              )}
               {(meta?.techSignals ?? []).length > 0 && (
                 <>
-                  <span className="font-semibold text-slate-500">· Technos détectées :</span>
+                  <span className="font-semibold text-slate-500">· Technos :</span>
                   <span className="font-mono text-slate-600">{meta!.techSignals!.join(', ')}</span>
                 </>
               )}
             </div>
           </div>
 
+          {/* Faits bruts : lus dans le HTML, donc vérifiables sans faire confiance au modèle. */}
+          {facts && (
+            <Section
+              title="Relevé factuel du site"
+              icon="🔬"
+              hint="extrait du HTML, sans passer par le modèle"
+            >
+              {facts.metaDescription && (
+                <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-700">
+                  « {facts.metaDescription} »
+                </p>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Montants trouvés sur les pages
+                  </p>
+                  <Chips items={facts.priceMentions} tone="indigo" />
+                </div>
+                <div>
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Réassurance annoncée
+                  </p>
+                  <Chips items={facts.trustSignals} tone="emerald" />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Produits tiers cités
+                    </p>
+                    <Chips items={facts.integrations} />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Avis, communautés, présence
+                    </p>
+                    <Chips items={facts.proofLinks} />
+                  </div>
+                </div>
+                {facts.languages.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Langues du site ({facts.languages.length})
+                    </p>
+                    <Chips items={facts.languages} />
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
           {/* Tarification */}
           <Section title="Tarification" icon="💳" hint={result.pricing}>
+            <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-6">
+              <Fact label="Modèle" value={result.pricingModel.type} />
+              <Fact label="Prix d'entrée" value={result.pricingModel.entryPrice} />
+              <Fact label="Offre gratuite" value={result.pricingModel.freeTier} />
+              <Fact label="Essai" value={result.pricingModel.freeTrial} />
+              <Fact label="Par utilisateur" value={result.pricingModel.seatBased} />
+              <Fact label="Remise annuelle" value={result.pricingModel.annualDiscount} />
+            </div>
+
             {result.pricingTiers.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -603,6 +799,69 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
               <Bullets items={result.differentiators} tone="indigo" />
             </Section>
           </div>
+
+          {/* Comparaison fonctionnelle : là où l'écart se joue vraiment. */}
+          <Section title="Grille de comparaison" icon="📐" hint="fonctionnalité par fonctionnalité">
+            {result.featureMatrix.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400">
+                    <tr>
+                      <th className="py-1.5 pr-3">Fonctionnalité</th>
+                      <th className="py-1.5 pr-3">Chez eux</th>
+                      <th className="py-1.5 pr-3">Chez nous</th>
+                      <th className="py-1.5">Écart</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {result.featureMatrix.map((row, index) => (
+                      <tr key={index} className="align-top">
+                        <td className="py-2 pr-3 font-semibold text-slate-900">{row.feature}</td>
+                        <td className="py-2 pr-3 text-slate-600">{row.them}</td>
+                        <td className="py-2 pr-3 text-indigo-800">{row.us}</td>
+                        <td className="py-2">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              GAP_STYLES[row.gap] ?? 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {row.gap}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs italic text-slate-400">Grille non fournie.</p>
+            )}
+          </Section>
+
+          {/* Preuves qu'ils affichent : chaque ligne pointe la page où on l'a lue. */}
+          <Section title="Preuves affichées sur leur site" icon="🏅" hint="chiffres, logos, certifications">
+            {result.proofPoints.length > 0 ? (
+              <ul className="space-y-2 text-xs">
+                {result.proofPoints.map((proof, index) => (
+                  <li key={index} className="flex flex-wrap items-baseline gap-2 rounded-lg border border-slate-200 p-2.5">
+                    <span className="text-slate-800">{proof.claim}</span>
+                    {proof.source && (
+                      <a
+                        href={proof.source}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-mono text-[10px] text-indigo-600 underline decoration-dotted"
+                      >
+                        {proof.source.replace(/^https?:\/\/(www\.)?/, '')}
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs italic text-slate-400">Aucune preuve sociale relevée sur les pages lues.</p>
+            )}
+          </Section>
 
           {/* Clients */}
           <Section title="Client cible" icon="👥" hint={result.targetAudience}>
@@ -674,6 +933,35 @@ ${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${
               )}
             </Section>
           </div>
+
+          {/* Ce qui les tient : à savoir avant de promettre une conquête facile. */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <Section title="Ce qui les protège" icon="🏰" hint="barrière réelle">
+              <p className="text-xs leading-relaxed text-slate-700">{result.moat || 'Non évalué.'}</p>
+            </Section>
+            <Section title="Coût de changement" icon="🔗" hint="ce qui retient leurs clients">
+              <p className="text-xs leading-relaxed text-slate-700">{result.switchingCost || 'Non évalué.'}</p>
+            </Section>
+            <Section title="Pourquoi maintenant" icon="⏱️" hint="fenêtre de tir">
+              <p className="text-xs leading-relaxed text-slate-700">{result.whyNow || 'Non évalué.'}</p>
+            </Section>
+          </div>
+
+          {/* Argumentaire de vente : les objections qu'on entendra face à eux. */}
+          <Section title="Argumentaire face à eux" icon="🥊" hint="objection → réponse">
+            {result.battlecard.length > 0 ? (
+              <ul className="space-y-2">
+                {result.battlecard.map((entry, index) => (
+                  <li key={index} className="rounded-lg border border-slate-200 p-3">
+                    <p className="text-xs font-semibold text-slate-900">« {entry.objection} »</p>
+                    <p className="mt-1 text-xs text-emerald-800">→ {entry.response}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs italic text-slate-400">Argumentaire non fourni.</p>
+            )}
+          </Section>
 
           {/* Positionnement */}
           <Section title="Notre position" icon="🧭">

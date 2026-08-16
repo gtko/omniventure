@@ -49,13 +49,6 @@
   left: 16rem;
 }
 
-/* Écrans de travail où la carte distrait : on la masque sans la démonter, pour
-   que la simulation continue de tourner en arrière-plan. */
-.office-backdrop-hidden #office-backdrop {
-  opacity: 0;
-  pointer-events: none;
-}
-
 /* Les modales de page sont posées sur un panneau clair : elles ne doivent PAS
    hériter de l'encre claire de l'ambiance sombre, sinon un texte sans classe
    explicite (champ de saisie, paragraphe brut) devient illisible. */
@@ -65,6 +58,17 @@
 
 /* Idem pour une page pleine surface (sans modale), comme l'atelier d'analyse. */
 .office-immersive [data-page-surface] {
+  color: #0f172a;
+}
+
+/* Idem pour les modales sorties de la barre latérale par portail. */
+.office-immersive [data-portal-modal] {
+  color: #0f172a;
+}
+
+.office-immersive [data-portal-modal] input,
+.office-immersive [data-portal-modal] textarea,
+.office-immersive [data-portal-modal] select {
   color: #0f172a;
 }
 

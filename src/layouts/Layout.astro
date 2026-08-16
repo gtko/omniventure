@@ -1,5 +1,6 @@
 ---
 import { ClientRouter } from 'astro:transitions';
+import { FloatingMonitor } from '../components/FloatingMonitor';
 import PageModal from '../components/PageModal.astro';
 import Sidebar from '../components/Sidebar.astro';
 import { VirtualOffice2D } from '../components/VirtualOffice2D';
@@ -12,9 +13,11 @@ interface Props {
   /** Page pleine hauteur sans modale : c'est le bureau lui-même. */
   fullBleed?: boolean;
   /**
-   * Masque le bureau derrière la page. La simulation continue de tourner —
-   * seul l'affichage est coupé — pour les écrans de travail où la carte
-   * distrait plus qu'elle n'aide.
+   * Retire le bureau de la page. Le canvas n'est pas seulement masqué : il
+   * n'est pas monté du tout, donc la boucle d'animation ne tourne plus et ne
+   * dispute plus le processeur aux écrans de travail (analyse concurrentielle).
+   * L'état de la simulation est sauvegardé au démontage et repris à la
+   * navigation suivante — rien n'est perdu.
    */
   hideOffice?: boolean;
   /** Sous-titre affiché dans l'en-tête de la modale. */
@@ -52,27 +55,27 @@ const {
     <!-- Navigation sans rechargement : indispensable pour garder le bureau vivant. -->
     <ClientRouter />
   </head>
-  <body
-    class:list={[
-      'office-immersive h-full bg-slate-950 text-slate-900 font-sans antialiased overflow-hidden',
-      hideOffice && 'office-backdrop-hidden'
-    ]}
-  >
+  <body class="office-immersive h-full bg-slate-950 text-slate-900 font-sans antialiased overflow-hidden">
 
     <!--
       LE BUREAU EST LE DÉCOR PERMANENT DE L'APPLICATION.
       `transition:persist` conserve le canvas et sa simulation d'une page à
       l'autre : les agents continuent leur journée pendant qu'on travaille
       dans une modale.
+
+      Sauf sur les écrans qui demandent `hideOffice` : là le bureau est
+      réellement absent du document, pas juste transparent.
     -->
-    <div id="office-backdrop" class="fixed inset-0 z-0">
-      <VirtualOffice2D
-        initialMissionName="Agence OmniVenture — orchestration multi-agents"
-        height="100%"
-        client:load
-        transition:persist="office"
-      />
-    </div>
+    {!hideOffice && (
+      <div id="office-backdrop" class="fixed inset-0 z-0">
+        <VirtualOffice2D
+          initialMissionName="Agence OmniVenture — orchestration multi-agents"
+          height="100%"
+          client:load
+          transition:persist="office"
+        />
+      </div>
+    )}
 
     <Sidebar currentPath={currentPath} />
 
@@ -83,6 +86,13 @@ const {
         <slot />
       </PageModal>
     )}
+
+    <!--
+      Supervision : présente sur toutes les pages, donc montée dans la mise en
+      page. `transition:persist` lui évite de repartir de zéro (position,
+      compteur de dix secondes) à chaque navigation.
+    -->
+    <FloatingMonitor client:idle transition:persist="monitor" />
 
   </body>
 </html>

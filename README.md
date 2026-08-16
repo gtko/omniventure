@@ -126,6 +126,14 @@ Pour propulser les SaaS, produits e-commerce et livres, un module vidéo automat
    - Détection d'anomalie Canary (Grok 4.6 / Qwen 3.8-Max) $\rightarrow$ Diagnostic low-cost par DeepSeek V4 Flash.
    - Arbitrage intelligent : Déploiement d'un Hotfix d'urgence (< 60s) si le bug est isolé, ou Rollback instantané (0ms) vers la version $N-1$ si critique.
    - A/B Testing continu (Multi-Armed Bandit) pour maximiser le MRR.
+7. **Atelier d'Analyse Concurrentielle** (`/market`) :
+   - Lecture réelle du site visé : l'accueil, puis les liens internes vers tarifs, fonctionnalités, clients, intégrations et nouveautés (jusqu'à 7 pages).
+   - Relevé factuel extrait du HTML (montants affichés, réassurance, produits tiers cités, langues, technos) présenté séparément de l'interprétation du modèle.
+   - Dossier exploitable : paliers de prix, grille de comparaison, preuves sociales sourcées, argumentaire objection → réponse, plan 90 jours, export Markdown.
+8. **Panneau de Supervision Flottant** (toutes les pages) :
+   - Disponibilité 24 h, erreurs, incidents ouverts et utilisateurs actifs, relevés toutes les 10 s sur `/api/monitoring-summary`.
+   - Déplaçable, réductible en pastille, position conservée d'une session à l'autre.
+   - Aucune valeur simulée : une métrique non mesurable s'affiche « — » avec sa raison.
 
 ---
 
