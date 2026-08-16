@@ -24,8 +24,13 @@ const { title, subtitle, icon } = Astro.props;
     class="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] transition-opacity"
   ></a>
 
+  <!--
+    Pas de `my-auto` ici : il recentrait la fenêtre verticalement malgré le
+    `items-start` du conteneur. Une page courte flottait au milieu du vide, et
+    l'en-tête changeait de hauteur d'une page à l'autre.
+  -->
   <section
-    class="relative z-10 my-auto w-full max-w-[1400px] overflow-hidden rounded-2xl border border-white/25 shadow-2xl"
+    class="relative z-10 w-full max-w-[1400px] overflow-hidden rounded-2xl border border-white/25 shadow-2xl"
     style="background: rgba(255,255,255,0.78); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);"
   >
     <header class="flex items-center justify-between gap-4 border-b border-slate-200/80 px-6 py-3.5">

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { fetchTools, type ToolProvider } from '../lib/agent-tools';
+import { AUTOPILOT_EVENT, pause, readAutopilot } from '../lib/autopilot';
 import { AUTONOMY_LABEL, readAutonomy, writeAutonomy, type Autonomy } from '../lib/harness-client';
 import { PHASES, phaseIndex, type PhaseId } from '../lib/pipeline';
 import { WORKSPACE_EVENT, type Task } from '../lib/workspace';
@@ -31,6 +32,7 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
   const [provider, setProvider] = useState<ToolProvider>('local');
   const [cycles, setCycles] = useState(1);
   const [toolCount, setToolCount] = useState<number | null>(null);
+  const [autopilot, setAutopilot] = useState(() => readAutopilot());
 
   const refresh = useCallback(() => setTasks(tasksOf(venture.name)), [venture.name]);
 
@@ -40,11 +42,15 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
     setState(readWorksite());
 
     const onWorksite = (event: Event) => setState((event as CustomEvent<WorksiteState>).detail ?? readWorksite());
+    const onAutopilot = () => setAutopilot(readAutopilot());
+    onAutopilot();
     window.addEventListener(WORKSITE_EVENT, onWorksite);
     window.addEventListener(WORKSPACE_EVENT, refresh);
+    window.addEventListener(AUTOPILOT_EVENT, onAutopilot);
     return () => {
       window.removeEventListener(WORKSITE_EVENT, onWorksite);
       window.removeEventListener(WORKSPACE_EVENT, refresh);
+      window.removeEventListener(AUTOPILOT_EVENT, onAutopilot);
     };
   }, [refresh]);
 
@@ -53,6 +59,8 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
   }, [provider, autonomy]);
 
   const active = state.running && state.ventureId === venture.id;
+  /** Le pilote tient déjà ce chantier : la commande manuelle lui revient. */
+  const piloted = autopilot.running && autopilot.ventureId === venture.id;
   const mine = state.ventureId === venture.id;
   const currentIndex = phaseIndex(mine ? state.phase : 'vision');
 
@@ -84,7 +92,28 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
           </p>
         </div>
 
-        {active ? (
+        {/*
+          Deux conducteurs pour un seul chantier, c'est un de trop.
+
+          Quand le pilote tourne, c'est lui qui enchaîne les passages : lancer
+          la chaîne à la main en démarrerait un second en parallèle, dont il
+          compterait les livrables comme les siens — et sa mise en pause, qui
+          arrête le chantier, couperait aussi le vôtre. La commande revient donc
+          au pilote tant qu'il conduit.
+        */}
+        {piloted ? (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-600" />
+            <span className="text-xs font-semibold text-emerald-800">Le pilote conduit</span>
+            <button
+              onClick={pause}
+              className="rounded border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+              title="Reprendre la main : la chaîne s'arrête après la tâche en cours"
+            >
+              ⏸ Reprendre la main
+            </button>
+          </div>
+        ) : active ? (
           <button
             onClick={stopWorksite}
             className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100"

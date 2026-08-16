@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { MissionsHub } from '../components/MissionsHub';
+---
+
+<Layout
+  title="Missions"
+  subtitle="Lancer un agent sur une mission, ou laisser l'agence se corriger elle-même"
+  icon="🛰️"
+  currentPath="/missions"
+>
+  <MissionsHub client:load />
+</Layout>

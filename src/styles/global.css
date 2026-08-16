@@ -163,6 +163,20 @@
   color: inherit;
 }
 
+/* Une liste déroulée passe PAR-DESSUS d'autres éléments : le voile blanc à 5 %
+   des autres surfaces la rendrait transparente, et on lirait le menu au
+   travers. Elle a donc son propre fond, opaque. */
+.office-immersive .app-nav [data-nav-popover] {
+  background-color: #0f172a;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.office-immersive .app-nav [data-nav-popover] .bg-white,
+.office-immersive .app-nav [data-nav-popover] .bg-slate-50 {
+  background-color: transparent;
+}
+
 /* ------------------------------------------------------------------ */
 /* Pages de la base de connaissance                                     */
 /*                                                                      */

@@ -3,6 +3,7 @@ import { getActiveProjectId, getStoredVentures, saveStoredVentures, setActivePro
 import { sendToDesigner, takeSeed } from '../lib/design-handoff';
 import { readLifecycle, stageById } from '../lib/lifecycle';
 import type { Venture } from '../types';
+import { AnalyticsStudio } from './AnalyticsStudio';
 import { LifecyclePanel } from './LifecyclePanel';
 import { ReleasesPanel } from './ReleasesPanel';
 import { RoadmapPanel } from './RoadmapPanel';
@@ -26,6 +27,7 @@ type View =
   | 'direction'
   | 'chantier'
   | 'tickets'
+  | 'mesure'
   | 'graphisme'
   | 'design-system'
   | 'composants'
@@ -38,6 +40,7 @@ const VIEWS: View[] = [
   'direction',
   'chantier',
   'tickets',
+  'mesure',
   'graphisme',
   'design-system',
   'composants',
@@ -192,6 +195,12 @@ export const MissionControl: React.FC = () => {
       {view === 'chantier' && <WorksitePanel venture={identity} />}
 
       {view === 'tickets' && <TicketsBoard venture={identity} />}
+
+      {/*
+        La mesure était une page de l'agence. Elle n'a pourtant de sens que
+        rapportée à un produit : c'est son trafic, ses tests, son acquisition.
+      */}
+      {view === 'mesure' && <AnalyticsStudio />}
 
       {/* Le design appartient au produit : c'est son apparence, pas celle de l'agence. */}
       {view === 'graphisme' && (

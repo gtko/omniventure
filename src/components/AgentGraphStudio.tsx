@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
 import { agentCall } from '../lib/agent-profile';
+import { HIERARCHY_BADGE, HIERARCHY_LABEL, normalizeLevel } from '../lib/hierarchy';
 import { ensureCoreAgents } from '../lib/hiring';
 import { SHARED_ROLES } from '../lib/agent-roster';
 import { CultureEditor } from './CultureEditor';
@@ -8,6 +9,24 @@ import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
 export type HierarchyLevel = 'c_level' | 'vp' | 'head_of' | 'lead' | 'expert';
+
+type StudioTab = 'graph' | 'hierarchy' | 'teams' | 'editor' | 'culture' | 'openrouter_config';
+
+/**
+ * Les écrans du studio.
+ *
+ * Un onglet « Bureau Virtuel 2D » figurait ici : il n'affichait pas le bureau,
+ * il expliquait que le bureau tournait derrière la fenêtre et invitait à la
+ * fermer. Un onglet dont le contenu est « allez ailleurs » n'est pas un onglet.
+ */
+const STUDIO_TABS: { id: StudioTab; label: string; icon: string; hint: string }[] = [
+  { id: 'graph', label: 'Graphe réseau', icon: '🕸️', hint: 'Les agents et leurs canaux, déplaçables' },
+  { id: 'hierarchy', label: 'Organigramme', icon: '🏢', hint: 'Les cinq niveaux, du C-Level aux experts' },
+  { id: 'teams', label: 'Équipes', icon: '👥', hint: 'Les équipes composables' },
+  { id: 'editor', label: 'Âme & Job', icon: '📝', hint: 'Ame.md et Job.md de l’agent sélectionné' },
+  { id: 'culture', label: 'Culture', icon: '🧭', hint: 'Ce que toute l’agence partage' },
+  { id: 'openrouter_config', label: 'Clés & modèles', icon: '⚙️', hint: 'Clé OpenRouter et modèles disponibles' }
+];
 
 export interface TeamData {
   id: string;
@@ -362,13 +381,13 @@ export const AgentGraphStudio: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('market_agent');
   const [selectedChannelId, setSelectedChannelId] = useState<string>('ch-market-scraper');
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'graph' | 'hierarchy' | 'teams' | 'virtual_office' | 'editor' | 'openrouter_config' | 'culture'>('graph');
+  const [activeTab, setActiveTab] = useState<StudioTab>('graph');
   const [activeEditorSubTab, setActiveEditorSubTab] = useState<'ame' | 'job' | 'params'>('ame');
   const [keyStatus, setKeyStatus] = useState<'none' | 'valid' | 'invalid'>('none');
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
   const [notification, setNotification] = useState<string | null>(null);
-  const [simulationActive, setSimulationActive] = useState<boolean>(false);
-  const [activeSimulationStep, setActiveSimulationStep] = useState<number>(-1);
+  // La « simulation des flux » a disparu : elle allumait les canaux les uns
+  // après les autres, à 800 ms d'intervalle, sans qu'aucun agent ne travaille.
 
   // AI Graph Generator Modal State
   const [isAiModalOpen, setIsAiModalOpen] = useState<boolean>(false);
@@ -604,25 +623,6 @@ export const AgentGraphStudio: React.FC = () => {
     setTimeout(() => setNotification(null), 3500);
   };
 
-  const handleSimulateFlow = () => {
-    setSimulationActive(true);
-    setActiveSimulationStep(0);
-
-    const interval = setInterval(() => {
-      setActiveSimulationStep(prev => {
-        if (prev >= channels.length - 1) {
-          clearInterval(interval);
-          setTimeout(() => {
-            setSimulationActive(false);
-            setActiveSimulationStep(-1);
-          }, 1500);
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 800);
-  };
-
   const handleTestOpenRouterKey = async () => {
     if (!openRouterKey.trim()) {
       setKeyStatus('invalid');
@@ -654,14 +654,18 @@ export const AgentGraphStudio: React.FC = () => {
     ? agents 
     : agents.filter(a => a.teamId === selectedTeamFilter);
 
-  const getHierarchyBadge = (level: HierarchyLevel) => {
-    switch (level) {
-      case 'c_level': return { label: '👑 C-Level', color: 'bg-purple-100 text-purple-800 border-purple-200' };
-      case 'vp': return { label: '💼 VP', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' };
-      case 'head_of': return { label: '🎖️ Head of', color: 'bg-blue-100 text-blue-800 border-blue-200' };
-      case 'lead': return { label: '📐 Lead', color: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
-      case 'expert': return { label: '⚡ Expert', color: 'bg-teal-100 text-teal-800 border-teal-200' };
-    }
+  /**
+   * Le badge d'un niveau.
+   *
+   * Ce `switch` n'avait aucune branche par défaut : un agent venu du
+   * générateur par IA ou d'un .zip, portant « C-Level » ou « Worker » plutôt
+   * que la clé interne, faisait renvoyer `undefined` — et la lecture de
+   * `.color` juste après faisait tomber tout l'écran. C'est ce qui rendait la
+   * vue inutilisable dès qu'un graphe était généré.
+   */
+  const getHierarchyBadge = (level: unknown) => {
+    const row = normalizeLevel(level);
+    return { label: HIERARCHY_LABEL[row], color: HIERARCHY_BADGE[row] };
   };
 
   return (
@@ -683,116 +687,76 @@ export const AgentGraphStudio: React.FC = () => {
         className="hidden"
       />
 
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Super-Graphe d'Équipes & Hiérarchie d'Entreprise</h1>
-            <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono text-xs font-semibold">
-              5 Niveaux de Profondeur
-            </span>
-          </div>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Architecture d'entreprise d'IA : C-Level ➔ VP ➔ Head of ➔ Lead ➔ Expert organisés en équipes modulaires composables.
-          </p>
-        </div>
+      {/*
+        En-tête.
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* AI Graph Generator Button */}
-          <button
-            onClick={() => setIsAiModalOpen(true)}
-            className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all flex items-center gap-1.5"
-          >
-            <span>✨</span>
-            <span>Générer par IA (Prompt)</span>
-          </button>
+        Il portait un titre sur trois lignes, un badge « 5 Niveaux de
+        Profondeur » et un paragraphe d'architecture — tout cela répétait le
+        titre de la fenêtre et poussait les onglets, la vraie navigation, en
+        troisième rideau. Ici : les onglets d'abord, les actions ensuite, et
+        une ligne de chiffres qui, elle, change avec le graphe.
+      */}
+      <div className="space-y-3 border-b border-slate-200 pb-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <nav className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-300 bg-white p-1">
+            {STUDIO_TABS.map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  title={tab.hint}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+                    active ? 'bg-indigo-600 font-semibold text-white' : 'font-medium text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                  {tab.id === 'teams' && teams.length > 0 && (
+                    <span className={`text-[10px] ${active ? 'text-indigo-100' : 'text-slate-400'}`}>
+                      {teams.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
 
-          {/* Export Zip Button */}
-          <button
-            onClick={handleExportZip}
-            className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-            title="Exporter tout le super-graphe et les équipes en archive .zip"
-          >
-            <span>📦</span>
-            <span>Exporter .zip</span>
-          </button>
-
-          {/* Import Zip Button */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-            title="Importer une configuration complète depuis un fichier .zip"
-          >
-            <span>📥</span>
-            <span>Importer .zip</span>
-          </button>
-
-          <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white text-xs">
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
             <button
-              onClick={() => setActiveTab('graph')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'graph' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => setIsAiModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:from-purple-700 hover:to-indigo-700"
             >
-              🕸️ Graphe Réseau (DAG)
+              <span>✨</span>
+              <span>Générer par IA</span>
             </button>
             <button
-              onClick={() => setActiveTab('hierarchy')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'hierarchy' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={handleExportZip}
+              title="Exporter le super-graphe et les équipes en archive .zip"
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
             >
-              🏢 Organigramme 5 Niveaux
+              📦 Exporter
             </button>
             <button
-              onClick={() => setActiveTab('teams')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'teams' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => fileInputRef.current?.click()}
+              title="Importer une configuration complète depuis un fichier .zip"
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
             >
-              👥 Vue par Équipes ({teams.length})
+              📥 Importer
             </button>
             <button
-              onClick={() => setActiveTab('virtual_office')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'virtual_office' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={handleSaveAll}
+              className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-slate-800"
             >
-              🏢 Bureau Virtuel 2D
-            </button>
-            <button
-              onClick={() => setActiveTab('editor')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'editor' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📝 Éditeur Ame.md & Job.md
-            </button>
-            <button
-              onClick={() => setActiveTab('openrouter_config')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'openrouter_config' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ⚙️ Clés & Modèles
-            </button>
-            <button
-              onClick={() => setActiveTab('culture')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-                activeTab === 'culture' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              🧭 Culture d'agence
+              Enregistrer
             </button>
           </div>
-
-          <button
-            onClick={handleSaveAll}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
-          >
-            Enregistrer
-          </button>
         </div>
+
+        <p className="font-mono text-[11px] text-slate-500">
+          {agents.length} agents · {channels.length} canaux · {teams.length} équipes · C-Level → VP → Head of → Lead →
+          Expert
+        </p>
       </div>
 
       {/* AI GRAPH & TEAM GENERATOR MODAL WITH LIVE OPENROUTER COMBOBOX */}
@@ -970,44 +934,19 @@ export const AgentGraphStudio: React.FC = () => {
       {/* VIEW 0: INTERACTIVE VISUAL NODE NETWORK GRAPH (DAG) */}
       {activeTab === 'graph' && (
         <div className="space-y-4">
-          {/* Top Control Bar */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-bold text-slate-900">Graphe Réseau d'Entreprise :</span>
-                <span className="text-slate-600 font-mono">
-                  {agents.length} Agents Connectés • {channels.length} Canaux Inter-Niveaux
-                </span>
-              </div>
-
-              <span className="text-slate-300">|</span>
-
-              <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-mono font-semibold">
-                Glissez les nœuds & Zoomez à volonté
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSimulateFlow}
-                disabled={simulationActive}
-                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
-              >
-                <span>{simulationActive ? '⚡ Échanges en direct...' : '▶ Lancer Simulation des Flux'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Big Visual Network Canvas */}
+          {/*
+            Une barre de contrôle occupait ce bandeau : elle répétait le nombre
+            d'agents et de canaux — déjà dans l'en-tête — et portait un bouton
+            « Lancer Simulation des Flux » qui allumait des traits pendant
+            quelques secondes sans qu'aucun agent ne travaille. Le canevas
+            explique déjà, en pied, comment le manipuler.
+          */}
           <EnterpriseNetworkGraph
             agents={agents}
             channels={channels}
             teams={teams}
             selectedAgentId={selectedAgentId}
             onSelectAgent={id => setSelectedAgentId(id)}
-            simulationActive={simulationActive}
-            activeSimulationStep={activeSimulationStep}
           />
 
           {/* Quick Inspector Footer for Selected Node */}
@@ -1080,15 +1019,6 @@ export const AgentGraphStudio: React.FC = () => {
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSimulateFlow}
-                disabled={simulationActive}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
-              >
-                <span>{simulationActive ? '⚡ Simulation en cours...' : '▶ Simuler les Échanges en Direct'}</span>
-              </button>
-            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1110,8 +1040,10 @@ export const AgentGraphStudio: React.FC = () => {
                         <span>👑</span>
                         <span>Niveau 1 : C-Level & Vision Stratégique</span>
                       </span>
+                      {/* Ici figurait une liste de modèles écrite en dur, sans rapport
+                          avec ceux réellement attribués — chaque carte porte le sien. */}
                       <span className="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-mono font-semibold">
-                        Grok 2 / Claude 3.7 / Qwen 72B
+                        {filteredAgents.filter(a => a.hierarchyLevel === 'c_level').length} agents
                       </span>
                     </div>
 
@@ -1144,7 +1076,7 @@ export const AgentGraphStudio: React.FC = () => {
                         <span>Niveau 2 : Vice-Presidents (VP Direction Métier)</span>
                       </span>
                       <span className="text-[10px] text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded font-mono font-semibold">
-                        Gemini 2.5 Flash / Qwen 72B
+                        {filteredAgents.filter(a => a.hierarchyLevel === 'vp').length} agents
                       </span>
                     </div>
 
@@ -1279,16 +1211,13 @@ export const AgentGraphStudio: React.FC = () => {
                 <p className="text-xs text-slate-500">Cliquez sur un canal pour inspecter son protocole.</p>
 
                 <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                  {channels.map((ch, idx) => {
-                    const isSimActive = activeSimulationStep === idx;
+                  {channels.map((ch) => {
                     return (
                       <div
                         key={ch.id}
                         onClick={() => setSelectedChannelId(ch.id)}
                         className={`p-3 rounded-lg border text-left cursor-pointer transition-all text-xs space-y-1.5 ${
-                          isSimActive
-                            ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-600 animate-pulse'
-                            : selectedChannelId === ch.id
+                          selectedChannelId === ch.id
                             ? 'bg-slate-50 border-indigo-500'
                             : 'bg-white border-slate-200 hover:bg-slate-50'
                         }`}
@@ -1428,20 +1357,6 @@ export const AgentGraphStudio: React.FC = () => {
         </div>
       )}
 
-      {/* VIEW: 2D GRAPHIC VIRTUAL OFFICE */}
-      {activeTab === 'virtual_office' && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-xs text-slate-500 shadow-sm">
-          <p className="text-sm font-semibold text-slate-900">🏢 Le bureau tourne en permanence derrière cette fenêtre.</p>
-          <p className="mt-1">Fermez cette modale (ou touche Échap) pour reprendre la main sur le plateau.</p>
-          <a
-            href="/office"
-            className="mt-3 inline-block rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
-          >
-            Aller au bureau
-          </a>
-        </div>
-      )}
-
       {/* VIEW 3: MARKDOWN PERSONA EDITOR (Ame.md & Job.md & Hierarchy Level) */}
       {activeTab === 'editor' && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -1478,46 +1393,55 @@ export const AgentGraphStudio: React.FC = () => {
             </div>
           </div>
 
-          <div className="lg:col-span-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          {/*
+            La fiche de l'agent.
+
+            Le titre et ses deux badges partageaient une seule ligne avec le
+            groupe d'onglets, chacun tirant sur la largeur : l'identifiant de
+            modèle se coupait au milieu d'un mot, et les onglets, aux libellés
+            longs, se repliaient sur trois lignes. Le `justify-between` de la
+            carte creusait par-dessus un grand vide entre l'en-tête et le
+            formulaire. Ici : l'identité d'abord, les onglets ensuite, chacun
+            sur sa ligne.
+          */}
+          <div className="lg:col-span-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+            <div className="space-y-3 border-b border-slate-200 pb-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-base font-bold text-slate-900">{currentAgent.role}</h2>
-                  <span className={`text-xs px-2 py-0.5 rounded font-semibold border ${getHierarchyBadge(currentAgent.hierarchyLevel).color}`}>
+                  <span
+                    className={`shrink-0 whitespace-nowrap rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                      getHierarchyBadge(currentAgent.hierarchyLevel).color
+                    }`}
+                  >
                     {getHierarchyBadge(currentAgent.hierarchyLevel).label}
                   </span>
-                  <span className="text-xs font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-semibold">
+                  <span className="shrink-0 whitespace-nowrap rounded bg-indigo-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-indigo-600">
                     {currentAgent.modelId}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">{currentAgent.description}</p>
+                <p className="mt-1 text-xs text-slate-500">{currentAgent.description}</p>
               </div>
 
-              <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-50 text-xs">
-                <button
-                  onClick={() => setActiveEditorSubTab('ame')}
-                  className={`px-3 py-1 rounded-md font-semibold transition-colors ${
-                    activeEditorSubTab === 'ame' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  🧬 Ame.md (Identité)
-                </button>
-                <button
-                  onClick={() => setActiveEditorSubTab('job')}
-                  className={`px-3 py-1 rounded-md font-semibold transition-colors ${
-                    activeEditorSubTab === 'job' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  📋 Job.md (Missions)
-                </button>
-                <button
-                  onClick={() => setActiveEditorSubTab('params')}
-                  className={`px-3 py-1 rounded-md font-semibold transition-colors ${
-                    activeEditorSubTab === 'params' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  ⚙️ Rôle, Équipe & Modèle
-                </button>
+              <div className="inline-flex flex-wrap gap-0.5 rounded-lg border border-slate-300 bg-slate-50 p-0.5 text-xs">
+                {[
+                  { id: 'ame' as const, label: 'Âme.md', hint: 'Identité et principes' },
+                  { id: 'job' as const, label: 'Job.md', hint: 'Missions et livrables' },
+                  { id: 'params' as const, label: 'Rôle & modèle', hint: 'Niveau, équipe, modèle, réglages' }
+                ].map((sub) => (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveEditorSubTab(sub.id)}
+                    title={sub.hint}
+                    className={`whitespace-nowrap rounded-md px-3 py-1 font-semibold transition-colors ${
+                      activeEditorSubTab === sub.id
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {sub.label}
+                  </button>
+                ))}
               </div>
             </div>
 

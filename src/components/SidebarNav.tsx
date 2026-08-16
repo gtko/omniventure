@@ -1,110 +1,189 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { readLedger, LEDGER_EVENT } from '../lib/agent-ledger';
+import { readLocal, writeLocal } from '../lib/local';
 import { getStoredVentures, getActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
-import { Portal } from './Portal';
+import { ProjectPilot } from './ProjectPilot';
 import { ProjectSwitcher } from './ProjectSwitcher';
 
 interface Props {
   currentPath?: string;
 }
 
-/**
- * Les vues d'un produit.
- *
- * Elles étaient des onglets à l'intérieur de la page ; elles vivent maintenant
- * ici. On voit d'un coup d'œil tout ce qu'un produit contient, et la vue
- * courante reste repérable même après être parti ailleurs dans l'agence.
- *
- * La vue voyage dans l'adresse : c'est ce qui permet à un lien de la barre
- * d'ouvrir directement la bonne section.
- */
-const PROJECT_VIEWS = [
-  { view: 'apercu', label: 'Aperçu', href: '/', icon: '👁️' },
-  { view: 'direction', label: 'Direction', href: '/?vue=direction', icon: '🧭' },
-  { view: 'chantier', label: 'Chantier', href: '/?vue=chantier', icon: '🔨' },
-  { view: 'tickets', label: 'Tickets', href: '/?vue=tickets', icon: '🎫' },
-  { view: 'livrables', label: 'Livrables', href: '/?vue=livrables', icon: '📦' },
-  { view: 'reglages', label: 'Réglages', href: '/?vue=reglages', icon: '⚙️' }
-] as const;
+interface NavItem {
+  label: string;
+  href: string;
+  icon: string;
+  /** Renseigné pour une vue du produit : c'est la valeur de `?vue=`. */
+  view?: string;
+}
+
+interface NavGroup {
+  id: string;
+  label: string;
+  /** Un groupe rattaché au produit disparaît quand aucun n'est sélectionné. */
+  needsProject?: boolean;
+  items: NavItem[];
+}
 
 /**
- * Le design du produit.
+ * La navigation, en une seule table.
  *
- * Ces trois ateliers étaient des onglets dans une page « Ateliers » commune à
- * l'agence. Ils n'ont rien de commun : un logo, une palette et des composants
- * appartiennent à **un** produit, et changent avec lui. Ils rejoignent donc ses
- * vues, dans leur propre groupe — le travail y circule dans cet ordre, du
- * visuel au système, du système au composant.
+ * Les quatre groupes étaient quatre blocs de JSX copiés l'un sur l'autre, et
+ * la liste globale existait deux fois — d'où des liens qui divergeaient selon
+ * qu'un projet était sélectionné ou non. Une table, un rendu.
+ *
+ * Les vues du produit voyagent dans l'adresse (`?vue=`) : c'est ce qui permet
+ * à un lien de la barre d'ouvrir directement la bonne section.
  */
-const DESIGN_VIEWS = [
-  { view: 'graphisme', label: 'Graphisme', href: '/?vue=graphisme', icon: '🎨' },
-  { view: 'design-system', label: 'Design system', href: '/?vue=design-system', icon: '🧩' },
-  { view: 'composants', label: 'Composants', href: '/?vue=composants', icon: '🔲' }
-] as const;
+const GROUPS: NavGroup[] = [
+  {
+    id: 'vues',
+    label: 'Vues',
+    needsProject: true,
+    items: [
+      { label: 'Aperçu', href: '/', icon: '👁️', view: 'apercu' },
+      { label: 'Direction', href: '/?vue=direction', icon: '🧭', view: 'direction' },
+      { label: 'Chantier', href: '/?vue=chantier', icon: '🔨', view: 'chantier' },
+      { label: 'Tickets', href: '/?vue=tickets', icon: '🎫', view: 'tickets' },
+      // La mesure était une page de l'agence ; ce sont pourtant les chiffres
+      // d'un produit précis — son trafic, ses tests, son acquisition.
+      { label: 'Mesure', href: '/?vue=mesure', icon: '📊', view: 'mesure' },
+      { label: 'Livrables', href: '/?vue=livrables', icon: '📦', view: 'livrables' },
+      { label: 'Réglages', href: '/?vue=reglages', icon: '⚙️', view: 'reglages' }
+    ]
+  },
+  {
+    /*
+     * Un logo, une palette et des composants appartiennent à **un** produit et
+     * changent avec lui. Le travail y circule dans cet ordre : du visuel au
+     * système, du système au composant.
+     */
+    id: 'design',
+    label: 'Design',
+    needsProject: true,
+    items: [
+      { label: 'Graphisme', href: '/?vue=graphisme', icon: '🎨', view: 'graphisme' },
+      { label: 'Design system', href: '/?vue=design-system', icon: '🧩', view: 'design-system' },
+      { label: 'Composants', href: '/?vue=composants', icon: '🔲', view: 'composants' }
+    ]
+  },
+  {
+    id: 'pilotage',
+    label: 'Pilotage',
+    needsProject: true,
+    items: [
+      { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
+      { label: 'Agenda', href: '/agenda', icon: '📅' }
+    ]
+  },
+  {
+    id: 'agence',
+    label: 'Agence',
+    items: [
+      { label: 'Bureau virtuel 2D', href: '/office', icon: '🏢' },
+      { label: 'Tous mes business', href: '/ventures', icon: '📂' },
+      { label: 'Analyse concurrents', href: '/market', icon: '🔍' },
+      { label: 'Graphe d’agents', href: '/agents', icon: '🧠' },
+      { label: 'Ressources humaines', href: '/hr', icon: '🧑‍💼' },
+      // Deux pages voisines sans qu'on sache laquelle ouvrir : elles font
+      // toutes deux tourner un agent hors du chantier d'un produit.
+      { label: 'Missions', href: '/missions', icon: '🛰️' },
+      { label: 'Harnais de codage', href: '/harness', icon: '🛠️' },
+      { label: 'Discussions', href: '/discussions', icon: '💬' },
+      { label: 'Documentation', href: '/documentation', icon: '📓' },
+      { label: 'Coffre-fort', href: '/vault', icon: '🔐' }
+    ]
+  }
+];
+
+const COLLAPSE_KEY = 'omniventure_nav_collapsed_v1';
+
+/**
+ * Les groupes repliés.
+ *
+ * L'état doit survivre à la navigation : chaque lien recharge la page, et un
+ * état de composant serait remis à plat à chaque clic — le groupe qu'on vient
+ * de replier se rouvrirait aussitôt.
+ */
+function readCollapsed(): string[] {
+  const raw = readLocal(COLLAPSE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+interface Usage {
+  connected: boolean;
+  reason?: string;
+  allTime: number | null;
+  last7d: number | null;
+  today: number | null;
+  lastHour: number | null;
+  remaining?: number;
+  source?: string;
+}
+
+/** Ce que l'agence a dépensé depuis une borne, d'après son propre registre. */
+function spentSince(boundary: number): number {
+  return readLedger()
+    .filter((entry) => entry.at >= boundary)
+    .reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+}
 
 export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeId, setActiveId] = useState<string>('');
   /**
-   * La vue ouverte dans la page du produit.
-   *
-   * Elle est lue dans l'adresse plutôt que reçue en propriété : la barre est
-   * rendue par Astro, qui ne connaît que le chemin, pas la chaîne de requête.
+   * La vue ouverte dans la page du produit. Elle est lue dans l'adresse plutôt
+   * que reçue en propriété : la barre est rendue par Astro, qui ne connaît que
+   * le chemin, pas la chaîne de requête.
    */
   const [currentView, setCurrentView] = useState<string>('apercu');
-  const [showTelemetryModal, setShowTelemetryModal] = useState<boolean>(false);
-  const [latency, setLatency] = useState<number>(28);
-  const [telemetryLogs, setTelemetryLogs] = useState<string[]>([
-    'Cloudflare Workers Edge : P95 Latency 28ms.',
-    'D1 Database (SQLite) : Requêtes préparées prêtes.',
-    'Agents SDK : Durable Objects en écoute (7 threads).',
-    'Cloudflare Queue : Buffer 0 tâche en attente.'
-  ]);
-  const [isPinging, setIsPinging] = useState<boolean>(false);
-  const [usage, setUsage] = useState<{
-    connected: boolean;
-    reason?: string;
-    allTime: number | null;
-    last7d: number | null;
-    today: number | null;
-    lastHour: number | null;
-    remaining?: number;
-  } | null>(null);
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  /** Le repli local, calculé sur le registre de l'agence. */
+  const [local, setLocal] = useState({ today: 0, last7d: 0, lastHour: 0 });
 
-  const loadData = () => {
-    const list = getStoredVentures();
-    setVentures(list);
-    const active = getActiveProjectId();
-    setActiveId(active || '');
-  };
+  const loadData = useCallback(() => {
+    setVentures(getStoredVentures());
+    setActiveId(getActiveProjectId() || '');
+  }, []);
+
+  const loadLocal = useCallback(() => {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    setLocal({
+      today: spentSince(midnight.getTime()),
+      last7d: spentSince(Date.now() - 7 * 24 * 3600_000),
+      lastHour: spentSince(Date.now() - 3600_000)
+    });
+  }, []);
 
   useEffect(() => {
     loadData();
+    loadLocal();
+    setCollapsed(readCollapsed());
     setCurrentView(new URLSearchParams(window.location.search).get('vue') ?? 'apercu');
 
-    const handleVenturesUpdated = () => loadData();
-    const handleActiveChanged = (e: any) => {
-      if (e.detail?.id) setActiveId(e.detail.id);
+    const onVentures = () => loadData();
+    const onActive = (event: any) => {
+      if (event.detail?.id) setActiveId(event.detail.id);
     };
+    window.addEventListener('ventures-updated', onVentures);
+    window.addEventListener('active-project-changed', onActive);
+    window.addEventListener(LEDGER_EVENT, loadLocal);
 
-    window.addEventListener('ventures-updated', handleVenturesUpdated);
-    window.addEventListener('active-project-changed', handleActiveChanged);
-
-    // Subtle random latency jitter for live feel
-    const interval = setInterval(() => {
-      setLatency(Math.floor(Math.random() * 8) + 24);
-    }, 4000);
-
-    /**
-     * Consommation OpenRouter. Chaque appel relève aussi le compteur cumulé :
-     * ce sont ces relevés successifs qui permettent de calculer les fenêtres.
-     */
     const pollUsage = async () => {
       try {
         const res = await fetch('/api/usage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined })
+          body: JSON.stringify({ openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined })
         });
         if (res.ok) setUsage(await res.json());
       } catch {
@@ -112,46 +191,57 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
       }
     };
     void pollUsage();
-    const usageInterval = setInterval(pollUsage, 120000);
+    const usageInterval = window.setInterval(pollUsage, 120000);
+    const localInterval = window.setInterval(loadLocal, 30000);
 
     return () => {
-      window.removeEventListener('ventures-updated', handleVenturesUpdated);
-      window.removeEventListener('active-project-changed', handleActiveChanged);
-      clearInterval(interval);
-      clearInterval(usageInterval);
+      window.removeEventListener('ventures-updated', onVentures);
+      window.removeEventListener('active-project-changed', onActive);
+      window.removeEventListener(LEDGER_EVENT, loadLocal);
+      window.clearInterval(usageInterval);
+      window.clearInterval(localInterval);
     };
-  }, []);
+  }, [loadData, loadLocal]);
 
-  const handlePingHealth = async () => {
-    setIsPinging(true);
-    try {
-      const res = await fetch('/api/agents/telemetry');
-      if (res.ok) {
-        const data = await res.json() as any;
-        setTelemetryLogs(prev => [
-          `[${new Date().toLocaleTimeString()}] Ping Santé : Edge ${data.edgeStatus} • Uptime ${data.uptimeHours}h • Boucle ${data.autonomousLoopIntervalSeconds}s`,
-          ...prev.slice(0, 8)
-        ]);
-      }
-    } catch {
-      setTelemetryLogs(prev => [
-        `[${new Date().toLocaleTimeString()}] Ping local : Edge 100% opérationnel (Dev Mode)`,
-        ...prev.slice(0, 8)
-      ]);
-    } finally {
-      setIsPinging(false);
-    }
+  const toggle = (id: string) => {
+    const next = collapsed.includes(id) ? collapsed.filter((entry) => entry !== id) : [...collapsed, id];
+    setCollapsed(next);
+    writeLocal(COLLAPSE_KEY, JSON.stringify(next));
   };
 
-  const activeVenture = ventures.find(v => v.id === activeId);
-  const hasActiveProject = !!activeVenture;
+  const activeVenture = ventures.find((entry) => entry.id === activeId);
+  const hasProject = !!activeVenture;
+  const groups = GROUPS.filter((group) => hasProject || !group.needsProject);
+
+  /**
+   * Une fenêtre de dépense, avec sa provenance.
+   *
+   * OpenRouter ne donne qu'un compteur cumulé : le découpage par période vient
+   * de relevés successifs, et reste donc vide tant qu'aucun relevé n'est
+   * antérieur à la borne — sur une installation récente, « 7 jours » et
+   * « aujourd'hui » restaient désespérément à «—» alors que l'agence dépensait.
+   * À défaut de relevé, on montre ce que l'agence a elle-même dépensé, d'après
+   * son registre. C'est un plancher exact, pas une estimation.
+   */
+  const window_ = (measured: number | null | undefined, fallback: number) =>
+    measured != null && measured > 0
+      ? { value: measured, exact: true }
+      : { value: fallback, exact: measured != null };
+
+  const spend = [
+    { label: 'Total', value: usage?.allTime ?? null, exact: true },
+    { label: '7 jours', ...window_(usage?.last7d, local.last7d) },
+    { label: "Aujourd'hui", ...window_(usage?.today, local.today) },
+    { label: '1 heure', ...window_(usage?.lastHour, local.lastHour) }
+  ];
+
+  const estimated = spend.some((entry) => !entry.exact && (entry.value ?? 0) > 0);
 
   return (
     <aside className="app-nav w-64 bg-white border-r border-slate-200 min-h-screen flex flex-col justify-between flex-shrink-0 z-30">
-      <div className="p-4 space-y-5">
-        
-        {/* Brand Logo */}
-        <div className="flex items-center gap-2.5 px-1 py-1">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Marque */}
+        <a href="/" className="flex items-center gap-2.5 px-1 py-1">
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-xs">
             Ω
           </div>
@@ -159,385 +249,122 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
             <div className="font-bold text-sm text-slate-900 tracking-tight leading-none">OmniVenture</div>
             <span className="text-[10px] text-slate-400 font-mono">Cloudflare OS</span>
           </div>
-        </div>
+        </a>
 
-        {/* Project Switcher in Sidebar */}
-        <div className="pt-1">
-          <ProjectSwitcher />
-        </div>
+        <ProjectSwitcher />
 
-        {/* Dynamic Navigation Menu based on Active Project */}
-        {hasActiveProject ? (
-          /* CONTEXTUAL PROJECT MENU (WHEN A PROJECT IS SELECTED) */
-          <nav className="space-y-4 pt-1">
-            
-            {/*
-              Les vues du produit.
-              Pas de nom ni de type en en-tête : le sélecteur juste au-dessus
-              les affiche déjà, et les répéter faisait lire deux fois la même
-              chose au même endroit.
-            */}
-            <div className="space-y-1">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Vues
-              </div>
-              <div className="space-y-0.5">
-                {PROJECT_VIEWS.map(item => {
-                  const isActive = currentPath === '/' && currentView === item.view;
-                  return (
-                    <a
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-sm">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
+        {/*
+          Le pilote du produit.
 
-            {/* Le design du produit : du visuel au système, du système au composant */}
-            <div className="space-y-1 pt-2 border-t border-slate-100">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Design
-              </div>
-              <div className="space-y-0.5">
-                {DESIGN_VIEWS.map(item => {
-                  const isActive = currentPath === '/' && currentView === item.view;
-                  return (
-                    <a
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-sm">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Le rythme et la mesure du produit */}
-            <div className="space-y-1 pt-2 border-t border-slate-100">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Pilotage
-              </div>
-              <div className="space-y-0.5">
-                {[
-                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
-                  { label: 'Mesure', href: '/analytics', icon: '📊' }
-                ].map(item => {
-                  const isActive = currentPath === item.href;
-                  return (
-                    <a
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-sm">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Section 2: Global Intelligence & Factory Tools */}
-            <div className="space-y-1 pt-2 border-t border-slate-100">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Outils Globaux
-              </div>
-              <div className="space-y-0.5">
-                {[
-                  { label: 'Bureau Virtuel 2D', href: '/office', icon: '🏢' },
-                  { label: 'Tous mes Business', href: '/ventures', icon: '📂' },
-                  { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
-                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
-                  { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
-                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
-                  { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
-                  { label: 'Agenda', href: '/agenda', icon: '📅' },
-                  { label: 'Coffre-fort', href: '/vault', icon: '🔐' },
-                  { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
-                ].map(item => {
-                  const isActive = currentPath === item.href;
-                  return (
-                    <a
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-sm">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-
-          </nav>
-        ) : (
-          /* GLOBAL MENU (WHEN NO PROJECT IS SELECTED) */
-          <nav className="space-y-4 pt-1">
-            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5 text-xs text-amber-900">
-              <div className="font-bold flex items-center gap-1 text-[11px]">
-                <span>ℹ️</span>
-                <span>Aucun projet sélectionné</span>
-              </div>
-              <p className="text-[11px] text-amber-800 leading-snug">
-                Sélectionnez ou créez un projet ci-dessus : le chantier, la feuille de route et la mesure sont rattachés à un produit.
-              </p>
-            </div>
-
-            <div className="space-y-1">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Navigation Globale
-              </div>
-              <div className="space-y-0.5">
-                {[
-                  { label: 'Bureau Virtuel 2D (Live)', href: '/office', icon: '🏢' },
-                  { label: 'Mes Business (Liste)', href: '/ventures', icon: '📂' },
-                  { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
-                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
-                  { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
-                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
-                  { label: 'Discussions', href: '/discussions', icon: '💬' },
-                  { label: 'Documentation', href: '/documentation', icon: '📓' },
-                  { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
-                  { label: 'Agenda', href: '/agenda', icon: '📅' },
-                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
-                  { label: 'Mesure', href: '/analytics', icon: '📊' },
-                  { label: 'Coffre-fort', href: '/vault', icon: '🔐' },
-                  { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
-                ].map(item => {
-                  const isActive = currentPath === item.href;
-                  return (
-                    <a
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-sm">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-          </nav>
+          Ici se trouvait un badge « canary » — un vestige d'un bouton de
+          déploiement qui ne déployait rien, annonçant un routage de trafic
+          inexistant. À sa place : de quoi lancer l'agence, l'arrêter, et voir
+          quand elle attend une réponse de vous.
+        */}
+        {activeVenture && (
+          <ProjectPilot
+            venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug ?? activeVenture.id }}
+          />
         )}
 
+        {!hasProject && (
+          <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1 text-amber-900">
+            <div className="font-bold flex items-center gap-1 text-[11px]">
+              <span>ℹ️</span>
+              <span>Aucun projet sélectionné</span>
+            </div>
+            <p className="text-[11px] text-amber-800 leading-snug">
+              Sélectionnez ou créez un projet : le chantier, la feuille de route et la mesure sont rattachés à un
+              produit.
+            </p>
+          </div>
+        )}
+
+        <nav className="space-y-3">
+          {groups.map((group) => {
+            const shut = collapsed.includes(group.id);
+            return (
+              <div key={group.id} className="space-y-1 border-t border-slate-100 pt-2 first:border-0 first:pt-0">
+                <button
+                  type="button"
+                  onClick={() => toggle(group.id)}
+                  aria-expanded={!shut}
+                  className="flex w-full items-center gap-1 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider font-mono text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                >
+                  <span className={`text-[8px] transition-transform ${shut ? '' : 'rotate-90'}`}>▶</span>
+                  <span>{group.label}</span>
+                  {shut && <span className="ml-auto text-[9px] font-normal normal-case">{group.items.length}</span>}
+                </button>
+
+                {!shut && (
+                  <div className="space-y-0.5">
+                    {group.items.map((item) => {
+                      const active = item.view
+                        ? currentPath === '/' && currentView === item.view
+                        : currentPath === item.href;
+                      return (
+                        <a
+                          key={item.href}
+                          href={item.href}
+                          className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            active
+                              ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="text-sm">{item.icon}</span>
+                          <span>{item.label}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </nav>
       </div>
 
-      {/* ENRICHED BOTTOM SYSTEM HEALTH & MONITORING CARD */}
-      <div className="p-3.5 border-t border-slate-200 bg-slate-50/70 space-y-2.5">
-        
-        {/* Header & Status Badge */}
+      {/*
+        Ce que l'agence coûte.
+
+        Il y avait ici une grille de témoins verts — « 285+ datacenters »,
+        « 7 threads 24/7 », « 100 % santé » — écrits en dur : ils affichaient la
+        même chose que le service tourne ou non. Ne reste que ce qui est mesuré.
+      */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50/70 p-3 space-y-1.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          <span className="text-[10px] font-bold text-slate-700 tracking-tight">Coûts OpenRouter</span>
+          {usage?.connected ? (
+            <span className="font-mono text-[9px] text-slate-400">
+              {usage.remaining != null ? `reste $${usage.remaining.toFixed(2)}` : ''}
             </span>
-            <span className="font-bold text-[11px] text-slate-800 tracking-tight">Cloudflare Edge</span>
-          </div>
-
-          <span className="px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 font-mono text-[10px] font-bold border border-emerald-200">
-            100% Santé
-          </span>
-        </div>
-
-        {/* 2x2 Telemetry Metric Badges */}
-        <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono">
-          <div className="p-1.5 rounded bg-white border border-slate-200 text-slate-600">
-            <span className="text-slate-400 block text-[9px]">Latence P95</span>
-            <span className="font-bold text-slate-900">{latency} ms</span>
-          </div>
-
-          <div className="p-1.5 rounded bg-white border border-slate-200 text-slate-600">
-            <span className="text-slate-400 block text-[9px]">D1 Database</span>
-            <span className="font-bold text-emerald-600">Connectée</span>
-          </div>
-
-          <div className="p-1.5 rounded bg-white border border-slate-200 text-slate-600">
-            <span className="text-slate-400 block text-[9px]">Agents SDK</span>
-            <span className="font-bold text-indigo-600">7 Actifs (24/7)</span>
-          </div>
-
-          <div className="p-1.5 rounded bg-white border border-slate-200 text-slate-600">
-            <span className="text-slate-400 block text-[9px]">Boucle Auto</span>
-            <span className="font-bold text-slate-900">30s (Edge)</span>
-          </div>
-        </div>
-
-        {/* OpenRouter spend */}
-        <div className="rounded border border-slate-200 bg-white p-2 space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-700 tracking-tight">Coûts OpenRouter</span>
-            {usage?.connected ? (
-              <span className="font-mono text-[9px] text-slate-400">
-                {usage.remaining != null ? `reste $${usage.remaining.toFixed(2)}` : ''}
-              </span>
-            ) : (
-              <span className="font-mono text-[9px] text-amber-600">clé absente</span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-1 text-[10px] font-mono">
-            {[
-              { label: 'Total', value: usage?.allTime },
-              { label: '7 jours', value: usage?.last7d },
-              { label: "Aujourd'hui", value: usage?.today },
-              { label: '1 heure', value: usage?.lastHour }
-            ].map(stat => (
-              <div key={stat.label} className="rounded bg-slate-50 px-1.5 py-1 border border-slate-200">
-                <span className="block text-[9px] text-slate-400">{stat.label}</span>
-                <span className="font-bold text-slate-900">
-                  {stat.value == null ? '—' : `$${stat.value.toFixed(stat.value < 1 ? 4 : 2)}`}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {usage?.connected && usage.last7d == null && (
-            <p className="text-[9px] leading-snug text-slate-400">
-              Les fenêtres se remplissent au fil des relevés (un toutes les 2 min).
-            </p>
+          ) : (
+            <span className="font-mono text-[9px] text-amber-600" title={usage?.reason}>
+              clé absente
+            </span>
           )}
         </div>
 
-        {/* Interactive Telemetry Inspector Trigger */}
-        <button
-          type="button"
-          onClick={() => setShowTelemetryModal(true)}
-          className="w-full py-1 text-center text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50/70 rounded transition-colors block border border-dashed border-indigo-200"
-        >
-          🔍 Inspecter la Télémétrie en Direct
-        </button>
-
-      </div>
-
-      {/* DETAILED TELEMETRY MODAL */}
-      {showTelemetryModal && (
-        // Portail : sans lui, le backdrop-filter de la nav enfermerait la
-        // modale dans les 16 rem de la barre latérale (voir Portal.tsx).
-        <Portal>
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-lg p-6 rounded-2xl border border-slate-200 shadow-xl space-y-4 relative">
-            
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                  ✓
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Centre de Télémétrie & Santé Système</h3>
-                  <span className="text-[11px] text-slate-500 font-mono">Cloudflare Workers Versioning & Agents SDK</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowTelemetryModal(false)}
-                className="text-slate-400 hover:text-slate-700 text-sm p-1 rounded-lg hover:bg-slate-100"
-              >
-                ✕
-              </button>
+        <div className="grid grid-cols-2 gap-1 text-[10px] font-mono">
+          {spend.map((entry) => (
+            <div key={entry.label} className="rounded bg-white px-1.5 py-1 border border-slate-200">
+              <span className="block text-[9px] text-slate-400">{entry.label}</span>
+              <span className="font-bold text-slate-900">
+                {entry.value == null ? '—' : `$${entry.value.toFixed(entry.value < 1 ? 4 : 2)}`}
+                {!entry.exact && (entry.value ?? 0) > 0 && <span className="text-slate-400"> ≈</span>}
+              </span>
             </div>
-
-            {/* Infrastructure Grid */}
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                  <span>Réseau Mondial Edge</span>
-                  <span className="text-emerald-600 font-bold">● OK</span>
-                </div>
-                <div className="font-mono font-bold text-slate-900 text-sm">285+ Datacenters</div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                  <span>Durable Objects SQLite</span>
-                  <span className="text-emerald-600 font-bold">● OK</span>
-                </div>
-                <div className="font-mono font-bold text-slate-900 text-sm">7 Threads 24/7</div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                  <span>Base D1 (SQL)</span>
-                  <span className="text-emerald-600 font-bold">● OK</span>
-                </div>
-                <div className="font-mono font-bold text-slate-900 text-sm">0ms Requêtes Edge</div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                  <span>Cloudflare Queues</span>
-                  <span className="text-emerald-600 font-bold">● Actif</span>
-                </div>
-                <div className="font-mono font-bold text-slate-900 text-sm">Buffer 0 tâche</div>
-              </div>
-            </div>
-
-            {/* Live Logs console */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-semibold">Journal des Pings Réseau</span>
-                <button
-                  onClick={handlePingHealth}
-                  disabled={isPinging}
-                  className="text-indigo-600 hover:underline text-[11px] font-semibold"
-                >
-                  {isPinging ? 'Ping en cours...' : 'Envoyer un Ping Test'}
-                </button>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] space-y-1 max-h-36 overflow-y-auto">
-                {telemetryLogs.map((log, i) => (
-                  <div key={i} className="text-slate-300 truncate">
-                    <span className="text-emerald-400 mr-1.5">❯</span>{log}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end pt-2 border-t border-slate-200">
-              <button
-                onClick={() => setShowTelemetryModal(false)}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs rounded-lg shadow-sm"
-              >
-                Fermer
-              </button>
-            </div>
-
-          </div>
+          ))}
         </div>
-        </Portal>
-      )}
 
+        {estimated && (
+          <p className="text-[9px] leading-snug text-slate-400">
+            ≈ dépense relevée dans le registre de l'agence, en attendant assez de relevés OpenRouter pour couvrir la
+            période.
+          </p>
+        )}
+      </div>
     </aside>
   );
 };

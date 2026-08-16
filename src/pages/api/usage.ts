@@ -100,6 +100,48 @@ function spendSince(snapshots: Snapshot[], boundary: number, current: number): n
   return Math.max(0, current - baseline.totalUsage);
 }
 
+/**
+ * Le découpage journalier d'OpenRouter, quand il est accessible.
+ *
+ * Les relevés successifs ne peuvent rien dire d'une période antérieure à la
+ * première mesure : sur une installation récente, « 7 jours » et
+ * « aujourd'hui » restaient vides alors que le compteur cumulé, lui, montrait
+ * des centaines de dollars. Cet appel donne les journées directement, sans
+ * historique à constituer.
+ *
+ * Il n'est pas ouvert à toutes les clés — on le tente, et on s'en passe s'il
+ * refuse. La lecture est volontairement tolérante : seuls la date et le
+ * montant nous intéressent, quel que soit le reste de la charge utile.
+ */
+async function readActivity(key: string): Promise<{ date: string; usage: number }[] | null> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/activity', {
+      headers: { Authorization: `Bearer ${key}` }
+    });
+    if (!res.ok) return null;
+    const payload = (await res.json()) as { data?: unknown };
+    if (!Array.isArray(payload.data)) return null;
+
+    const rows = payload.data
+      .map((row: any) => ({
+        date: String(row?.date ?? '').slice(0, 10),
+        usage: Number(row?.usage ?? row?.cost ?? 0)
+      }))
+      .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && Number.isFinite(row.usage));
+
+    return rows.length > 0 ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Somme des journées à partir d'une date incluse (bornes en UTC, comme OpenRouter). */
+const sumFrom = (rows: { date: string; usage: number }[], from: string): number =>
+  rows.filter((row) => row.date >= from).reduce((total, row) => total + row.usage, 0);
+
+const utcDay = (offsetDays = 0): string =>
+  new Date(Date.now() - offsetDays * 24 * 3600_000).toISOString().slice(0, 10);
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = (locals as any)?.runtime?.env;
 
@@ -151,14 +193,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
 
+  // Les journées d'OpenRouter d'abord : elles sont exactes dès le premier
+  // appel. Les relevés ne servent qu'à ce qu'elles ne savent pas dire — la
+  // dernière heure — ou quand l'endpoint est fermé à cette clé.
+  const activity = await readActivity(key);
+
   const payload = {
     connected: true,
     allTime: totalUsage,
     credits: totalCredits,
     remaining: Math.max(0, totalCredits - totalUsage),
-    last7d: spendSince(snapshots, now - 7 * 24 * 3600_000, totalUsage),
-    today: spendSince(snapshots, midnight.getTime(), totalUsage),
+    last7d: activity ? sumFrom(activity, utcDay(6)) : spendSince(snapshots, now - 7 * 24 * 3600_000, totalUsage),
+    today: activity ? sumFrom(activity, utcDay(0)) : spendSince(snapshots, midnight.getTime(), totalUsage),
     lastHour: spendSince(snapshots, now - 3600_000, totalUsage),
+    source: activity ? 'activite' : 'releves',
     samples: snapshots.length,
     since: snapshots.length > 0 ? snapshots[snapshots.length - 1].at : now
   };

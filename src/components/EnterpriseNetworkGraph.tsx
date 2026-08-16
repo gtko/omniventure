@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
-import type { AgentCustomData, HierarchyLevel, TeamData } from './AgentGraphStudio';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import type { AgentCustomData, TeamData } from './AgentGraphStudio';
+import { HIERARCHY_ROWS, normalizeLevel, type HierarchyRow } from '../lib/hierarchy';
 import type { CommunicationChannel } from '../lib/zip-manager';
 
 interface Props {
@@ -9,8 +10,6 @@ interface Props {
   selectedAgentId: string;
   onSelectAgent: (id: string) => void;
   onEditAgent?: (agent: AgentCustomData) => void;
-  simulationActive?: boolean;
-  activeSimulationStep?: number;
 }
 
 interface NodePosition {
@@ -18,53 +17,114 @@ interface NodePosition {
   y: number;
 }
 
+type Row = HierarchyRow;
+const ROWS = HIERARCHY_ROWS;
+
+const NODE_W = 230;
+const NODE_H = 110;
+const COL_GAP = 40;
+const ROW_GAP = 80;
+/** La légende occupe le coin haut-gauche : le cadrage lui laisse la place. */
+const LEGEND_W = 210;
+
+/** Le niveau d'un agent, quelle que soit la façon dont il a été écrit. */
+const rowOf = normalizeLevel;
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 export const EnterpriseNetworkGraph: React.FC<Props> = ({
   agents,
   channels,
   teams,
   selectedAgentId,
-  onSelectAgent,
-  simulationActive = false,
-  activeSimulationStep = -1
+  onSelectAgent
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState<number>(0.85);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 50, y: 30 });
+  const [zoom, setZoom] = useState<number>(0.7);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: LEGEND_W, y: 24 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [startPan, setStartPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [nodePositions, setNodePositions] = useState<Record<string, NodePosition>>({});
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Auto-calculate balanced hierarchical layout based on 5 levels
-  useEffect(() => {
-    const levelOrder: HierarchyLevel[] = ['c_level', 'vp', 'head_of', 'lead', 'expert'];
-    const levelYMap: Record<HierarchyLevel, number> = {
-      c_level: 80,
-      vp: 250,
-      head_of: 430,
-      lead: 610,
-      expert: 790
-    };
+  /**
+   * La disposition : une rangée par niveau, chacune centrée sur le même axe.
+   *
+   * Les rangées étaient alignées à gauche et espacées proportionnellement à
+   * leur effectif : une rangée de dix experts s'étirait sur six mille pixels
+   * pendant qu'une rangée de deux dirigeants tenait dans neuf cents. Rien ne
+   * se lisait comme une hiérarchie, et la moitié du monde était hors champ.
+   */
+  const layout = useMemo(() => {
+    const byRow = new Map<Row, AgentCustomData[]>();
+    for (const agent of agents) {
+      const row = rowOf(agent.hierarchyLevel);
+      const list = byRow.get(row);
+      if (list) list.push(agent);
+      else byRow.set(row, [agent]);
+    }
 
-    const newPositions: Record<string, NodePosition> = {};
+    const filled = ROWS.filter((row) => (byRow.get(row)?.length ?? 0) > 0);
+    const widthOf = (count: number) => count * NODE_W + (count - 1) * COL_GAP;
+    const widest = Math.max(NODE_W, ...filled.map((row) => widthOf(byRow.get(row)!.length)));
 
-    levelOrder.forEach(lvl => {
-      const levelAgents = agents.filter(a => (a.hierarchyLevel || 'lead') === lvl);
-      const count = levelAgents.length;
-      const totalWidth = Math.max(900, count * 280);
-      const spacing = totalWidth / (count + 1);
-
-      levelAgents.forEach((agent, index) => {
-        newPositions[agent.id] = {
-          x: (index + 1) * spacing + 50,
-          y: levelYMap[lvl]
-        };
+    const positions: Record<string, NodePosition> = {};
+    let y = 0;
+    for (const row of filled) {
+      const list = byRow.get(row)!;
+      const startX = (widest - widthOf(list.length)) / 2;
+      list.forEach((agent, index) => {
+        positions[agent.id] = { x: startX + index * (NODE_W + COL_GAP), y };
       });
-    });
+      y += NODE_H + ROW_GAP;
+    }
 
-    setNodePositions(newPositions);
+    return {
+      positions,
+      width: widest + NODE_W,
+      height: Math.max(NODE_H, y - ROW_GAP) + NODE_H
+    };
   }, [agents]);
+
+  /** Cadre la vue pour que tout le monde tienne à l'écran. */
+  const fit = useCallback(() => {
+    const box = containerRef.current?.getBoundingClientRect();
+    const points = Object.values(layout.positions);
+    if (!box || box.width === 0 || points.length === 0) return;
+
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x)) + NODE_W;
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y)) + NODE_H;
+
+    const pad = 28;
+    const legend = box.width > 640 ? LEGEND_W : 0;
+    const availableW = Math.max(120, box.width - legend - pad);
+    const availableH = Math.max(120, box.height - pad * 2);
+
+    const next = clamp(Math.min(availableW / (maxX - minX), availableH / (maxY - minY)), 0.2, 1.1);
+    setZoom(next);
+    setPan({
+      x: legend + (availableW - (maxX - minX) * next) / 2 - minX * next,
+      y: pad + Math.max(0, (availableH - (maxY - minY) * next) / 2) - minY * next
+    });
+  }, [layout]);
+
+  useEffect(() => {
+    setNodePositions(layout.positions);
+  }, [layout]);
+
+  // Le cadrage attend que le conteneur ait une largeur : au premier rendu il
+  // n'en a pas encore, et le calcul retomberait sur un zoom absurde.
+  useEffect(() => {
+    const frame = requestAnimationFrame(fit);
+    window.addEventListener('resize', fit);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', fit);
+    };
+  }, [fit]);
 
   // Pan & Zoom handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -106,7 +166,7 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-    setZoom(prev => Math.min(Math.max(0.4, prev * zoomFactor), 1.8));
+    setZoom(prev => clamp(prev * zoomFactor, 0.2, 1.8));
   };
 
   const handleNodeMouseDown = (e: React.MouseEvent, agentId: string) => {
@@ -126,18 +186,16 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
     }
   };
 
-  const resetView = () => {
-    setZoom(0.85);
-    setPan({ x: 50, y: 30 });
-  };
-
-  const getLevelColor = (level: HierarchyLevel) => {
-    switch (level) {
+  const getLevelColor = (raw: unknown) => {
+    switch (rowOf(raw)) {
       case 'c_level': return { border: 'border-purple-500 ring-purple-500/20', bg: 'bg-purple-50', badge: 'bg-purple-600 text-white', label: '👑 C-Level' };
       case 'vp': return { border: 'border-indigo-500 ring-indigo-500/20', bg: 'bg-indigo-50', badge: 'bg-indigo-600 text-white', label: '💼 VP' };
       case 'head_of': return { border: 'border-blue-500 ring-blue-500/20', bg: 'bg-blue-50', badge: 'bg-blue-600 text-white', label: '🎖️ Head of' };
       case 'lead': return { border: 'border-emerald-500 ring-emerald-500/20', bg: 'bg-emerald-50', badge: 'bg-emerald-600 text-white', label: '📐 Lead' };
       case 'expert': return { border: 'border-teal-500 ring-teal-500/20', bg: 'bg-teal-50', badge: 'bg-teal-600 text-white', label: '⚡ Expert' };
+      // Un niveau écrit autrement que les cinq clés internes : l'agent reste
+      // visible et signalé, au lieu de disparaître de la disposition.
+      default: return { border: 'border-slate-400 ring-slate-400/20', bg: 'bg-slate-50', badge: 'bg-slate-500 text-white', label: '• Non classé' };
     }
   };
 
@@ -166,8 +224,6 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
       const cy2 = ty - Math.max(40, dy * 0.4);
       const pathD = `M ${sx} ${sy} C ${sx} ${cy1}, ${tx} ${cy2}, ${tx} ${ty}`;
 
-      const isActive = simulationActive && activeSimulationStep === idx;
-
       return {
         id: ch.id,
         pathD,
@@ -179,11 +235,10 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
         midY: (sy + ty) / 2,
         label: ch.payloadType,
         protocol: ch.protocol,
-        isActive,
         enabled: ch.enabled
       };
     }).filter(Boolean);
-  }, [channels, nodePositions, simulationActive, activeSimulationStep]);
+  }, [channels, nodePositions]);
 
   return (
     <div className="relative w-full h-[650px] bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl select-none">
@@ -201,7 +256,7 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
       {/* Floating Canvas Controls */}
       <div className="absolute top-4 right-4 z-30 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 p-1.5 rounded-xl shadow-lg text-xs">
         <button
-          onClick={() => setZoom(prev => Math.min(prev + 0.15, 1.8))}
+          onClick={() => setZoom(prev => clamp(prev + 0.15, 0.2, 1.8))}
           className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center justify-center transition-colors"
           title="Zoom +"
         >
@@ -211,17 +266,18 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
           {Math.round(zoom * 100)}%
         </span>
         <button
-          onClick={() => setZoom(prev => Math.max(prev - 0.15, 0.4))}
+          onClick={() => setZoom(prev => clamp(prev - 0.15, 0.2, 1.8))}
           className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center justify-center transition-colors"
           title="Zoom -"
         >
           -
         </button>
         <button
-          onClick={resetView}
+          onClick={fit}
+          title="Cadrer sur l'ensemble des agents"
           className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-[11px] transition-colors"
         >
-          Centrer
+          Tout voir
         </button>
       </div>
 
@@ -253,8 +309,10 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: '0 0',
             transition: isPanning || draggingNodeId ? 'none' : 'transform 0.15s ease-out',
-            width: '2400px',
-            height: '1400px',
+            // Mesuré sur la disposition, pas figé à 2400 × 1400 : au-delà, les
+            // liens SVG étaient tronqués et les nœuds sortaient du calque.
+            width: `${layout.width}px`,
+            height: `${layout.height}px`,
             position: 'relative'
           }}
         >
@@ -276,52 +334,22 @@ export const EnterpriseNetworkGraph: React.FC<Props> = ({
               if (!ch) return null;
               return (
                 <g key={ch.id}>
-                  {/* Outer Glow Path for Active Channel */}
-                  {ch.isActive && (
-                    <path
-                      d={ch.pathD}
-                      fill="none"
-                      stroke="#818cf8"
-                      strokeWidth="6"
-                      strokeOpacity="0.6"
-                      filter="url(#glow)"
-                      strokeDasharray="8 4"
-                      className="animate-pulse"
-                    />
-                  )}
-
-                  {/* Main Curved Path */}
+                  {/* Le lien. Un canal désactivé est pointillé, pas invisible. */}
                   <path
                     d={ch.pathD}
                     fill="none"
-                    stroke={ch.isActive ? 'url(#line-gradient-active)' : ch.enabled ? '#475569' : '#1e293b'}
-                    strokeWidth={ch.isActive ? '3.5' : '1.8'}
+                    stroke={ch.enabled ? '#475569' : '#1e293b'}
+                    strokeWidth="1.8"
                     strokeDasharray={ch.enabled ? 'none' : '4 4'}
                   />
 
-                  {/* Animated Data Particle moving along path */}
-                  {ch.isActive && (
-                    <circle r="4.5" fill="#38bdf8" filter="url(#glow)">
-                      <animateMotion path={ch.pathD} dur="1.2s" repeatCount="indefinite" />
-                    </circle>
-                  )}
-
-                  {/* Connection Payload Label */}
+                  {/* Ce qui transite */}
                   <g transform={`translate(${ch.midX}, ${ch.midY})`}>
-                    <rect
-                      x="-55"
-                      y="-11"
-                      width="110"
-                      height="22"
-                      rx="6"
-                      fill="#0f172a"
-                      stroke={ch.isActive ? '#6366f1' : '#334155'}
-                      strokeWidth="1"
-                    />
+                    <rect x="-55" y="-11" width="110" height="22" rx="6" fill="#0f172a" stroke="#334155" strokeWidth="1" />
                     <text
                       textAnchor="middle"
                       dy="4"
-                      fill={ch.isActive ? '#a5b4fc' : '#94a3b8'}
+                      fill="#94a3b8"
                       fontSize="9"
                       fontFamily="monospace"
                       fontWeight="bold"

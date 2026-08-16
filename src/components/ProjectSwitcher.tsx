@@ -1,67 +1,89 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { getStoredVentures, getActiveProjectId, saveStoredVentures, setActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
 
+/**
+ * Le choix du produit courant.
+ *
+ * C'était un `<select>` natif. Un `<option>` est dessiné par le système, pas
+ * par la page : sous l'ambiance sombre du bureau virtuel, la liste déroulée
+ * restait un aplat gris illisible qu'aucune feuille de style ne pouvait
+ * rattraper. Une liste en éléments ordinaires, elle, hérite du thème comme le
+ * reste de la barre.
+ *
+ * Le badge d'état a disparu avec elle : il affichait « canary » — un régime de
+ * déploiement progressif qui n'existe nulle part dans l'agence.
+ */
 export const ProjectSwitcher: React.FC = () => {
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeId, setActiveId] = useState<string>('');
-  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [open, setOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
 
   const loadData = () => {
-    const v = getStoredVentures();
-    setVentures(v);
-    const active = getActiveProjectId();
-    setActiveId(active || v[0]?.id || '');
+    const list = getStoredVentures();
+    setVentures(list);
+    setActiveId(getActiveProjectId() || list[0]?.id || '');
   };
 
   useEffect(() => {
     loadData();
 
-    const handleVenturesUpdated = () => loadData();
-    const handleActiveChanged = (e: any) => {
-      if (e.detail?.id) setActiveId(e.detail.id);
+    const onVentures = () => loadData();
+    const onActive = (event: any) => {
+      if (event.detail?.id) setActiveId(event.detail.id);
+    };
+    const onWizard = () => setIsModalOpen(true);
+    /** Cliquer ailleurs referme : sinon la liste reste ouverte sur la page. */
+    const onClickAway = (event: MouseEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
     };
 
-    window.addEventListener('ventures-updated', handleVenturesUpdated);
-    window.addEventListener('active-project-changed', handleActiveChanged);
-    window.addEventListener('open-factory-wizard', () => setIsModalOpen(true));
+    window.addEventListener('ventures-updated', onVentures);
+    window.addEventListener('active-project-changed', onActive);
+    window.addEventListener('open-factory-wizard', onWizard);
+    document.addEventListener('mousedown', onClickAway);
+    document.addEventListener('keydown', onEscape);
 
     return () => {
-      window.removeEventListener('ventures-updated', handleVenturesUpdated);
-      window.removeEventListener('active-project-changed', handleActiveChanged);
+      window.removeEventListener('ventures-updated', onVentures);
+      window.removeEventListener('active-project-changed', onActive);
+      window.removeEventListener('open-factory-wizard', onWizard);
+      document.removeEventListener('mousedown', onClickAway);
+      document.removeEventListener('keydown', onEscape);
     };
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val === '__new__') {
-      setIsModalOpen(true);
-    } else {
-      setActiveId(val);
-      setActiveProjectId(val);
-    }
+  const select = (id: string) => {
+    setActiveId(id);
+    setActiveProjectId(id);
+    setOpen(false);
   };
 
-  const handleCreateVenture = (newVenture: Venture) => {
+  const handleCreateVenture = (created: Venture) => {
     // Le projet doit être ÉCRIT, pas seulement mis dans l'état du composant :
     // sans ça il disparaissait au premier rechargement.
-    const updated = [newVenture, ...getStoredVentures()];
+    const updated = [created, ...getStoredVentures()];
     saveStoredVentures(updated);
     setVentures(updated);
-    setActiveId(newVenture.id);
-    setActiveProjectId(newVenture.id);
+    setActiveId(created.id);
+    setActiveProjectId(created.id);
   };
 
-  const currentVenture = ventures.find(v => v.id === activeId) || ventures[0];
+  const current = ventures.find((entry) => entry.id === activeId) ?? ventures[0];
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase tracking-wider px-1">
-        <span>Projet Actif</span>
+    <div className="space-y-1.5" ref={root}>
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-slate-400">Projet actif</span>
         <button
           onClick={() => setIsModalOpen(true)}
-          className="text-indigo-600 hover:text-indigo-800 text-xs font-bold"
+          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
           title="Créer un nouveau projet"
         >
           + Nouveau
@@ -69,35 +91,89 @@ export const ProjectSwitcher: React.FC = () => {
       </div>
 
       <div className="relative">
-        <select
-          value={activeId || ''}
-          onChange={handleChange}
-          className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-lg py-2.5 pl-3 pr-8 focus:outline-none focus:border-indigo-600 appearance-none cursor-pointer"
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="flex w-full items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-left hover:bg-slate-100"
         >
-          {ventures.map(v => (
-            <option key={v.id} value={v.id}>
-              {v.name} ({v.type.toUpperCase()})
-            </option>
-          ))}
-          <option value="__new__">+ Créer un nouveau projet...</option>
-        </select>
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-500 text-xs">
-          ▼
-        </div>
-      </div>
+          {current ? (
+            <>
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-600 text-[10px] font-black text-white">
+                {current.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold text-slate-900">{current.name}</span>
+                <span className="block truncate font-mono text-[10px] text-slate-500">
+                  {current.domain || current.type}
+                </span>
+              </span>
+            </>
+          ) : (
+            <span className="flex-1 text-xs font-semibold text-slate-500">Aucun projet</span>
+          )}
+          <span className={`shrink-0 text-[9px] text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+        </button>
 
-      {currentVenture && (
-        <div className="px-1 text-[11px] text-slate-500 flex items-center justify-between font-mono">
-          <span className="truncate max-w-[150px]">{currentVenture.domain}</span>
-          <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${
-            currentVenture.status === 'live' ? 'bg-emerald-100 text-emerald-800' :
-            currentVenture.status === 'canary' ? 'bg-amber-100 text-amber-800' :
-            'bg-slate-200 text-slate-700'
-          }`}>
-            {currentVenture.status}
-          </span>
-        </div>
-      )}
+        {open && (
+          <div
+            data-nav-popover
+            className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-lg"
+          >
+            <div className="max-h-64 overflow-y-auto">
+              {ventures.length === 0 && (
+                <p className="px-3 py-3 text-center text-[11px] text-slate-500">Aucun projet pour l'instant.</p>
+              )}
+              {ventures.map((venture) => {
+                const active = venture.id === activeId;
+                return (
+                  <button
+                    key={venture.id}
+                    type="button"
+                    onClick={() => select(venture.id)}
+                    className={`flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-slate-50 ${
+                      active ? 'bg-indigo-50' : ''
+                    }`}
+                  >
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[9px] font-black text-white ${
+                        active ? 'bg-indigo-600' : 'bg-slate-400'
+                      }`}
+                    >
+                      {venture.name.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={`block truncate text-xs font-medium ${
+                          active ? 'text-indigo-700 font-semibold' : 'text-slate-800'
+                        }`}
+                      >
+                        {venture.name}
+                      </span>
+                      <span className="block truncate font-mono text-[9px] text-slate-500">
+                        {venture.type} · {venture.businessModel}
+                      </span>
+                    </span>
+                    {active && <span className="shrink-0 text-[10px] text-indigo-600">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setIsModalOpen(true);
+              }}
+              className="flex w-full items-center gap-2 border-t border-slate-200 px-2.5 py-2 text-xs font-semibold text-indigo-600 hover:bg-slate-50"
+            >
+              <span className="text-sm leading-none">+</span>
+              <span>Créer un nouveau projet</span>
+            </button>
+          </div>
+        )}
+      </div>
 
       <VentureFactoryModal
         isOpen={isModalOpen}
