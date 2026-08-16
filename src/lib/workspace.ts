@@ -12,6 +12,7 @@
  * n'importe quel atelier puisse le lire et l'enrichir.
  */
 
+import { forgetVersions, snapshot } from './doc-versions';
 import type { PhaseId } from './pipeline';
 
 const KEYS = {
@@ -210,6 +211,10 @@ export function writeDocs(docs: Doc[]): void {
 export function upsertDoc(doc: Partial<Doc> & { title: string; body: string; path: string }): Doc {
   const docs = readDocs();
   const existing = doc.id ? docs.find((entry) => entry.id === doc.id) : undefined;
+
+  // On archive l'état précédent avant de l'écraser : une page réécrite sans
+  // trace, c'est la raison du changement qui disparaît avec elle.
+  if (existing) snapshot(existing.id, existing, { body: doc.body });
   const entry: Doc = {
     id: existing?.id ?? uid('doc'),
     title: doc.title,
@@ -229,6 +234,7 @@ export function upsertDoc(doc: Partial<Doc> & { title: string; body: string; pat
 
 export function removeDoc(id: string): void {
   writeDocs(readDocs().filter((doc) => doc.id !== id));
+  forgetVersions(id);
 }
 
 /* ── Design system ───────────────────────────────────────── */

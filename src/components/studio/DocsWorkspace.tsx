@@ -1,344 +1,502 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { saveRealAgentLog } from '../../lib/agent-bus';
+import { agentPayload } from '../../lib/agent-profile';
 import { readCulture } from '../../lib/culture';
-import { readGraph } from '../../lib/hiring';
+import { lineDiff, versionsOf, VERSIONS_EVENT, type DocVersion } from '../../lib/doc-versions';
+import { excerpt, outline, renderMarkdown } from '../../lib/markdown';
 import { readDocs, removeDoc, upsertDoc, WORKSPACE_EVENT, type Doc } from '../../lib/workspace';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 
-interface Review {
-  health: number;
-  summary: string;
-  issues: Array<{ docId: string; severity: string; problem: string; fix: string }>;
-  missing: Array<{ title: string; path: string; why: string }>;
-  reorganisation: Array<{ docId: string; currentPath: string; suggestedPath: string; why: string }>;
-  duplicates: Array<{ docIds: string[]; why: string }>;
-  modelUsed: string;
+interface ReviewFinding {
+  path: string;
+  title: string;
+  issue: string;
+  fix: string;
 }
 
-const SEVERITY_STYLE: Record<string, string> = {
-  bloquant: 'bg-rose-100 text-rose-700',
-  important: 'bg-amber-100 text-amber-800',
-  mineur: 'bg-slate-100 text-slate-600'
-};
+interface TreeNode {
+  name: string;
+  path: string;
+  children: Map<string, TreeNode>;
+  docs: Doc[];
+}
+
+/** Construit l'arborescence à partir des chemins : « Produits/PriceWatch/Specs ». */
+function buildTree(docs: Doc[]): TreeNode {
+  const root: TreeNode = { name: '', path: '', children: new Map(), docs: [] };
+
+  for (const doc of docs) {
+    const segments = (doc.path || 'Général').split('/').map((entry) => entry.trim()).filter(Boolean);
+    let node = root;
+    let path = '';
+    for (const segment of segments) {
+      path = path ? `${path}/${segment}` : segment;
+      if (!node.children.has(segment)) {
+        node.children.set(segment, { name: segment, path, children: new Map(), docs: [] });
+      }
+      node = node.children.get(segment) as TreeNode;
+    }
+    node.docs.push(doc);
+  }
+  return root;
+}
 
 /**
- * Base de connaissance de l'agence.
+ * L'atelier documentaire.
  *
- * Chaque agent y dépose ce qu'il produit ; le documentaliste la relit, signale
- * ce qui manque et propose un rangement. C'est le troisième pilier de la maison
- * rendu opérationnel : sans écrit, le travail n'est reprenable par personne.
+ * Une base de connaissance ne vaut que si on y retrouve les choses : d'où
+ * l'arborescence à gauche, dossiers et sous-pages, et la page en pleine largeur
+ * à droite — lue en markdown rendu, pas en texte brut criblé de dièses.
+ *
+ * Deux mécanismes tiennent la cohérence dans le temps. L'historique conserve
+ * chaque état remplacé, avec son auteur et l'ampleur du changement : une page
+ * réécrite ne perd plus la raison pour laquelle elle disait autre chose. Et le
+ * documentaliste relit l'ensemble pour signaler ce qui se contredit — c'est le
+ * pilier « process power » rendu opérant plutôt qu'affiché.
  */
 export const DocsWorkspace: React.FC = () => {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [path, setPath] = useState('');
-  const [body, setBody] = useState('');
-  const [review, setReview] = useState<Review | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ title: '', path: '', body: '' });
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [panel, setPanel] = useState<'sommaire' | 'historique'>('sommaire');
+  const [compare, setCompare] = useState<DocVersion | null>(null);
+  const [versions, setVersions] = useState<DocVersion[]>([]);
+
+  const [reviewing, setReviewing] = useState(false);
+  const [findings, setFindings] = useState<ReviewFinding[]>([]);
+  const [reviewNote, setReviewNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => setDocs(readDocs()), []);
 
   useEffect(() => {
     refresh();
-    const handler = () => refresh();
-    window.addEventListener(WORKSPACE_EVENT, handler);
-    return () => window.removeEventListener(WORKSPACE_EVENT, handler);
+    window.addEventListener(WORKSPACE_EVENT, refresh);
+    return () => window.removeEventListener(WORKSPACE_EVENT, refresh);
   }, [refresh]);
 
-  const selected = useMemo(() => docs.find((doc) => doc.id === selectedId) ?? null, [docs, selectedId]);
+  const selected = docs.find((doc) => doc.id === selectedId) ?? null;
 
-  const open = (doc: Doc) => {
-    setSelectedId(doc.id);
-    setTitle(doc.title);
-    setPath(doc.path);
-    setBody(doc.body);
-  };
+  useEffect(() => {
+    const sync = () => setVersions(selected ? versionsOf(selected.id) : []);
+    sync();
+    window.addEventListener(VERSIONS_EVENT, sync);
+    return () => window.removeEventListener(VERSIONS_EVENT, sync);
+  }, [selected?.id]);
 
-  const blank = () => {
-    setSelectedId(null);
-    setTitle('');
-    setPath('Général');
-    setBody('');
+  // Ouvrir directement une page depuis un lien : /studio?doc=…
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('doc');
+    if (wanted && docs.some((doc) => doc.id === wanted)) setSelectedId(wanted);
+    else if (!selectedId && docs.length > 0) setSelectedId(docs[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs.length]);
+
+  const tree = useMemo(() => buildTree(docs), [docs]);
+  const rendered = useMemo(() => (selected ? renderMarkdown(selected.body) : ''), [selected?.body, selected?.id]);
+  const headings = useMemo(() => (selected ? outline(selected.body) : []), [selected?.body, selected?.id]);
+
+  const toggle = (path: string) =>
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+
+  const startEdit = () => {
+    if (!selected) return;
+    setDraft({ title: selected.title, path: selected.path, body: selected.body });
+    setEditing(true);
   };
 
   const save = () => {
-    if (title.trim().length < 2) return;
-    const doc = upsertDoc({
-      id: selectedId ?? undefined,
-      title: title.trim(),
-      path: path.trim() || 'Général',
-      body,
-      authorId: 'operator',
-      authorName: 'Opérateur'
+    if (!selected) return;
+    upsertDoc({
+      ...selected,
+      title: draft.title.trim() || selected.title,
+      path: draft.path.trim() || selected.path,
+      body: draft.body
     });
-    setSelectedId(doc.id);
+    setEditing(false);
     refresh();
   };
 
-  /** Arborescence : on regroupe par chemin, c'est le rangement du documentaliste. */
-  const tree = useMemo(() => {
-    const groups: Record<string, Doc[]> = {};
-    for (const doc of docs) {
-      groups[doc.path] = groups[doc.path] ?? [];
-      groups[doc.path].push(doc);
-    }
-    return groups;
-  }, [docs]);
+  const createPage = (parentPath: string) => {
+    const doc = upsertDoc({
+      title: 'Nouvelle page',
+      path: parentPath || 'Général',
+      body: '# Nouvelle page\n\nÉcrivez ici.',
+      authorId: 'operator',
+      authorName: 'Opérateur'
+    });
+    refresh();
+    setSelectedId(doc.id);
+    setDraft({ title: doc.title, path: doc.path, body: doc.body });
+    setEditing(true);
+  };
 
-  const askReview = async () => {
-    if (docs.length === 0 || busy) return;
-    setBusy(true);
+  const restore = (version: DocVersion) => {
+    if (!selected) return;
+    upsertDoc({ ...selected, body: version.body });
+    setCompare(null);
+    refresh();
+  };
+
+  /** Le documentaliste relit l'ensemble et signale ce qui se contredit. */
+  const review = async () => {
+    if (docs.length === 0 || reviewing) return;
+    setReviewing(true);
     setError(null);
-    const documentalist = readGraph().find((agent) => agent.id === 'doc_agent');
+    setFindings([]);
 
     try {
       const res = await fetch('/api/docs/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          docs: docs.map((doc) => ({
-            id: doc.id,
-            title: doc.title,
-            path: doc.path,
-            excerpt: doc.body.slice(0, 800),
-            updatedAt: doc.updatedAt
-          })),
-          persona: documentalist?.ameMd,
-          job: documentalist?.jobMd,
-          model: documentalist?.modelId,
-          temperature: documentalist?.temperature,
+          docs: docs.map((doc) => ({ title: doc.title, path: doc.path, body: doc.body.slice(0, 4000) })),
           culture: readCulture(),
+          ...agentPayload('docsReview'),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })
       });
-      const json = (await res.json()) as { review?: Review; error?: string };
-      if (!res.ok || json.error || !json.review) throw new Error(json.error ?? `Erreur ${res.status}`);
+      const json = (await res.json()) as { findings?: ReviewFinding[]; note?: string; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? `Erreur ${res.status}`);
 
-      setReview(json.review);
-      saveRealAgentLog({
-        fromAgentId: 'doc_agent',
-        fromAgentName: 'Basile (Documentaliste)',
-        toAgentId: 'master',
-        toAgentName: 'Victoria (CEO)',
-        actionSummary: `Documentation relue — santé ${json.review.health}/100`,
-        bubbleText: `📚 ${json.review.issues.length} points à corriger`,
-        payloadSummary: json.review.summary.slice(0, 200),
-        costUsd: 0.0006,
-        modelUsed: json.review.modelUsed
-      });
+      setFindings(json.findings ?? []);
+      setReviewNote(json.note ?? `${(json.findings ?? []).length} point(s) à corriger.`);
+
+      // La relecture se date sur chaque page : on saura ce qui n'a plus été vu.
+      const at = Date.now();
+      for (const doc of docs) {
+        const finding = (json.findings ?? []).find((entry) => entry.title === doc.title || entry.path === doc.path);
+        upsertDoc({ ...doc, reviewedAt: at, reviewNote: finding?.issue });
+      }
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Relecture impossible');
     } finally {
-      setBusy(false);
+      setReviewing(false);
     }
   };
 
-  /** Applique un rangement proposé : c'est du déplacement, pas de la réécriture. */
-  const applyMove = (docId: string, suggestedPath: string) => {
-    const doc = docs.find((entry) => entry.id === docId);
-    if (!doc) return;
-    upsertDoc({ ...doc, path: suggestedPath });
-    refresh();
-  };
-
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
-      {/* Arborescence */}
-      <div className={`${CARD} h-fit p-3`}>
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-slate-900">📓 Documents</h2>
+  /** Une branche de l'arborescence, dossiers puis pages. */
+  const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
+    const isCollapsed = collapsed.has(node.path);
+    return (
+      <li key={node.path}>
+        <div
+          className="group flex items-center gap-1 rounded px-1 py-0.5 hover:bg-slate-100"
+          style={{ paddingLeft: `${depth * 10}px` }}
+        >
           <button
             type="button"
-            onClick={blank}
-            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+            onClick={() => toggle(node.path)}
+            className="w-3 shrink-0 text-[9px] text-slate-400"
+            title={isCollapsed ? 'Déplier' : 'Replier'}
           >
-            + Nouveau
+            {isCollapsed ? '▸' : '▾'}
+          </button>
+          <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700">{node.name}</span>
+          <span className="text-[9px] text-slate-400">{node.docs.length || ''}</span>
+          <button
+            type="button"
+            onClick={() => createPage(node.path)}
+            title="Nouvelle page dans ce dossier"
+            className="shrink-0 text-[11px] text-slate-300 opacity-0 transition-opacity hover:text-indigo-600 group-hover:opacity-100"
+          >
+            +
           </button>
         </div>
 
-        {docs.length === 0 && <p className="text-[11px] italic text-slate-400">Base vide.</p>}
-
-        {Object.entries(tree).map(([group, entries]) => (
-          <div key={group} className="mb-2">
-            <p className="px-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{group}</p>
-            {entries.map((doc) => (
-              <button
-                key={doc.id}
-                type="button"
-                onClick={() => open(doc)}
-                className={`block w-full truncate rounded-lg px-2 py-1 text-left text-xs transition-colors ${
-                  selectedId === doc.id ? 'bg-indigo-50 font-semibold text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {doc.title}
-              </button>
-            ))}
-          </div>
-        ))}
-
-        <button
-          type="button"
-          onClick={() => void askReview()}
-          disabled={busy || docs.length === 0}
-          className="mt-2 w-full rounded-lg bg-slate-900 px-2 py-2 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-        >
-          {busy ? 'Basile relit…' : '🔍 Faire relire par Basile'}
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        {/* Éditeur */}
-        <div className={`${CARD} space-y-2 p-4`}>
-          <div className="flex flex-wrap gap-2">
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Titre du document"
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-900"
-            />
-            <input
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="Section/Sous-section"
-              className="w-56 rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs text-slate-700"
-            />
-          </div>
-
-          <textarea
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            rows={14}
-            placeholder="Contenu du document (markdown accepté)…"
-            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs leading-relaxed text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-          />
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={save}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
-            >
-              Enregistrer
-            </button>
-            {selected && (
-              <>
+        {!isCollapsed && (
+          <ul>
+            {[...node.children.values()]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((child) => renderNode(child, depth + 1))}
+            {node.docs.map((doc) => (
+              <li key={doc.id}>
                 <button
                   type="button"
                   onClick={() => {
+                    setSelectedId(doc.id);
+                    setEditing(false);
+                    setCompare(null);
+                  }}
+                  style={{ paddingLeft: `${(depth + 1) * 10 + 16}px` }}
+                  className={`flex w-full items-center gap-1.5 rounded py-0.5 pr-1 text-left transition-colors ${
+                    selectedId === doc.id ? 'bg-indigo-50 text-indigo-800' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <span className="text-[10px]">📄</span>
+                  <span className="min-w-0 flex-1 truncate text-[11px]">{doc.title}</span>
+                  {doc.reviewNote && <span title={doc.reviewNote} className="shrink-0 text-[9px] text-amber-500">●</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
+        <div>
+          <h1 className="text-lg font-bold text-slate-900">Base de connaissance</h1>
+          <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
+            Tout ce que l'agence écrit, rangé en dossiers et sous-pages. Chaque enregistrement conserve la version
+            d'avant, et le documentaliste relit l'ensemble pour signaler ce qui se contredit.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => createPage('Général')}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            + Page
+          </button>
+          <button
+            onClick={review}
+            disabled={reviewing || docs.length === 0}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {reviewing ? 'Relecture…' : '🔍 Relire la cohérence'}
+          </button>
+        </div>
+      </header>
+
+      {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
+      {reviewNote && findings.length === 0 && !reviewing && (
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{reviewNote}</p>
+      )}
+
+      {findings.length > 0 && (
+        <div className={`${CARD} p-3`}>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">
+            Incohérences relevées · {findings.length}
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {findings.map((finding, index) => (
+              <li key={index} className="text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = docs.find((doc) => doc.title === finding.title || doc.path === finding.path);
+                    if (target) setSelectedId(target.id);
+                  }}
+                  className="font-semibold text-slate-800 hover:text-indigo-700 hover:underline"
+                >
+                  {finding.title || finding.path}
+                </button>
+                <span className="text-slate-600"> — {finding.issue}</span>
+                {finding.fix && <span className="block text-[10px] text-slate-500">→ {finding.fix}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(0,1fr)_200px]">
+        {/* Arborescence */}
+        <aside className={`${CARD} max-h-[70vh] overflow-y-auto p-2`}>
+          {docs.length === 0 ? (
+            <p className="px-1 py-2 text-[11px] text-slate-400">Aucune page.</p>
+          ) : (
+            <ul>
+              {[...tree.children.values()]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((node) => renderNode(node, 0))}
+            </ul>
+          )}
+        </aside>
+
+        {/* La page */}
+        <article className={`${CARD} min-h-[50vh] p-6`}>
+          {!selected ? (
+            <p className="text-sm text-slate-400">Choisissez une page à gauche.</p>
+          ) : editing ? (
+            <div className="space-y-2">
+              <input
+                value={draft.title}
+                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-lg font-bold text-slate-900"
+              />
+              <input
+                value={draft.path}
+                onChange={(event) => setDraft({ ...draft, path: event.target.value })}
+                placeholder="Dossier/Sous-dossier"
+                className="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-[11px] text-slate-600"
+              />
+              <textarea
+                value={draft.body}
+                onChange={(event) => setDraft({ ...draft, body: event.target.value })}
+                rows={22}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs leading-relaxed text-slate-800 focus:bg-white focus:outline-none"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={save}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                >
+                  Enregistrer
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={() => {
                     removeDoc(selected.id);
-                    blank();
+                    setSelectedId(null);
+                    setEditing(false);
                     refresh();
                   }}
-                  className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                  className="ml-auto rounded-lg border border-rose-200 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50"
                 >
                   Supprimer
                 </button>
-                <span className="font-mono text-[10px] text-slate-400">
-                  {selected.authorName} · maj {new Date(selected.updatedAt).toLocaleString('fr-FR')}
-                </span>
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          ) : compare ? (
+            <div>
+              <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
+                <p className="text-xs font-semibold text-slate-700">
+                  Version du {new Date(compare.at).toLocaleString('fr-FR')} · {compare.authorName}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => restore(compare)}
+                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800"
+                  >
+                    Restaurer cette version
+                  </button>
+                  <button
+                    onClick={() => setCompare(null)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] text-slate-600"
+                  >
+                    Fermer
+                  </button>
+                </div>
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+                {lineDiff(compare.body, selected.body).map((line, index) => (
+                  <div
+                    key={index}
+                    className={
+                      line.kind === 'add'
+                        ? 'bg-emerald-50 text-emerald-900'
+                        : line.kind === 'del'
+                          ? 'bg-rose-50 text-rose-900 line-through'
+                          : 'text-slate-600'
+                    }
+                  >
+                    {line.kind === 'add' ? '+ ' : line.kind === 'del' ? '− ' : '  '}
+                    {line.text}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-[10px] text-slate-400">{selected.path}</p>
+                  <h2 className="text-2xl font-bold leading-tight text-slate-900">{selected.title}</h2>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {selected.authorName} · modifiée le {new Date(selected.updatedAt).toLocaleString('fr-FR')}
+                    {versions.length > 0 ? ` · ${versions.length} version(s) précédente(s)` : ''}
+                  </p>
+                  {selected.reviewNote && (
+                    <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                      Relecture : {selected.reviewNote}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={startEdit}
+                  className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  ✏️ Modifier
+                </button>
+              </div>
 
-          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">{error}</p>}
-        </div>
+              <div className="md-page" dangerouslySetInnerHTML={{ __html: rendered }} />
+            </div>
+          )}
+        </article>
 
-        {/* Relecture du documentaliste */}
-        {review && (
-          <div className={`${CARD} space-y-3 p-4`}>
-            <div className="flex flex-wrap items-baseline gap-2">
-              <h3 className="text-sm font-bold text-slate-900">Relecture de Basile</h3>
-              <span
-                className={`rounded px-2 py-0.5 font-mono text-[11px] font-bold ${
-                  review.health >= 70
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : review.health >= 40
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-rose-100 text-rose-700'
+        {/* Sommaire et historique */}
+        <aside className={`${CARD} max-h-[70vh] overflow-y-auto p-2`}>
+          <div className="mb-2 flex gap-1">
+            {(
+              [
+                ['sommaire', 'Sommaire'],
+                ['historique', `Historique${versions.length ? ` (${versions.length})` : ''}`]
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setPanel(id)}
+                className={`flex-1 rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
+                  panel === id ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'
                 }`}
               >
-                santé {review.health}/100
-              </span>
-              <span className="font-mono text-[10px] text-slate-400">{review.modelUsed}</span>
-            </div>
-            <p className="text-xs text-slate-700">{review.summary}</p>
-
-            {review.issues.length > 0 && (
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">À corriger</p>
-                <ul className="mt-1 space-y-1">
-                  {review.issues.map((issue, index) => (
-                    <li key={index} className="rounded border border-slate-200 p-2 text-[11px]">
-                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${SEVERITY_STYLE[issue.severity] ?? SEVERITY_STYLE.mineur}`}>
-                        {issue.severity}
-                      </span>
-                      <span className="ml-1.5 text-slate-700">{issue.problem}</span>
-                      <span className="mt-0.5 block text-emerald-700">→ {issue.fix}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {review.missing.length > 0 && (
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Documents manquants</p>
-                <ul className="mt-1 space-y-1 text-[11px]">
-                  {review.missing.map((entry, index) => (
-                    <li key={index} className="flex flex-wrap items-baseline gap-1.5">
-                      <strong className="text-slate-800">{entry.title}</strong>
-                      <span className="font-mono text-[10px] text-slate-400">{entry.path}</span>
-                      <span className="text-slate-500">— {entry.why}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const doc = upsertDoc({
-                            title: entry.title,
-                            path: entry.path,
-                            body: `> À rédiger. ${entry.why}\n`,
-                            authorId: 'doc_agent',
-                            authorName: 'Basile (Documentaliste)'
-                          });
-                          open(doc);
-                          refresh();
-                        }}
-                        className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
-                      >
-                        créer
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {review.reorganisation.length > 0 && (
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Rangement proposé</p>
-                <ul className="mt-1 space-y-1 text-[11px]">
-                  {review.reorganisation.map((entry, index) => (
-                    <li key={index} className="flex flex-wrap items-baseline gap-1.5">
-                      <span className="font-mono text-[10px] text-slate-400">
-                        {entry.currentPath} → {entry.suggestedPath}
-                      </span>
-                      <span className="text-slate-500">{entry.why}</span>
-                      <button
-                        type="button"
-                        onClick={() => applyMove(entry.docId, entry.suggestedPath)}
-                        className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
-                      >
-                        appliquer
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+                {label}
+              </button>
+            ))}
           </div>
-        )}
+
+          {panel === 'sommaire' ? (
+            headings.length === 0 ? (
+              <p className="px-1 text-[10px] text-slate-400">Aucun titre.</p>
+            ) : (
+              <ul className="space-y-0.5">
+                {headings.map((heading) => (
+                  <li key={heading.slug} style={{ paddingLeft: `${(heading.level - 1) * 8}px` }}>
+                    <span className="block truncate text-[10.5px] text-slate-600" title={heading.text}>
+                      {heading.text}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : versions.length === 0 ? (
+            <p className="px-1 text-[10px] text-slate-400">Aucune version antérieure.</p>
+          ) : (
+            <ul className="space-y-1">
+              {versions.map((version, index) => (
+                <li key={index}>
+                  <button
+                    type="button"
+                    onClick={() => setCompare(version)}
+                    className="w-full rounded border border-slate-200 px-1.5 py-1 text-left hover:border-indigo-400"
+                  >
+                    <span className="block text-[10px] text-slate-700">
+                      {new Date(version.at).toLocaleString('fr-FR')}
+                    </span>
+                    <span className="block truncate text-[9.5px] text-slate-400">{version.authorName}</span>
+                    <span className="block font-mono text-[9px]">
+                      <span className="text-emerald-600">+{version.delta.added}</span>{' '}
+                      <span className="text-rose-600">−{version.delta.removed}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {selected && !editing && (
+            <p className="mt-2 border-t border-slate-100 pt-2 text-[9.5px] text-slate-400">{excerpt(selected.body)}</p>
+          )}
+        </aside>
       </div>
     </div>
   );
