@@ -112,18 +112,22 @@ function spreadToWorkspaces(dossier: Dossier): void {
     ].join('\n')
   });
 
+  // Les fonctionnalités du MVP entrent par la discovery : elles doivent être
+  // spécifiées avant d'être maquettées, et maquettées avant d'être codées.
   for (const feature of dossier.product.mvpFeatures) {
     addTask({
       title: feature,
       status: 'todo',
       priority: 'haute',
-      assigneeId: 'lead_dev',
-      assigneeName: 'Head of Architecture',
       source: dossier.name,
+      phase: 'discovery',
+      cycle: 1,
       detail: `MVP de ${dossier.name}`
     });
   }
 
+  // L'acquisition se joue une fois le produit en ligne : elle attend l'étape
+  // de mesure, avec le CRO et la data.
   for (const channel of dossier.growth.acquisition) {
     addTask({
       title: `${channel.channel} — ${channel.firstAction || channel.angle}`,
@@ -132,6 +136,8 @@ function spreadToWorkspaces(dossier: Dossier): void {
       assigneeId: 'copywriter_agent',
       assigneeName: 'Lead Copywriting',
       source: dossier.name,
+      phase: 'measure',
+      cycle: 1,
       labels: ['acquisition']
     });
   }

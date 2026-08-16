@@ -12,6 +12,8 @@
  * n'importe quel atelier puisse le lire et l'enrichir.
  */
 
+import type { PhaseId } from './pipeline';
+
 const KEYS = {
   tasks: 'omniventure_tasks_v1',
   messages: 'omniventure_messages_v1',
@@ -39,6 +41,10 @@ export interface Task {
   assigneeName?: string;
   /** D'où vient la tâche : projet, recrutement, harnais, atelier… */
   source?: string;
+  /** Étape de la chaîne de valeur. Absent = tâche hors chaîne. */
+  phase?: PhaseId;
+  /** Cycle d'amélioration qui l'a produite : 1 pour la première traversée. */
+  cycle?: number;
   labels: string[];
   createdAt: number;
   updatedAt: number;
