@@ -29,6 +29,8 @@ import { productionTools } from './production-tools';
 import { cultureBlock, readCulture } from './culture';
 import { type Autonomy } from './harness-client';
 import { readGraph, type GraphAgent } from './hiring';
+import { lifecycleBlock, readLifecycle, type LifecycleState } from './lifecycle';
+import { stackBlock } from './stacks';
 import { parseModelJson } from './model-json';
 import { roadmapOf, updateItem } from './roadmap';
 import { handoffPrompt, PHASES, phaseById, phaseIndex, type Phase, type PhaseId } from './pipeline';
@@ -261,7 +263,15 @@ async function drive(venture: { id: string; name: string; slug: string }, openRo
   const dossier = readDocs().find((doc) => doc.path === `Produits/${venture.name}`)?.body ?? '';
   const catalogue = await fetchTools(start.provider, start.autonomy);
 
-  const context = { venture, graph, culture, dossier, catalogue, openRouterKey };
+  const context = {
+    venture,
+    graph,
+    culture,
+    dossier,
+    lifecycle: readLifecycle(venture.id),
+    catalogue,
+    openRouterKey
+  };
 
   let handled = 0;
   let consecutiveFailures = 0;
@@ -336,6 +346,8 @@ interface Context {
   graph: GraphAgent[];
   culture: string;
   dossier: string;
+  /** Où en est le produit : commande ce qui vaut la peine d'être fait. */
+  lifecycle: LifecycleState;
   catalogue: Awaited<ReturnType<typeof fetchTools>>;
   openRouterKey: string;
 }
@@ -758,6 +770,13 @@ function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy)
 
   return [
     `[PROJET] ${context.venture.name}`,
+    // Où en est le produit, puis sur quoi il tourne : ces deux cadres passent
+    // avant le reste, parce qu'ils déterminent ce qui vaut la peine d'être fait
+    // et ce qui est seulement possible ailleurs.
+    lifecycleBlock(context.lifecycle),
+    '',
+    stackBlock(context.lifecycle.stack),
+    '',
     context.dossier ? `[DOSSIER DE LANCEMENT]\n${context.dossier.slice(0, 2000)}` : '',
     amont ? `[CE QUE L'ÉTAPE PRÉCÉDENTE A PRODUIT]\n${amont.slice(0, 3000)}` : '',
     '',

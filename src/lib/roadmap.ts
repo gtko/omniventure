@@ -26,6 +26,7 @@ import { runAgent } from './agent-sdk';
 import { cultureBlock, readCulture } from './culture';
 import type { GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
+import { lifecycleBlock, lifecycleOfVenture } from './lifecycle';
 import type { PhaseId } from './pipeline';
 
 export type Horizon = 'maintenant' | 'ensuite' | 'plus-tard';

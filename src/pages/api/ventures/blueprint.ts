@@ -20,6 +20,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { stackBlock, stackFor } from '../../../lib/stacks';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 import { askModelJson } from '../../../lib/model-json';
 import { collectEvidence, detectTech } from '../market/analyze';
@@ -139,6 +140,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     openRouterKey?: string;
     graph?: GraphAgentInput[];
     culture?: CulturePillar[];
+    /** Détermine la pile imposée : tout doit tourner sur Cloudflare. */
+    ventureType?: string;
   };
 
   const idea = body.idea?.trim() ?? '';
@@ -290,7 +293,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
             agent: agentOf('lead_dev'),
             fallbackRole: STEPS[3].fallbackRole,
             culture,
-            instruction: `${marketContext}\n\n[MISSION]\nDécoupe le produit : ce que contient le MVP (livrable en moins de 3 jours sur Astro + Cloudflare D1/Workers), ce qu'on écarte volontairement, et les briques techniques à prévoir.`,
+            instruction: `${marketContext}\n\n${stackBlock(stackFor(body.ventureType))}\n\n[MISSION]\nDécoupe le produit : ce que contient le MVP (livrable en moins de 3 jours), ce qu'on écarte volontairement, et les briques techniques à prévoir.
+Les briques que tu listes doivent sortir du cadre technique ci-dessus : une brique hors cadre rend le produit indéployable.`,
             shape: `{
   "mvpFeatures": ["fonctionnalite (4 a 6)"],
   "outOfScope": ["ce qu'on ne fait pas au depart (2 a 4)"],

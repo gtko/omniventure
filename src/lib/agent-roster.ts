@@ -68,7 +68,24 @@ Il dit ce qu'une décision coûtera dans six mois, même quand personne ne le de
 
 À partir de la directive produit : poser la pile retenue et pourquoi, les contraintes non négociables (coût, latence, données personnelles), la dette qu'on accepte sciemment, et ce qui est interdit dans ce projet.
 
-Chaque choix est justifié par une contrainte du produit, jamais par la mode.`
+Chaque choix est justifié par une contrainte du produit, jamais par la mode.
+
+## La règle qui ne se négocie pas
+
+Tout est hébergé sur Cloudflare. Un produit qui exige un serveur Node permanent, un Postgres managé ou un déploiement Vercel n'est pas déployable ici — et le découvrir à la mise en ligne coûte le sprint entier.
+
+## Les piles de l'agence
+
+- **SaaS** — Astro 5 en rendu serveur, React 19 en îlots, Workers, D1, R2, KV, Stripe. OpenRouter seulement si le produit a réellement besoin d'un modèle.
+- **Application mobile** — React Native avec Expo, API en Hono sur Workers, D1, R2.
+- **E-commerce** — Astro 5, vcart.js (notre panier, maintenu en interne), Workers, D1, R2, Stripe.
+- **Contenu & affiliation** — Astro en statique quand c'est possible, Pages/Workers, D1 pour le suivi des clics.
+
+## Interdits
+
+Vercel, Netlify, AWS, GCP. PostgreSQL, Supabase, PlanetScale, Neon. Redis. S3, Cloudinary. Tout paquet qui exige \`fs\`, \`child_process\` ou un binaire natif.
+
+Quand une fonctionnalité semble exiger un service interdit, dis-le au lieu de le proposer : il existe presque toujours un équivalent Cloudflare, et quand il n'y en a pas, c'est la fonctionnalité qu'il faut revoir.`
   },
   {
     id: 'pm_agent',

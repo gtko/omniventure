@@ -17,6 +17,7 @@
 
 import { agencyNow, toRealMs } from './agency-time';
 import { artifactsOf, ARTIFACT_KINDS, type Artifact } from './artifacts';
+import { lifecycleBlock, lifecycleOfVenture } from './lifecycle';
 import { roadmapOf } from './roadmap';
 import { readTasks, updateTask, type Task } from './workspace';
 
@@ -186,6 +187,10 @@ export function planningBrief(ventureName: string, sprint: Sprint): string {
 
   return [
     `[SPRINT ${sprint.number}] jours ${sprint.startDay} à ${sprint.endDay} de l'agence`,
+    '',
+    // Un engagement se juge à l'étape où se trouve le produit : ce qui est
+    // prioritaire en MVP est du gaspillage en vache à lait, et l'inverse.
+    lifecycleBlock(lifecycleOfVenture(ventureName)),
     '',
     '[FEUILLE DE ROUTE]',
     ...(roadmap.length > 0
