@@ -35,6 +35,15 @@ export interface AgentDefinition {
   temperature?: number;
   /** Nombre maximum d'allers-retours avec outils avant de rendre la main. */
   maxSteps?: number;
+  /**
+   * Plafond de jetons pour la réponse.
+   *
+   * Chaque agent porte le sien depuis le studio (2048, 3072, 6000…). Il ne
+   * quittait jamais la fiche : l'appel imposait 1600 à tout le monde. Un agent
+   * qui doit appeler des outils puis rédiger son compte rendu s'y heurtait, et
+   * rendait une réponse coupée — souvent vide.
+   */
+  maxTokens?: number;
   tools?: AgentTool[];
 }
 
@@ -52,6 +61,12 @@ export interface AgentRunResult {
   tokensInput: number;
   tokensOutput: number;
   modelUsed: string;
+  /**
+   * Pourquoi le modèle s'est tu : `stop` (il a fini), `length` (il a été coupé
+   * net), `content_filter`… Sans cette information, une réponse tronquée est
+   * indiscernable d'une réponse vide, et l'erreur affichée n'aide personne.
+   */
+  finishReason?: string;
 }
 
 export interface RunOptions {
@@ -123,7 +138,7 @@ export async function runAgent(
         model: def.model,
         messages,
         temperature: def.temperature ?? 0.4,
-        max_tokens: 1600,
+        max_tokens: def.maxTokens ?? 2048,
         ...(tools.length > 0
           ? {
               tools: tools.map((tool) => ({
@@ -145,12 +160,27 @@ export async function runAgent(
     tokensOutput += completion.usage?.completion_tokens ?? 0;
 
     const choice = completion.choices?.[0]?.message;
+    const finishReason = completion.choices?.[0]?.finish_reason as string | undefined;
     if (!choice) throw new Error('Réponse vide du modèle');
     messages.push(choice);
 
     const calls = choice.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }> | undefined;
     if (!calls || calls.length === 0) {
-      return { text: String(choice.content ?? '').trim(), steps, tokensInput, tokensOutput, modelUsed };
+      /*
+       * Les modèles à raisonnement déposent parfois tout leur texte dans
+       * `reasoning` et laissent `content` vide : le compte rendu est bien là,
+       * simplement pas où on le cherchait.
+       */
+      const text = String(choice.content ?? '').trim() || String(choice.reasoning ?? '').trim();
+
+      if (!text && finishReason === 'length') {
+        throw new Error(
+          `Réponse coupée : le modèle a épuisé son plafond de ${def.maxTokens ?? 2048} jetons sans rien écrire. ` +
+            "Augmentez « Max Output Tokens » pour cet agent dans le studio."
+        );
+      }
+
+      return { text, steps, tokensInput, tokensOutput, modelUsed, finishReason };
     }
 
     for (const call of calls) {
@@ -179,11 +209,12 @@ export async function runAgent(
   }
 
   return {
-    text: 'Limite d’étapes atteinte sans réponse finale.',
+    text: `Limite de ${def.maxSteps ?? 6} allers-retours atteinte : l’agent appelait encore des outils sans conclure.`,
     steps,
     tokensInput,
     tokensOutput,
-    modelUsed
+    modelUsed,
+    finishReason: 'max_steps'
   };
 }
 

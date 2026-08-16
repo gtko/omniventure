@@ -517,8 +517,16 @@ async function drive(venture: { id: string; name: string; slug: string }, openRo
         consecutiveFailures += 1;
         stumbled.add(task.id);
         patch({ failed: readWorksite().failed + 1 });
-        // Deux échecs sans succès entre les deux : le problème dépasse la tâche.
-        if (consecutiveFailures >= 2) halt.fatal = outcome.report;
+        /*
+         * Des échecs sans succès entre eux : le problème dépasse la tâche —
+         * clé refusée, modèle absent, pont éteint.
+         *
+         * Le seuil suit le nombre de voies. À deux fixes, trois agents lancés
+         * ensemble sur des tâches inégales pouvaient trébucher coup sur coup
+         * avant que la première réussite n'ait eu le temps de rentrer, et la
+         * chaîne s'arrêtait alors que rien n'était cassé.
+         */
+        if (consecutiveFailures >= Math.max(2, lanes)) halt.fatal = outcome.report;
       },
       {
         staggerMs: LANE_STAGGER_MS,
@@ -534,7 +542,7 @@ async function drive(venture: { id: string; name: string; slug: string }, openRo
     if (halt.fatal) {
       patch({
         running: false,
-        error: `Deux tâches ont échoué coup sur coup (${halt.fatal.slice(0, 120)}). Le chantier s'arrête.`,
+        error: `${Math.max(2, lanes)} tâches ont échoué coup sur coup, sans aucune réussite entre elles — ${halt.fatal.slice(0, 160)}`,
         stoppedAt: Date.now()
       });
       return;
@@ -683,6 +691,7 @@ async function advance(phase: Phase, context: Context): Promise<boolean> {
         ame: [context.culture, lead.ameMd ?? ''].filter(Boolean).join('\n\n'),
         job: lead.jobMd,
         temperature: lead.temperature,
+        maxTokens: lead.maxTokens,
         maxSteps: 1,
         tools: []
       },
@@ -843,6 +852,8 @@ async function execute(
           ame: [context.culture, agent.ameMd ?? ''].filter(Boolean).join('\n\n'),
           job: agent.jobMd,
           temperature: agent.temperature,
+          // Le plafond de l'agent, pas un chiffre imposé à tout le monde.
+          maxTokens: agent.maxTokens,
           maxSteps: 10,
           tools: [
             ...buildAgentTools(
@@ -878,9 +889,6 @@ async function execute(
         }
       );
 
-      const report = (result.text ?? '').trim();
-      if (report.length < 20) throw new Error('Compte rendu vide : rien de livrable.');
-
       /**
        * Un compte rendu n'est pas un livrable — et un document non plus, quand
        * l'étape demande autre chose.
@@ -895,6 +903,7 @@ async function execute(
        * Le reste — une note, une décision écrite — garde sa valeur, mais ne
        * remplace pas le livrable.
        */
+      let report = (result.text ?? '').trim();
       const produced = readArtifacts().filter((entry) => entry.taskId === task.id && entry.at >= startedAt);
       const onTarget = produced.filter((entry) => phase.produces.includes(entry.kind));
 
@@ -904,7 +913,29 @@ async function execute(
           produced.length > 0
             ? ` Tu as produit : ${produced.map((entry) => ARTIFACT_KINDS[entry.kind].label.toLowerCase()).join(', ')} — ça ne remplace pas le livrable de cette étape.`
             : '';
-        throw new Error(`Livrable manquant. Cette étape attend ${attendu.join(' ou ')}.${rendu}`);
+        // Rien de livré et rien d'écrit : dire lequel des deux manque, plutôt
+        // que de renvoyer « compte rendu vide » quand le vrai sujet est ailleurs.
+        const muet =
+          report.length < 20
+            ? ` L'agent n'a rien écrit non plus${result.finishReason ? ` (arrêt : ${result.finishReason})` : ''}.`
+            : '';
+        throw new Error(`Livrable manquant. Cette étape attend ${attendu.join(' ou ')}.${rendu}${muet}`);
+      }
+
+      /**
+       * Le livrable prime sur le récit.
+       *
+       * Un compte rendu trop court faisait échouer la tâche avant même qu'on
+       * regarde ce qui avait été produit. Un agent qui a fabriqué la maquette
+       * demandée mais s'est contenté d'un « fait » — ou dont la réponse a été
+       * coupée par le plafond de jetons — voyait son travail jeté, refait
+       * trois fois, puis abandonné. Une image regénérée coûte de l'argent ;
+       * un livrable existant ne se jette pas faute de prose.
+       */
+      if (report.length < 20) {
+        report = `Livré sans compte rendu écrit : ${onTarget
+          .map((entry) => `${ARTIFACT_KINDS[entry.kind].label.toLowerCase()} « ${entry.title} »`)
+          .join(', ')}.`;
       }
 
       const doc = archive(task, agent, phase, context, report, produced);
