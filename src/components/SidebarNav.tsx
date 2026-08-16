@@ -176,6 +176,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
                   { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
+                  { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
                   { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
@@ -223,6 +224,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
                   { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
+                  { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
                   { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
                   const isActive = currentPath === item.href;

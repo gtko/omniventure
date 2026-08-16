@@ -38,7 +38,10 @@ export const GRAPH_DEFAULTS: GraphAgent[] = [
   { id: 'cro_agent', role: 'Expert CRO & Multi-Armed Bandit', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
   { id: 'hr_agent', role: 'DRH — Recrutement & Organisation', tier: 2, category: 'operations', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' },
   { id: 'design_lead', role: 'Head of Design — Marque & Interface', tier: 2, category: 'growth', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
-  { id: 'ui_designer', role: 'Expert UI & Design System', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat', teamName: 'Design & Marque' }
+  { id: 'ui_designer', role: 'Expert UI & Design System', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat', teamName: 'Design & Marque' },
+  { id: 'graphic_agent', role: 'Graphiste — Logos, Illustrations & Maquettes', tier: 2, category: 'growth', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash-image', teamName: 'Design & Marque' },
+  { id: 'design_system_agent', role: 'Designeuse Système — Tokens & Composants', tier: 2, category: 'engineering', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
+  { id: 'doc_agent', role: 'Documentaliste — Connaissance & Process', tier: 2, category: 'operations', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' }
 ];
 
 /** Prénom d'affichage des agents historiques du graphe. */
@@ -56,7 +59,10 @@ const KNOWN_NAMES: Record<string, string> = {
   cro_agent: 'Nora',
   hr_agent: 'Camille',
   design_lead: 'Iris',
-  ui_designer: 'Théo'
+  ui_designer: 'Théo',
+  graphic_agent: 'Milo',
+  design_system_agent: 'Anaïs',
+  doc_agent: 'Basile'
 };
 
 /** Pôle du bureau où s'installe chaque famille d'agents. */

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { saveRealAgentLog } from '../lib/agent-bus';
 import { readCulture } from '../lib/culture';
 import { addRequest, readGraph } from '../lib/hiring';
+import { addTask, postMessage, upsertDoc } from '../lib/workspace';
 import type { Venture } from '../types';
 import { Portal } from './Portal';
 
@@ -66,6 +67,76 @@ interface StepView {
   model: string;
   status: 'start' | 'done';
   summary?: string;
+}
+
+
+/**
+ * Le dossier ne reste pas dans une modale : il devient de la matière de travail
+ * dans les ateliers — une fiche documentaire, des tâches assignées, et un mot
+ * dans le canal produit.
+ */
+function spreadToWorkspaces(dossier: Dossier): void {
+  upsertDoc({
+    title: `Dossier de lancement — ${dossier.name}`,
+    path: `Produits/${dossier.name}`,
+    authorId: 'master',
+    authorName: 'Victoria (CEO)',
+    body: [
+      `# ${dossier.name}`,
+      `> ${dossier.tagline}`,
+      '',
+      `**Brief.** ${dossier.brief}`,
+      `**Marché.** ${dossier.market}`,
+      `**Positionnement.** ${dossier.positioning}`,
+      `**Brèche.** ${dossier.gap}`,
+      '',
+      '## Concurrence',
+      ...dossier.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · fort : ${c.strength} · faible : ${c.weakness}`),
+      '',
+      '## Tarification',
+      `${dossier.pricing.rationale}`,
+      '',
+      '## MVP',
+      ...dossier.product.mvpFeatures.map((feature) => `- ${feature}`),
+      '',
+      '## Hors périmètre',
+      ...dossier.product.outOfScope.map((entry) => `- ${entry}`),
+      '',
+      '## Sources réellement lues',
+      ...dossier.sources.map((source) => `- ${source}`)
+    ].join('\n')
+  });
+
+  for (const feature of dossier.product.mvpFeatures) {
+    addTask({
+      title: feature,
+      status: 'todo',
+      priority: 'haute',
+      assigneeId: 'lead_dev',
+      assigneeName: 'Head of Architecture',
+      source: dossier.name,
+      detail: `MVP de ${dossier.name}`
+    });
+  }
+
+  for (const channel of dossier.growth.acquisition) {
+    addTask({
+      title: `${channel.channel} — ${channel.firstAction || channel.angle}`,
+      status: 'todo',
+      priority: 'moyenne',
+      assigneeId: 'copywriter_agent',
+      assigneeName: 'Lead Copywriting',
+      source: dossier.name,
+      labels: ['acquisition']
+    });
+  }
+
+  postMessage({
+    channel: 'produit',
+    authorId: 'master',
+    authorName: 'Victoria (CEO)',
+    text: `Dossier « ${dossier.name} » prêt : ${dossier.product.mvpFeatures.length} fonctionnalités au MVP, ${dossier.competitors.length} concurrents étudiés, opportunité ${dossier.opportunityScore}/100.`
+  });
 }
 
 const euros = (cents: number) => `${(cents / 100).toFixed(2).replace('.', ',')} €`;
@@ -192,7 +263,9 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
               return [...next, { domain: payload.domain, pages: payload.pages, done: payload.status === 'done' }];
             });
           } else if (payload.type === 'done') {
-            setDossier(payload.dossier as Dossier);
+            const produced = payload.dossier as Dossier;
+            setDossier(produced);
+            spreadToWorkspaces(produced);
           } else if (payload.type === 'error') {
             setError(payload.message);
           }
