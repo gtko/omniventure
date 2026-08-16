@@ -119,12 +119,28 @@ export class WorksiteRunner {
       )
       .run();
 
+    /*
+     * Les tâches décidées hors chantier — en réunion, alors qu'aucune chaîne ne
+     * tournait — attendent au vestiaire. Ce passage les adopte : une décision
+     * prise ne doit pas se perdre faute d'un passage ouvert au bon moment.
+     */
+    const adopted = await this.env.DB.prepare(
+      `UPDATE worksite_tasks SET run_id = ?, updated_at = ? WHERE run_id = '' AND venture_name = ? AND status = 'todo'`
+    )
+      .bind(runId, now, payload.ventureName)
+      .run();
+    const count = Number(adopted?.meta?.changes ?? 0);
+
     await this.state.storage.put('runId', runId);
     await this.state.storage.put('key', key);
     await this.state.storage.put('dossier', payload.dossier ?? '');
     await this.state.storage.put('handled', 0);
 
-    await this.log(runId, 'demarrage', `Chantier ouvert sur ${payload.ventureName}.`);
+    await this.log(
+      runId,
+      'demarrage',
+      `Chantier ouvert sur ${payload.ventureName}.${count > 0 ? ` ${count} tâche(s) décidée(s) en réunion reprise(s).` : ''}`
+    );
     await this.state.storage.setAlarm(Date.now() + 500);
     return { runId };
   }
