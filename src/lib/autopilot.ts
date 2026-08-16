@@ -26,7 +26,7 @@ import { artifactsOf } from './artifacts';
 import { readLocal, writeLocal } from './local';
 import { readLifecycle, stageById, subStageOf } from './lifecycle';
 import { ask, answerTo, pendingFor } from './operator-inbox';
-import { isRitualRunning, roadmapOf, runRitual } from './roadmap';
+import { isRitualRunning, ritualHeldFor, roadmapOf, runRitual } from './roadmap';
 import { scheduleDue } from './rituals';
 import { currentSprint, openSprint } from './sprint';
 import { readGraph } from './hiring';
@@ -198,9 +198,24 @@ async function drive(venture: { id: string; name: string; slug: string }): Promi
       await until(() => !isMeetingRunning());
     }
 
-    /* — 3. Sans direction, la chaîne travaillerait au hasard — */
-    if (readAutopilot().running && roadmapOf(venture.name).filter((item) => item.horizon === 'maintenant').length === 0) {
-      patch({ step: 'rituel de priorisation' });
+    /*
+     * — 3. Sans direction, la chaîne travaillerait au hasard —
+     *
+     * L'arbitrage appartient au cycle, pas au passage. Il était déclenché dès
+     * que la feuille de route n'avait rien en « maintenant » — une condition
+     * que le rituel lui-même ne garantit pas de satisfaire : il écarte les
+     * propositions dont le titre existe déjà, donc un second arbitrage sur le
+     * même produit n'ajoute souvent rien. La condition restait vraie, et
+     * l'agence rejouait l'arbitrage à chaque passage et à chaque relance — en
+     * payant six agents à chaque fois pour reconfirmer une décision déjà prise.
+     */
+    const cycle = readWorksite().ventureId === venture.id ? readWorksite().cycle || 1 : 1;
+    const ready = roadmapOf(venture.name).some(
+      (item) => item.horizon === 'maintenant' && (item.status === 'retenu' || item.status === 'en-cours')
+    );
+
+    if (readAutopilot().running && !ready && !ritualHeldFor(venture.name, cycle)) {
+      patch({ step: `rituel de priorisation (cycle ${cycle})` });
       const key = readLocal('omniventure_openrouter_key');
       if (!key) return stop('Clé OpenRouter absente.');
 
@@ -213,7 +228,7 @@ async function drive(venture: { id: string; name: string; slug: string }): Promi
       runRitual({
         venture: { name: venture.name, slug: venture.slug },
         phase: readWorksite().ventureId === venture.id ? readWorksite().phase : 'vision',
-        cycle: readWorksite().cycle || 1,
+        cycle,
         context,
         graph: readGraph(),
         openRouterKey: key

@@ -132,6 +132,16 @@ export interface RitualState {
   dismissed: number;
   error: string | null;
   at: number;
+  /**
+   * Le cycle déjà arbitré, 0 si aucun.
+   *
+   * Sans cette mémoire, on ne pouvait juger qu'un arbitrage avait eu lieu
+   * qu'en regardant s'il avait ajouté des éléments — or il n'en ajoute aucun
+   * quand il repropose des titres déjà présents, ce qui est le cas ordinaire
+   * d'un second arbitrage sur le même produit. L'agence le rejouait alors
+   * indéfiniment.
+   */
+  cycle: number;
 }
 
 const RITUAL_KEY = 'omniventure_ritual_v1';
@@ -156,8 +166,23 @@ const EMPTY_RITUAL: RitualState = {
   retained: 0,
   dismissed: 0,
   error: null,
-  at: 0
+  at: 0,
+  cycle: 0
 };
+
+/**
+ * L'arbitrage a-t-il déjà eu lieu pour ce cycle de ce produit ?
+ *
+ * C'est un événement de cycle : on rouvre la feuille de route quand la mesure
+ * a rendu ses constats, pas à chaque passage de la chaîne ni à chaque relance.
+ */
+export function ritualHeldFor(ventureName: string, cycle: number): boolean {
+  const state = readRitual();
+  if (state.ventureName === ventureName && state.cycle === cycle && !state.running) return true;
+  // Un arbitrage antérieur à cette mémoire se reconnaît encore à ce qu'il a
+  // laissé : des éléments de feuille de route datés de ce cycle.
+  return roadmapOf(ventureName).some((item) => item.cycle === cycle);
+}
 
 function setRitual(changes: Partial<RitualState>): RitualState {
   const next = { ...readRitual(), ...changes, at: Date.now() };
@@ -421,7 +446,10 @@ async function ritual(options: RitualOptions): Promise<void> {
       step: `terminé — ${retained} retenu(s), ${dismissed} écarté(s)`,
       speaker: '',
       retained,
-      dismissed
+      dismissed,
+      // Ce cycle est arbitré, même si rien de neuf n'en est sorti : c'est
+      // justement le cas où il ne faut pas recommencer.
+      cycle
     });
   } catch (error) {
     setRitual({
