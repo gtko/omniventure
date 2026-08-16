@@ -21,6 +21,12 @@
       {
         "name": "SANDBOX",
         "class_name": "Sandbox"
+      },
+      // Le chantier d'un produit, hébergé côté serveur : sa boucle avance par
+      // réveils programmés et ne dépend plus d'un onglet ouvert.
+      {
+        "name": "WORKSITE_RUNNER",
+        "class_name": "WorksiteRunner"
       }
     ]
   },
@@ -32,6 +38,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["Sandbox"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["WorksiteRunner"]
     }
   ],
 

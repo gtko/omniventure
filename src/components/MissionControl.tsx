@@ -6,6 +6,7 @@ import type { Venture } from '../types';
 import { AnalyticsStudio } from './AnalyticsStudio';
 import { LifecyclePanel } from './LifecyclePanel';
 import { ReleasesPanel } from './ReleasesPanel';
+import { ServerWorksite } from './ServerWorksite';
 import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { VentureFactoryModal } from './VentureFactoryModal';
@@ -192,7 +193,13 @@ export const MissionControl: React.FC = () => {
         </>
       )}
 
-      {view === 'chantier' && <WorksitePanel venture={identity} />}
+      {view === 'chantier' && (
+        <div className="space-y-4">
+          <WorksitePanel venture={identity} />
+          {/* Le même travail, mais qui ne meurt pas avec l'onglet. */}
+          <ServerWorksite venture={identity} />
+        </div>
+      )}
 
       {view === 'tickets' && <TicketsBoard venture={identity} />}
 
