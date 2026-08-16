@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
+import { getStoredVentures, getActiveProjectId, saveStoredVentures, setActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
 
@@ -44,7 +44,10 @@ export const ProjectSwitcher: React.FC = () => {
   };
 
   const handleCreateVenture = (newVenture: Venture) => {
-    const updated = [newVenture, ...ventures];
+    // Le projet doit être ÉCRIT, pas seulement mis dans l'état du composant :
+    // sans ça il disparaissait au premier rechargement.
+    const updated = [newVenture, ...getStoredVentures()];
+    saveStoredVentures(updated);
     setVentures(updated);
     setActiveId(newVenture.id);
     setActiveProjectId(newVenture.id);
