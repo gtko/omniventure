@@ -3,6 +3,7 @@ import { saveRealAgentLog } from '../../lib/agent-bus';
 import { agentCall } from '../../lib/agent-profile';
 import { readCulture } from '../../lib/culture';
 import { readGraph } from '../../lib/hiring';
+import { readLocal, writeLocal } from '../../lib/local';
 
 export interface StoredAsset {
   id: string;
@@ -47,11 +48,18 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
 }) => {
   const [assets, setAssets] = useState<StoredAsset[]>([]);
   const [models, setModels] = useState<ImageModel[]>([]);
-  // Le modèle vient de la fiche du graphiste ; le menu permet un écart ponctuel.
-  // Le choix est partage avec les agents : ce qui est selectionne ici est le
-  // modele qu'ils emploieront pour produire logos et maquettes.
+  /**
+   * Le modèle d'image.
+   *
+   * Le choix est partagé avec les agents : ce qui est sélectionné ici est le
+   * modèle qu'ils emploieront pour produire logos et maquettes. À défaut, on
+   * prend celui de la fiche du graphiste.
+   *
+   * La lecture passe par `readLocal` : cet initialiseur s'exécute aussi pendant
+   * le rendu serveur, où `localStorage` existe sans exposer `getItem`.
+   */
   const [model, setModel] = useState(
-    () => localStorage.getItem('omniventure_image_model') ?? agentCall('image').model ?? 'openai/gpt-5.4-image-2'
+    () => readLocal('omniventure_image_model') ?? agentCall('image').model ?? 'openai/gpt-5.4-image-2'
   );
   const [kind, setKind] = useState('logo');
   const [prompt, setPrompt] = useState('');
@@ -79,7 +87,7 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
     // Liste vivante : on n'écrit aucun catalogue de modèles en dur.
     void (async () => {
       try {
-        const key = localStorage.getItem('omniventure_openrouter_key');
+        const key = readLocal('omniventure_openrouter_key');
         const res = await fetch(`/api/design/models${key ? `?key=${encodeURIComponent(key)}` : ''}`);
         if (!res.ok) return;
         const json = (await res.json()) as { models: ImageModel[] };
@@ -136,7 +144,7 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
           agentId: 'graphic_agent',
           agentName: graphic?.role ?? 'Graphiste',
           culture: readCulture(),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
 
@@ -227,7 +235,7 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
             value={model}
             onChange={(event) => {
               setModel(event.target.value);
-              localStorage.setItem('omniventure_image_model', event.target.value);
+              writeLocal('omniventure_image_model', event.target.value);
             }}
             className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal text-slate-800"
           >
