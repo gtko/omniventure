@@ -457,7 +457,7 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
                       .map((deliverable, index) => (
                         <li key={`${deliverable.id}-${index}`} className="text-[11px]">
                           <a
-                            href={`/studio?doc=${encodeURIComponent(deliverable.id)}`}
+                            href={`/documentation?doc=${encodeURIComponent(deliverable.id)}`}
                             className="block truncate text-slate-200 hover:text-indigo-300 hover:underline"
                             title={deliverable.path}
                           >

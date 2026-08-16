@@ -27,6 +27,21 @@ const PROJECT_VIEWS = [
   { view: 'reglages', label: 'Réglages', href: '/?vue=reglages', icon: '⚙️' }
 ] as const;
 
+/**
+ * Le design du produit.
+ *
+ * Ces trois ateliers étaient des onglets dans une page « Ateliers » commune à
+ * l'agence. Ils n'ont rien de commun : un logo, une palette et des composants
+ * appartiennent à **un** produit, et changent avec lui. Ils rejoignent donc ses
+ * vues, dans leur propre groupe — le travail y circule dans cet ordre, du
+ * visuel au système, du système au composant.
+ */
+const DESIGN_VIEWS = [
+  { view: 'graphisme', label: 'Graphisme', href: '/?vue=graphisme', icon: '🎨' },
+  { view: 'design-system', label: 'Design system', href: '/?vue=design-system', icon: '🧩' },
+  { view: 'composants', label: 'Composants', href: '/?vue=composants', icon: '🔲' }
+] as const;
+
 export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeId, setActiveId] = useState<string>('');
@@ -156,11 +171,15 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
           /* CONTEXTUAL PROJECT MENU (WHEN A PROJECT IS SELECTED) */
           <nav className="space-y-4 pt-1">
             
-            {/* Les vues du produit */}
+            {/*
+              Les vues du produit.
+              Pas de nom ni de type en en-tête : le sélecteur juste au-dessus
+              les affiche déjà, et les répéter faisait lire deux fois la même
+              chose au même endroit.
+            */}
             <div className="space-y-1">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono flex items-center justify-between gap-1">
-                <span className="truncate">{activeVenture.name}</span>
-                <span className="text-[9px] px-1 rounded bg-indigo-50 text-indigo-700 font-semibold shrink-0">{activeVenture.type.toUpperCase()}</span>
+              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                Vues
               </div>
               <div className="space-y-0.5">
                 {PROJECT_VIEWS.map(item => {
@@ -183,14 +202,39 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
               </div>
             </div>
 
-            {/* Les ateliers rattachés à ce produit */}
+            {/* Le design du produit : du visuel au système, du système au composant */}
             <div className="space-y-1 pt-2 border-t border-slate-100">
               <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Ateliers du produit
+                Design
+              </div>
+              <div className="space-y-0.5">
+                {DESIGN_VIEWS.map(item => {
+                  const isActive = currentPath === '/' && currentView === item.view;
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        isActive
+                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-sm">{item.icon}</span>
+                      <span>{item.label}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Le rythme et la mesure du produit */}
+            <div className="space-y-1 pt-2 border-t border-slate-100">
+              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                Pilotage
               </div>
               <div className="space-y-0.5">
                 {[
-                  { label: 'Ateliers métier', href: '/studio', icon: '🎨' },
                   { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
                   { label: 'Mesure', href: '/analytics', icon: '📊' }
                 ].map(item => {
@@ -276,7 +320,8 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
                   { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
-                  { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
+                  { label: 'Discussions', href: '/discussions', icon: '💬' },
+                  { label: 'Documentation', href: '/documentation', icon: '📓' },
                   { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
                   { label: 'Agenda', href: '/agenda', icon: '📅' },
                   { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },

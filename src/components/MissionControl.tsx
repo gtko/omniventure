@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getActiveProjectId, getStoredVentures, saveStoredVentures, setActiveProjectId } from '../lib/store';
+import { sendToDesigner, takeSeed } from '../lib/design-handoff';
 import { readLifecycle, stageById } from '../lib/lifecycle';
 import type { Venture } from '../types';
 import { LifecyclePanel } from './LifecyclePanel';
@@ -8,6 +9,9 @@ import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { VentureFactoryModal } from './VentureFactoryModal';
 import { VentureLedger } from './VentureLedger';
+import { ComponentGallery } from './studio/ComponentGallery';
+import { DesignSystemStudio } from './studio/DesignSystemStudio';
+import { GraphicStudio } from './studio/GraphicStudio';
 import { TicketsBoard } from './TicketsBoard';
 import { VentureOverview } from './VentureOverview';
 import { VentureReset } from './VentureReset';
@@ -17,10 +21,29 @@ const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 const FIELD =
   'w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none';
 
-type View = 'apercu' | 'direction' | 'chantier' | 'tickets' | 'livrables' | 'reglages';
+type View =
+  | 'apercu'
+  | 'direction'
+  | 'chantier'
+  | 'tickets'
+  | 'graphisme'
+  | 'design-system'
+  | 'composants'
+  | 'livrables'
+  | 'reglages';
 
 /** Les vues valides. Leur libellé et leur icône vivent dans la barre latérale. */
-const VIEWS: View[] = ['apercu', 'direction', 'chantier', 'tickets', 'livrables', 'reglages'];
+const VIEWS: View[] = [
+  'apercu',
+  'direction',
+  'chantier',
+  'tickets',
+  'graphisme',
+  'design-system',
+  'composants',
+  'livrables',
+  'reglages'
+];
 
 const isView = (value: string | null): value is View => VIEWS.includes(value as View);
 
@@ -169,6 +192,20 @@ export const MissionControl: React.FC = () => {
       {view === 'chantier' && <WorksitePanel venture={identity} />}
 
       {view === 'tickets' && <TicketsBoard venture={identity} />}
+
+      {/* Le design appartient au produit : c'est son apparence, pas celle de l'agence. */}
+      {view === 'graphisme' && (
+        <GraphicStudio
+          onPalette={(palette, logoAssetId) => {
+            sendToDesigner(palette, logoAssetId);
+            window.location.href = '/?vue=design-system';
+          }}
+        />
+      )}
+
+      {view === 'design-system' && <DesignSystemStudio seed={takeSeed() ?? undefined} />}
+
+      {view === 'composants' && <ComponentGallery />}
 
       {view === 'livrables' && (
         <>

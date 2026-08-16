@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { DocsWorkspace } from '../components/studio/DocsWorkspace';
+---
+
+<Layout
+  title="Documentation — La base de connaissance"
+  subtitle="Dossiers, sous-pages, historique et relecture"
+  icon="📓"
+  currentPath="/documentation"
+>
+  <DocsWorkspace client:load />
+</Layout>

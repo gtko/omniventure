@@ -109,7 +109,7 @@ export const VentureDeliverables: React.FC<Props> = ({ venture }) => {
                   {list.map((doc) => (
                     <li key={doc.id} className="border-b border-slate-50 px-3 py-2 last:border-0">
                       <a
-                        href={`/studio?doc=${encodeURIComponent(doc.id)}`}
+                        href={`/documentation?doc=${encodeURIComponent(doc.id)}`}
                         className="block truncate text-xs text-slate-800 hover:text-indigo-700 hover:underline"
                       >
                         📄 {doc.title}
@@ -142,7 +142,7 @@ export const VentureDeliverables: React.FC<Props> = ({ venture }) => {
                 {others.map((doc) => (
                   <li key={doc.id} className="border-b border-slate-50 px-3 py-2 last:border-0">
                     <a
-                      href={`/studio?doc=${encodeURIComponent(doc.id)}`}
+                      href={`/documentation?doc=${encodeURIComponent(doc.id)}`}
                       className="block truncate text-xs text-slate-800 hover:text-indigo-700 hover:underline"
                     >
                       📄 {doc.title}
@@ -185,7 +185,7 @@ export const VentureDeliverables: React.FC<Props> = ({ venture }) => {
       {/* Design system */}
       {system && (
         <a
-          href="/studio"
+          href="/?vue=design-system"
           className="mt-4 block rounded-lg border border-slate-200 px-3 py-2 hover:border-indigo-400 hover:bg-slate-50"
         >
           <p className="text-xs font-semibold text-slate-800">🎨 {system.name}</p>

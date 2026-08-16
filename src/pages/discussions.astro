@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { TeamChat } from '../components/studio/TeamChat';
+---
+
+<Layout
+  title="Discussions — Les échanges entre agents"
+  subtitle="Ce qui se dit hors des réunions"
+  icon="💬"
+  currentPath="/discussions"
+>
+  <TeamChat client:load />
+</Layout>

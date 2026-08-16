@@ -35,7 +35,6 @@ const euros = (cents: number) => `${((cents ?? 0) / 100).toFixed(2).replace('.',
  * et l'entrepôt pour tout le reste.
  */
 export const AnalyticsStudio: React.FC = () => {
-  const [ventures, setVentures] = useState<Array<{ id: string; name: string; slug: string }>>([]);
   const [site, setSite] = useState('');
   const [tab, setTab] = useState<Tab>('trafic');
   const [days, setDays] = useState(30);
@@ -56,11 +55,26 @@ export const AnalyticsStudio: React.FC = () => {
 
   const [form, setForm] = useState({ key: '', name: '', hypothesis: '', goalEvent: '', variants: 'a,b' });
 
+  /**
+   * Le produit mesuré est celui qui est actif dans la barre latérale.
+   *
+   * La page avait son propre sélecteur : deux endroits pour choisir le même
+   * produit, avec le risque de regarder les chiffres d'un autre que celui
+   * affiché ailleurs. On suit désormais le choix unique.
+   */
   useEffect(() => {
-    const list = getStoredVentures().map((entry) => ({ id: entry.id, name: entry.name, slug: entry.slug || entry.id }));
-    setVentures(list);
-    const active = list.find((entry) => entry.id === getActiveProjectId()) ?? list[0];
-    if (active) setSite(active.slug);
+    const follow = () => {
+      const list = getStoredVentures();
+      const active = list.find((entry) => entry.id === getActiveProjectId()) ?? list[0];
+      setSite(active ? active.slug || active.id : '');
+    };
+    follow();
+    window.addEventListener('active-project-changed', follow);
+    window.addEventListener('ventures-updated', follow);
+    return () => {
+      window.removeEventListener('active-project-changed', follow);
+      window.removeEventListener('ventures-updated', follow);
+    };
   }, []);
 
   const ask = useCallback(
@@ -186,13 +200,6 @@ export const AnalyticsStudio: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={site} onChange={(event) => setSite(event.target.value)} className={FIELD}>
-            {ventures.map((venture) => (
-              <option key={venture.id} value={venture.slug}>
-                {venture.name}
-              </option>
-            ))}
-          </select>
           <select value={days} onChange={(event) => setDays(Number(event.target.value))} className={FIELD}>
             {[7, 30, 90, 365].map((entry) => (
               <option key={entry} value={entry}>

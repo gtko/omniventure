@@ -167,7 +167,7 @@ function designSystemTool(context: ProductionContext): AgentTool {
           ventureName: context.ventureName,
           phase: context.phase,
           taskId: context.taskId,
-          location: { url: '/studio' }
+          location: { url: '/?vue=design-system' }
         });
 
         trace(context, label, `${json.system.tokens?.length ?? 0} tokens`, 'done');
