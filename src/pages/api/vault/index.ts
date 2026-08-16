@@ -27,10 +27,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
     description?: string;
     category?: string;
     rotationDays?: number;
+    kind?: 'secret' | 'credential';
+    url?: string;
+    username?: string;
   };
 
   const name = body.name?.trim().toUpperCase().replace(/[^A-Z0-9_.-]/g, '_') ?? '';
   if (name.length < 2) return json({ error: 'Nom de secret invalide' }, 400);
+
+  const kind = body.kind === 'credential' ? 'credential' : 'secret';
+  // Un compte sans identifiant ne sert à rien : autant le refuser tout de suite.
+  if (kind === 'credential' && !body.username?.trim()) {
+    return json({ error: 'Un compte exige un identifiant (e-mail ou nom d’utilisateur).' }, 400);
+  }
 
   try {
     await upsertSecret(env, {
@@ -38,7 +47,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
       value: body.value,
       description: body.description?.slice(0, 300),
       category: body.category?.slice(0, 40) ?? 'divers',
-      rotationDays: Math.max(0, Math.min(3650, Number(body.rotationDays) || 0))
+      rotationDays: Math.max(0, Math.min(3650, Number(body.rotationDays) || 0)),
+      kind,
+      url: body.url?.trim().slice(0, 300),
+      username: body.username?.trim().slice(0, 200)
     });
     return json({ saved: true, name });
   } catch (error) {

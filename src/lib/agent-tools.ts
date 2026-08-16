@@ -110,6 +110,14 @@ function labelFor(tool: string, args: Record<string, any>): string {
       return `🌐 lit ${host(args.url ?? '')}`;
     case 'browser_screenshot':
       return `📸 regarde ${host(args.url ?? '')}`;
+    case 'browser_login':
+      return `🔐 se connecte à ${host(args.url ?? '')}`;
+    case 'browser_act':
+      return args.action === 'goto'
+        ? `🌐 va sur ${host(args.url ?? '')}`
+        : `🖱️ ${args.action} ${String(args.selector ?? '').slice(0, 24)}`;
+    case 'browser_close':
+      return '🚪 ferme le navigateur';
     case 'http_fetch':
       return `🔗 appelle ${host(args.url ?? '')}`;
     default:
@@ -172,6 +180,8 @@ export function buildAgentTools(
       const traceId = `act-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const started = Date.now();
 
+      // La trace ne montre que ce que le modèle a écrit : les identifiants
+      // ajoutés plus bas n'y figurent pas, et elle survit dans le navigateur.
       pushActivity({
         id: traceId,
         agentId: agent.id,
@@ -183,39 +193,71 @@ export function buildAgentTools(
       });
 
       try {
+        /**
+         * Charge utile réellement envoyée. Pour une connexion, elle contient le
+         * compte et le mot de passe tirés du coffre — que le modèle n'a ni
+         * fournis ni vus : il n'a écrit qu'un nom.
+         */
+        let payload: Record<string, unknown> = args;
+        if (tool.name === 'browser_login') {
+          const credentialName = String((args as any).credential ?? '').trim();
+          if (!credentialName) {
+            const message = "Donne le NOM du compte enregistré au coffre, jamais un mot de passe.";
+            fail(traceId, agent, tool.name, label, message, started);
+            return { error: message };
+          }
+
+          const vaultRes = await fetch('/api/vault/credential', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: credentialName, agentId: agent.id }),
+            signal: ctx.signal
+          });
+          const credential = (await vaultRes.json()) as {
+            url?: string;
+            username?: string;
+            password?: string;
+            error?: string;
+          };
+          if (credential.error || !credential.password) {
+            const message = credential.error ?? 'Compte introuvable au coffre';
+            fail(traceId, agent, tool.name, label, message, started);
+            return { error: message };
+          }
+
+          payload = {
+            url: (args as any).url || credential.url,
+            username: credential.username,
+            password: credential.password,
+            profile: (args as any).profile ?? workspace
+          };
+        }
+
         const res =
           provider === 'cloud'
             ? await fetch('/api/sandbox/call', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool: tool.name, args, autonomy, workspace }),
+                body: JSON.stringify({ tool: tool.name, args: payload, autonomy, workspace }),
                 signal: ctx.signal
               })
             : await fetch(`${RUNNER_URL}/tools/call`, {
                 method: 'POST',
                 headers: headers(),
-                body: JSON.stringify({ tool: tool.name, args, autonomy }),
+                body: JSON.stringify({ tool: tool.name, args: payload, autonomy }),
                 signal: ctx.signal
               });
         const json = (await res.json()) as { result?: any; error?: string; ms?: number };
 
         if (json.error) {
-          pushActivity({
-            id: traceId,
-            agentId: agent.id,
-            agentName: agent.name,
-            tool: tool.name,
-            label: `⚠️ ${label}`,
-            detail: json.error,
-            status: 'error',
-            ms: Date.now() - started
-          });
+          fail(traceId, agent, tool.name, label, json.error, started);
           return { error: json.error };
         }
 
         // Une capture doit être regardable : le pont la sert depuis le disque.
+        // Les trois outils de navigation en produisent une.
         const screenUrl =
-          tool.name === 'browser_screenshot' && json.result?.path
+          tool.name.startsWith('browser_') && typeof json.result?.path === 'string'
             ? `${RUNNER_URL}/tools/file?path=${encodeURIComponent(json.result.path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
             : undefined;
 
@@ -234,20 +276,32 @@ export function buildAgentTools(
         return json.result;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Outil injoignable';
-        pushActivity({
-          id: traceId,
-          agentId: agent.id,
-          agentName: agent.name,
-          tool: tool.name,
-          label: `⚠️ ${label}`,
-          detail: message,
-          status: 'error',
-          ms: Date.now() - started
-        });
+        fail(traceId, agent, tool.name, label, message, started);
         return { error: message };
       }
     }
   }));
+}
+
+/** Trace d'échec — même forme quel que soit l'endroit où ça a cassé. */
+function fail(
+  id: string,
+  agent: { id: string; name: string },
+  tool: string,
+  label: string,
+  detail: string,
+  started: number
+): void {
+  pushActivity({
+    id,
+    agentId: agent.id,
+    agentName: agent.name,
+    tool,
+    label: `⚠️ ${label}`,
+    detail,
+    status: 'error',
+    ms: Date.now() - started
+  });
 }
 
 /**
@@ -348,6 +402,12 @@ function summarize(tool: string, result: any): string {
       return `${result.chars ?? 0} caractères lus`;
     case 'browser_screenshot':
       return `capture ${result.width}×${result.height} — ${Math.round((result.bytes ?? 0) / 1024)} ko`;
+    case 'browser_login':
+      return result.connecte
+        ? `connecté · ${result.titre ?? result.url ?? ''}`.slice(0, 120)
+        : `champ mot de passe encore présent sur ${result.url ?? '?'}`.slice(0, 120);
+    case 'browser_act':
+      return `${result.titre ?? result.url ?? (result.clicked ?? result.typed ? 'fait' : '')}`.slice(0, 120) || '—';
     case 'http_fetch':
       return `HTTP ${result.status}`;
     default:

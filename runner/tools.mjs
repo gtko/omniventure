@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { browserAct, browserLogin, closeBrowser } from './browser.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -393,6 +394,83 @@ export function buildTools(projectRoot) {
         if (!existsSync(output)) throw new Error(result.stderr || 'Capture impossible');
         const stat = await fs.stat(output);
         return { url, path: relative(root, output).replace(/\\/g, '/'), bytes: stat.size, width, height };
+      }
+    },
+    {
+      name: 'browser_login',
+      level: 'read',
+      description:
+        "Se connecte à un site dans Chrome et garde la session ouverte pour les appels suivants. L'identifiant et le mot de passe viennent du coffre : ne les écris jamais toi-même, donne le NOM de l'identifiant enregistré.",
+      parameters: {
+        type: 'object',
+        properties: {
+          credential: { type: 'string', description: "Nom du compte au coffre, en majuscules" },
+          url: { type: 'string', description: 'Page de connexion — inutile si le coffre en connaît déjà une' },
+          profile: { type: 'string', description: 'Profil de navigateur (défaut : agence)' }
+        },
+        required: ['credential']
+      },
+      async run({ url, username, password, profile = 'agence' }) {
+        const chrome = findChrome();
+        if (!chrome) throw new Error("Chrome introuvable. Renseignez CHROME_PATH pour l'indiquer.");
+        if (!username || !password) {
+          throw new Error("Identifiants absents : le coffre n'a pas fourni de valeur pour ce compte.");
+        }
+        if (!url) throw new Error("Aucune page de connexion : donne l'URL, ou enregistre-la dans le coffre.");
+        const result = await browserLogin(chrome, { url, username, password, profile });
+
+        // La capture est écrite sur disque : on ne renvoie jamais l'image dans
+        // la réponse, elle encombrerait le contexte du modèle pour rien.
+        let screenshot = null;
+        if (result.screenshotBase64) {
+          screenshot = `.omniventure/captures/login-${Date.now()}.png`;
+          const target = safePath(root, screenshot);
+          await fs.mkdir(dirname(target), { recursive: true });
+          await fs.writeFile(target, Buffer.from(result.screenshotBase64, 'base64'));
+        }
+        const { screenshotBase64, ...rest } = result;
+        return { ...rest, profile, path: screenshot };
+      }
+    },
+    {
+      name: 'browser_act',
+      level: 'read',
+      description:
+        'Agit sur la page ouverte dans Chrome : naviguer, cliquer, saisir, lire le texte, capturer. La session reste ouverte entre les appels.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'goto | click | type | text | screenshot' },
+          url: { type: 'string' },
+          selector: { type: 'string', description: 'Sélecteur CSS' },
+          value: { type: 'string' },
+          profile: { type: 'string' }
+        },
+        required: ['action']
+      },
+      async run({ action, url, selector, value, profile = 'agence' }) {
+        const chrome = findChrome();
+        if (!chrome) throw new Error("Chrome introuvable. Renseignez CHROME_PATH pour l'indiquer.");
+        const result = await browserAct(chrome, { action, url, selector, value, profile });
+
+        if (result.screenshotBase64) {
+          const screenshot = `.omniventure/captures/act-${Date.now()}.png`;
+          const target = safePath(root, screenshot);
+          await fs.mkdir(dirname(target), { recursive: true });
+          await fs.writeFile(target, Buffer.from(result.screenshotBase64, 'base64'));
+          const { screenshotBase64, ...rest } = result;
+          return { ...rest, path: screenshot };
+        }
+        return result;
+      }
+    },
+    {
+      name: 'browser_close',
+      level: 'read',
+      description: 'Ferme le navigateur du profil indiqué (met fin à la session).',
+      parameters: { type: 'object', properties: { profile: { type: 'string' } } },
+      async run({ profile = 'agence' }) {
+        return { closed: closeBrowser(profile), profile };
       }
     },
     {

@@ -28,8 +28,9 @@ export const AgentRunConsole: React.FC = () => {
   const [answer, setAnswer] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Noms des secrets disponibles : l'agent doit savoir qu'ils existent. */
+  /** Noms des secrets et des comptes : l'agent doit savoir qu'ils existent. */
   const [secretNames, setSecretNames] = useState<Array<{ name: string; description: string }>>([]);
+  const [credentialNames, setCredentialNames] = useState<Array<{ name: string; description: string; url: string }>>([]);
 
   const agent = agents.find((entry) => entry.id === agentId);
 
@@ -46,8 +47,23 @@ export const AgentRunConsole: React.FC = () => {
     // Catalogue du coffre : les noms, jamais les valeurs.
     void fetch('/api/vault')
       .then((res) => res.json())
-      .then((json: any) => setSecretNames((json.secrets ?? []).map((s: any) => ({ name: s.name, description: s.description }))))
-      .catch(() => setSecretNames([]));
+      .then((json: any) => {
+        const entries = (json.secrets ?? []) as any[];
+        setSecretNames(
+          entries
+            .filter((entry) => entry.kind !== 'credential')
+            .map((entry) => ({ name: entry.name, description: entry.description }))
+        );
+        setCredentialNames(
+          entries
+            .filter((entry) => entry.kind === 'credential')
+            .map((entry) => ({ name: entry.name, description: entry.description, url: entry.url }))
+        );
+      })
+      .catch(() => {
+        setSecretNames([]);
+        setCredentialNames([]);
+      });
 
     const sync = () => setActivities(readActivities(undefined, 30));
     sync();
@@ -99,6 +115,16 @@ export const AgentRunConsole: React.FC = () => {
                   '[COFFRE DE L’AGENCE — secrets disponibles]',
                   "N'écris jamais une valeur de secret. Utilise {{secret:NOM}} dans api_call : la substitution a lieu côté serveur, hors de ta vue.",
                   ...secretNames.map((entry) => `- {{secret:${entry.name}}} — ${entry.description || 'sans description'}`)
+                ].join('\n')
+              : '',
+            credentialNames.length > 0
+              ? [
+                  '[COFFRE DE L’AGENCE — comptes disponibles]',
+                  "Pour te connecter à un de ces sites : browser_login avec le NOM du compte, jamais un mot de passe. Tu ne le verras pas et tu n'as pas à le demander — il est saisi dans le navigateur à ta place.",
+                  'La session reste ensuite ouverte : browser_act suffit pour naviguer, cliquer, saisir et regarder.',
+                  ...credentialNames.map(
+                    (entry) => `- ${entry.name} — ${entry.description || 'sans description'}${entry.url ? ` · ${entry.url}` : ''}`
+                  )
                 ].join('\n')
               : ''
           ]

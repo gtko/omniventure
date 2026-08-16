@@ -49,10 +49,14 @@ vérifié côté serveur — pas côté client.
 | `shell` (liste blanche de binaires) | hôte | ✅ en `full` |
 | `browser_read` (page rendue, JS exécuté) | hôte | ✅ |
 | `browser_screenshot` | hôte | ✅ |
+| `browser_login` (connexion à un site depuis le coffre) | hôte | ✅ |
+| `browser_act` (naviguer, cliquer, saisir, lire, capturer) | hôte | ✅ |
+| `browser_close` (fin de session) | hôte | ✅ |
 | `http_fetch` (sans navigateur) | hôte | ✅ |
 | `api_call` (avec secrets du coffre) | **Edge** | ✅ |
 | Harnais de codage (Claude Code, Codex, opencode, Gemini, Antigravity) | hôte | ✅ |
 | Coffre-fort chiffré + substitution `{{secret:NOM}}` | Edge | ✅ |
+| Comptes du coffre (adresse + identifiant + mot de passe) | Edge | ✅ |
 | Lecture réelle des sites concurrents | Edge | ✅ |
 | Génération d'images (R2) | Edge | ✅ |
 | Design system : tokens + composants | Edge | ✅ |
@@ -91,7 +95,8 @@ vérifié côté serveur — pas côté client.
 | Requête HTTP | lire une API, un flux | les deux | ✅ |
 | Navigateur : lire une page rendue | ce que voit un humain | hôte | ✅ |
 | Navigateur : capture d'écran | preuve visuelle, revue de design | hôte | ✅ |
-| **Navigateur : interagir** (cliquer, saisir, se connecter) | tester un tunnel, un formulaire | hôte | ❌ demande CDP |
+| Navigateur : interagir (cliquer, saisir, se connecter) | tester un tunnel, un formulaire | hôte | ✅ |
+| Navigateur : session persistante | rester connecté d'un appel à l'autre | hôte | ✅ |
 | **Recherche web** | trouver ce qu'on ne sait pas déjà | Edge | ❌ |
 | **Lecture de PDF / documents** | contrats, études, factures | Edge | ❌ |
 | Extraction structurée d'un site | tarifs, fonctionnalités | Edge | ✅ |
@@ -245,9 +250,9 @@ bac à sable en local, Docker démarré.
 |---|---|---|
 | Coût | gratuit | facturé au temps d'exécution |
 | Disponibilité | exige votre machine allumée | permanent |
-| Navigateur | ✅ Chrome | ❌ absent de l'image par défaut |
+| Navigateur | ✅ Chrome, connexions incluses | ❌ absent de l'image par défaut |
 | Dépôt | déjà là | cloné par l'outil `setup` |
-| Nombre d'outils | 10 | 6 |
+| Nombre d'outils | 13 | 6 |
 
 ### Ce qui reste à faire
 
@@ -256,6 +261,65 @@ bac à sable en local, Docker démarré.
 2. Ajouter Chrome à l'image si les agents doivent naviguer depuis le cloud.
 3. Décider de la politique d'extinction : un conteneur inactif coûte encore.
 
+## 12 bis. Comptes et connexions — le coffre côté navigateur
+
+Une clé d'API suffit pour parler à une API. Elle ne suffit pas pour un service
+qui n'en propose pas : là, il faut un compte, un formulaire, une session. C'est
+ce que couvre cette partie.
+
+### Ce que le coffre range désormais
+
+| Type | Contenu | Comment l'agent s'en sert |
+|---|---|---|
+| **Clé** | une valeur | il écrit `{{secret:NOM}}` dans `api_call` |
+| **Compte** | adresse + identifiant + mot de passe | il appelle `browser_login` avec le NOM du compte |
+
+Dans les deux cas l'agent ne connaît que le nom et l'usage. Il ne peut pas
+demander la valeur : aucune route ne la lui rend.
+
+### Le trajet d'un mot de passe
+
+1. Le modèle écrit `browser_login({ credential: "GITHUB" })` — c'est tout ce
+   qu'il écrit, et tout ce qui entre dans sa conversation.
+2. Le poste de commande appelle `/api/vault/credential`, qui déchiffre le couple
+   côté serveur et date l'usage.
+3. Le couple part **directement** dans l'appel au pont, puis dans Chrome, où il
+   est tapé dans le formulaire.
+4. Ce qui revient au modèle : l'adresse atteinte, le titre de la page, si un
+   champ mot de passe subsiste, et le chemin d'une capture. Jamais la valeur.
+5. La trace conservée par le bureau — celle qui survit dans le navigateur — ne
+   contient que ce que le modèle a écrit, donc le nom du compte.
+
+Vérifié de bout en bout sur un site de recette : connexion réussie, session
+tenue entre deux appels séparés, mauvais mot de passe correctement détecté, et
+ni le mot de passe ni l'identifiant présents dans ce que voit le modèle ou dans
+la trace.
+
+### La session reste ouverte
+
+Chrome tourne derrière un profil nommé, avec un dossier de profil persistant. Un
+`browser_login` sur un profil vaut pour tous les appels suivants qui l'utilisent :
+l'agent se connecte une fois, puis navigue avec `browser_act` (`goto`, `click`,
+`type`, `text`, `screenshot`). `browser_close` met fin à la session.
+
+Deux conséquences à connaître :
+
+- **Le pont doit tourner.** Le conteneur cloud n'a pas de navigateur : les
+  connexions n'existent que sur votre machine, tant que Chrome n'est pas ajouté
+  à l'image.
+- **Le mot de passe traverse la page de l'opérateur.** C'est le fonctionnement
+  d'un gestionnaire de mots de passe dans son propre onglet. La frontière tenue
+  ici est celle du modèle, pas celle du navigateur de l'opérateur.
+
+### Ce qui reste ouvert
+
+- L'authentification à deux facteurs n'est pas gérée : un compte qui l'exige
+  demandera une intervention manuelle, ou un champ de code à ajouter.
+- Le remplissage repose sur des sélecteurs usuels (`input[type=password]`,
+  champs nommés `user`/`email`). Un formulaire exotique se traite avec
+  `browser_act` en `type` puis `click`.
+
+---
 ## 13. Par où commencer
 
 L'ordre suivant maximise ce que l'agence peut faire seule, en partant de ce qui

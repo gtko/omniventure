@@ -8,14 +8,28 @@
  *      jamais les valeurs — celles-ci sont substituées au dernier moment, dans
  *      la requête sortante, jamais dans le contexte d'un modèle.
  *
+ * Le coffre range deux choses :
+ *   - des SECRETS : une valeur unique (clé d'API, jeton) ;
+ *   - des IDENTIFIANTS : une adresse, un compte et un mot de passe, pour que
+ *     l'agent se connecte à un site dans Chrome. L'agent n'écrit que le NOM de
+ *     l'identifiant ; le couple compte/mot de passe est injecté au dernier
+ *     moment, dans l'appel au navigateur, et ne traverse jamais son contexte.
+ *
  * Le troisième point est la raison d'être du coffre : un secret qui entre dans
  * le contexte d'un modèle est un secret publié.
  */
+
+/** Une clé isolée, ou un compte complet à saisir dans un formulaire. */
+export type VaultKind = 'secret' | 'credential';
 
 export interface SecretRecord {
   name: string;
   description: string;
   category: string;
+  kind: VaultKind;
+  /** Identifiants seulement : page de connexion et nom du compte. */
+  url: string;
+  username: string;
   /** Chiffré, format « iv:ciphertext » en base64. */
   value: string;
   createdAt: number;
@@ -30,6 +44,9 @@ export interface SecretSummary {
   name: string;
   description: string;
   category: string;
+  kind: VaultKind;
+  url: string;
+  username: string;
   /** Aperçu masqué : de quoi reconnaître la clé sans la révéler. */
   preview: string;
   createdAt: number;
@@ -123,12 +140,29 @@ export async function ensureVaultTable(db: any): Promise<void> {
       )`
     )
     .run();
+
+  // Colonnes ajoutées après coup : les coffres existants doivent survivre.
+  // D1 n'a pas d'ADD COLUMN IF NOT EXISTS -- on tente, on ignore le refus.
+  for (const [column, type] of [
+    ['kind', "TEXT DEFAULT 'secret'"],
+    ['url', 'TEXT'],
+    ['username', 'TEXT']
+  ]) {
+    try {
+      await db.prepare(`ALTER TABLE vault_secrets ADD COLUMN ${column} ${type}`).run();
+    } catch {
+      /* colonne déjà présente */
+    }
+  }
 }
 
 const rowToRecord = (row: any): SecretRecord => ({
   name: row.name,
   description: row.description ?? '',
   category: row.category ?? 'divers',
+  kind: row.kind === 'credential' ? 'credential' : 'secret',
+  url: row.url ?? '',
+  username: row.username ?? '',
   value: row.value,
   createdAt: Number(row.created_at ?? 0),
   updatedAt: Number(row.updated_at ?? 0),
@@ -153,7 +187,16 @@ export async function getSecret(env: any, name: string): Promise<SecretRecord | 
 
 export async function upsertSecret(
   env: any,
-  entry: { name: string; value?: string; description?: string; category?: string; rotationDays?: number }
+  entry: {
+    name: string;
+    value?: string;
+    description?: string;
+    category?: string;
+    rotationDays?: number;
+    kind?: VaultKind;
+    url?: string;
+    username?: string;
+  }
 ): Promise<void> {
   if (!env?.DB) throw new Error('Base indisponible');
   await ensureVaultTable(env.DB);
@@ -164,14 +207,18 @@ export async function upsertSecret(
 
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO vault_secrets (name, description, category, value, created_at, updated_at, last_used_at, last_used_by, rotation_days)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO vault_secrets
+       (name, description, category, value, created_at, updated_at, last_used_at, last_used_by, rotation_days, kind, url, username)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
        description = excluded.description,
        category = excluded.category,
        value = excluded.value,
        updated_at = excluded.updated_at,
-       rotation_days = excluded.rotation_days`
+       rotation_days = excluded.rotation_days,
+       kind = excluded.kind,
+       url = excluded.url,
+       username = excluded.username`
   )
     .bind(
       entry.name,
@@ -182,7 +229,10 @@ export async function upsertSecret(
       now,
       existing?.lastUsedAt ?? null,
       existing?.lastUsedBy ?? null,
-      entry.rotationDays ?? existing?.rotationDays ?? 0
+      entry.rotationDays ?? existing?.rotationDays ?? 0,
+      entry.kind ?? existing?.kind ?? 'secret',
+      entry.url ?? existing?.url ?? '',
+      entry.username ?? existing?.username ?? ''
     )
     .run();
 }
@@ -216,7 +266,10 @@ export async function summarize(env: any, records: SecretRecord[]): Promise<Secr
   for (const record of records) {
     let preview = '••••';
     try {
-      preview = maskValue(await decryptSecret(env, record.value));
+      const plain = await decryptSecret(env, record.value);
+      // Un aperçu de clé aide à la reconnaître. Un aperçu de mot de passe ne
+      // sert à rien et en donne trop : on n'affiche que sa longueur.
+      preview = record.kind === 'credential' ? `•••••••• (${plain.length})` : maskValue(plain);
     } catch {
       preview = '⚠ illisible';
     }
@@ -224,6 +277,9 @@ export async function summarize(env: any, records: SecretRecord[]): Promise<Secr
       name: record.name,
       description: record.description,
       category: record.category,
+      kind: record.kind,
+      url: record.url,
+      username: record.username,
       preview,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
@@ -245,14 +301,39 @@ export async function summarize(env: any, records: SecretRecord[]): Promise<Secr
  */
 export function catalogueForAgents(records: SecretRecord[]): string {
   if (records.length === 0) return '[COFFRE] Aucun secret enregistré.';
-  const lines = records.map(
-    (record) => `- {{secret:${record.name}}} — ${record.description || 'sans description'} (${record.category})`
-  );
-  return [
-    '[COFFRE DE L’AGENCE — secrets disponibles]',
-    "N'écris JAMAIS une valeur de secret. Utilise le marqueur, il sera remplacé au dernier moment, hors de ta vue.",
-    ...lines
-  ].join('\n');
+
+  const secrets = records.filter((record) => record.kind !== 'credential');
+  const credentials = records.filter((record) => record.kind === 'credential');
+  const blocks: string[] = [];
+
+  if (secrets.length > 0) {
+    blocks.push(
+      [
+        '[COFFRE DE L’AGENCE — secrets disponibles]',
+        "N'écris JAMAIS une valeur de secret. Utilise le marqueur, il sera remplacé au dernier moment, hors de ta vue.",
+        ...secrets.map(
+          (record) => `- {{secret:${record.name}}} — ${record.description || 'sans description'} (${record.category})`
+        )
+      ].join('\n')
+    );
+  }
+
+  if (credentials.length > 0) {
+    blocks.push(
+      [
+        '[COFFRE DE L’AGENCE — comptes disponibles]',
+        'Pour te connecter à un de ces sites : browser_login avec le NOM du compte, jamais un mot de passe.',
+        "Tu ne verras jamais le mot de passe et tu n'as pas à le demander : il est saisi dans le navigateur à ta place.",
+        'Une fois connecté, la session reste ouverte : browser_act suffit pour la suite.',
+        ...credentials.map(
+          (record) =>
+            `- ${record.name} — ${record.description || 'sans description'}${record.url ? ` · ${record.url}` : ''}`
+        )
+      ].join('\n')
+    );
+  }
+
+  return blocks.join('\n\n');
 }
 
 const MARKER = /\{\{secret:([A-Z0-9_.-]+)\}\}/gi;
@@ -288,4 +369,23 @@ export async function resolveSecrets(
     }
   }
   return { text: resolved, used, missing };
+}
+
+/**
+ * Rend un identifiant utilisable par le navigateur.
+ *
+ * Appelée depuis la route dédiée, jamais depuis un contexte de modèle : la
+ * valeur part directement dans l'appel à Chrome, où elle est tapée dans le
+ * formulaire. Elle n'apparaît ni dans la conversation, ni dans la trace.
+ */
+export async function resolveCredential(
+  env: any,
+  name: string,
+  usedBy = 'agent'
+): Promise<{ url: string; username: string; password: string } | null> {
+  const record = await getSecret(env, name);
+  if (!record || record.kind !== 'credential') return null;
+  const password = await decryptSecret(env, record.value);
+  await markUsed(env, name, usedBy);
+  return { url: record.url, username: record.username, password };
 }
