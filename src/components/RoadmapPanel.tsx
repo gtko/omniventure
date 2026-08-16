@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { readGraph } from '../lib/hiring';
+import { cachedRun } from '../lib/server-run';
 import {
   HORIZONS,
   ORIGIN_STYLE,
@@ -15,7 +16,6 @@ import {
   type RoadmapItem
 } from '../lib/roadmap';
 import { readDocs } from '../lib/workspace';
-import { readWorksite } from '../lib/worksite';
 
 interface Props {
   venture: { id: string; name: string; slug: string };
@@ -61,7 +61,6 @@ export const RoadmapPanel: React.FC<Props> = ({ venture }) => {
     const key = localStorage.getItem('omniventure_openrouter_key');
     if (!key) return;
 
-    const state = readWorksite();
     // Ce que l'équipe sait déjà : le dossier, et ce que la chaîne a produit.
     const context = readDocs()
       .filter((doc) => doc.path === `Produits/${venture.name}` || doc.path.startsWith(`Chantier/${venture.name}`))
@@ -69,10 +68,14 @@ export const RoadmapPanel: React.FC<Props> = ({ venture }) => {
       .map((doc) => `--- ${doc.title} ---\n${doc.body.slice(0, 1200)}`)
       .join('\n\n');
 
+    // L'étape et le cycle viennent du chantier serveur : le navigateur ne
+    // détient plus cet état depuis que la chaîne a déménagé.
+    const run = cachedRun(venture.id);
+
     runRitual({
       venture: { name: venture.name, slug: venture.slug },
-      phase: state.ventureId === venture.id ? state.phase : 'vision',
-      cycle: state.ventureId === venture.id ? state.cycle : 1,
+      phase: (run?.phase as any) ?? 'vision',
+      cycle: run?.cycle ?? 1,
       context,
       graph: readGraph(),
       openRouterKey: key

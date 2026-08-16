@@ -18,14 +18,16 @@
  * reprenable après n'importe quelle interruption.
  */
 
-import { runAgent } from '../lib/agent-sdk';
+import { runAgent, type AgentTool } from '../lib/agent-sdk';
 import { SHARED_ROLES } from '../lib/agent-roster';
 import { PHASES, phaseById, handoffPrompt, type Phase } from '../lib/pipeline';
+import { runSandboxTool, WORKDIR } from '../lib/sandbox-tools';
 import { ensureWorksiteTables } from '../lib/worksite-store';
 
 export interface Env {
   DB: D1Database;
   KV_SECRETS?: KVNamespace;
+  SANDBOX?: DurableObjectNamespace;
   OPENROUTER_API_KEY?: string;
 }
 
@@ -35,6 +37,8 @@ interface StartPayload {
   ventureSlug: string;
   dossier?: string;
   cycles?: number;
+  /** Ce que les agents ont le droit de faire dans le conteneur. */
+  autonomy?: 'read' | 'write' | 'full';
   openRouterKey?: string;
 }
 
@@ -95,9 +99,17 @@ export class WorksiteRunner {
 
     await this.env.DB.prepare(
       `INSERT INTO worksite_runs (id, venture_id, venture_name, venture_slug, status, phase, cycle, lanes, autonomy, step, done, failed, started_at, updated_at)
-       VALUES (?, ?, ?, ?, 'en-cours', 'vision', 1, 1, 'read', 'démarrage', 0, 0, ?, ?)`
+       VALUES (?, ?, ?, ?, 'en-cours', 'vision', 1, 1, ?, 'démarrage', 0, 0, ?, ?)`
     )
-      .bind(runId, payload.ventureId, payload.ventureName, payload.ventureSlug, now, now)
+      .bind(
+        runId,
+        payload.ventureId,
+        payload.ventureName,
+        payload.ventureSlug,
+        payload.autonomy ?? 'full',
+        now,
+        now
+      )
       .run();
 
     await this.state.storage.put('runId', runId);
@@ -206,21 +218,6 @@ export class WorksiteRunner {
       return false;
     }
 
-    /*
-     * Le développement et la mise en ligne écrivent des fichiers. Le Durable
-     * Object n'a pas de disque, et le pont local n'est pas joignable depuis
-     * l'edge : la chaîne s'arrête ici et le dit, au lieu de faire semblant.
-     */
-    if (phase.next === 'build') {
-      await this.patch(runId, { step: 'en attente du pont local' });
-      await this.log(
-        runId,
-        'attente',
-        "Développement : cette étape écrit des fichiers et demande le pont local, que le serveur ne peut pas joindre. Reprenez depuis le Chantier, machine allumée."
-      );
-      return false;
-    }
-
     const deliverables = await this.deliverablesOf(runId, phase.id);
     const lead = this.pickAgent(phaseById(phase.next as any));
     const key = (await this.state.storage.get<string>('key'))!;
@@ -273,6 +270,15 @@ export class WorksiteRunner {
     await this.patch(runId, { step: `${phase.label} — ${agent.role}` });
     await this.log(runId, 'tache', `${agent.role} : ${task.title}`, { taskId: task.id, attempt });
 
+    /*
+     * Les étapes qui écrivent du code reçoivent le conteneur. Elles ne
+     * dépendent donc plus d'une machine allumée : le pont local exigeait la
+     * vôtre, le conteneur non.
+     */
+    const codePhase = phase.id === 'build' || phase.id === 'deploy';
+    const autonomy = String(run.autonomy ?? 'read');
+    const used = new Set<string>();
+
     try {
       const result = await runAgent(
         {
@@ -283,8 +289,8 @@ export class WorksiteRunner {
           job: agent.jobMd,
           temperature: agent.temperature,
           maxTokens: agent.maxTokens,
-          maxSteps: 4,
-          tools: []
+          maxSteps: codePhase ? 10 : 4,
+          tools: codePhase ? this.sandboxTools(String(run.venture_slug), autonomy, used) : []
         },
         [
           `Produit : ${run.venture_name}.`,
@@ -294,7 +300,9 @@ export class WorksiteRunner {
           '',
           `Ce que cette étape doit livrer : ${phase.deliverable}`,
           '',
-          "Rends le livrable lui-même, rédigé, pas un plan de ce que tu ferais."
+          codePhase
+            ? `Le projet est dans ${WORKDIR}. Lis avant d'écrire, puis écris réellement les fichiers avec fs_write — un compte rendu n'est pas du code. Vérifie avec shell (npm run build) avant de conclure.`
+            : "Rends le livrable lui-même, rédigé, pas un plan de ce que tu ferais."
         ]
           .filter(Boolean)
           .join('\n'),
@@ -302,7 +310,19 @@ export class WorksiteRunner {
       );
 
       const body = (result.text ?? '').trim();
-      if (body.length < 80) {
+
+      /*
+       * La preuve du livrable dépend de sa nature. Pour du code, elle n'est pas
+       * dans le texte : un agent qui décrit très bien ce qu'il aurait écrit n'a
+       * rien écrit. On exige qu'un fichier ait réellement été posé.
+       */
+      if (codePhase && !used.has('fs_write')) {
+        throw new Error(
+          "Aucun fichier écrit : cette étape se juge sur le code posé dans le projet, pas sur son récit."
+        );
+      }
+
+      if (!codePhase && body.length < 80) {
         throw new Error(
           result.finishReason === 'length'
             ? `Réponse coupée au plafond de ${agent.maxTokens ?? 2048} jetons.`
@@ -311,6 +331,9 @@ export class WorksiteRunner {
       }
 
       const kind = phase.produces[0] ?? 'memo';
+      // Pour du code, ce qui compte est ce qui a été touché : on le garde avec
+      // le compte rendu, sinon le livrable se résume à un paragraphe.
+      const stored = codePhase ? `${body}\n\n— Outils employés : ${[...used].join(', ')}` : body;
       await this.env.DB.prepare(
         `INSERT INTO worksite_artifacts (id, run_id, task_id, venture_name, phase, kind, title, summary, body, agent_id, agent_name, at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -323,8 +346,8 @@ export class WorksiteRunner {
           phase.id,
           kind,
           String(task.title).slice(0, 200),
-          body.slice(0, 300),
-          body.slice(0, 40000),
+          stored.slice(0, 300),
+          stored.slice(0, 40000),
           agent.id,
           agent.role,
           Date.now()
@@ -334,7 +357,7 @@ export class WorksiteRunner {
       await this.env.DB.prepare(
         `UPDATE worksite_tasks SET status = 'review', report = ?, updated_at = ? WHERE id = ?`
       )
-        .bind(body.slice(0, 2000), Date.now(), task.id)
+        .bind(stored.slice(0, 2000), Date.now(), task.id)
         .run();
 
       await this.patch(runId, { done: Number(run.done ?? 0) + 1 });
@@ -361,6 +384,78 @@ export class WorksiteRunner {
   /* ------------------------------------------------------------------ */
   /* Outillage                                                           */
   /* ------------------------------------------------------------------ */
+
+  /**
+   * Les outils du conteneur, tels que l'agent les voit.
+   *
+   * C'est ce qui rend le chantier serveur capable de développer. Le pont local
+   * exige une machine allumée ; le conteneur, non — il lit, écrit, compile et
+   * lance des commandes depuis le Worker.
+   */
+  private sandboxTools(workspace: string, autonomy: string, seen: Set<string>): AgentTool[] {
+    const call = async (tool: string, args: Record<string, unknown>) => {
+      const outcome = await runSandboxTool(this.env, { tool, args, autonomy, workspace });
+      // Ce qui a réellement été fait, pour juger le livrable ensuite : un
+      // compte rendu ne prouve pas qu'un fichier a été écrit.
+      if (!outcome.error) seen.add(tool);
+      return outcome.error ? { error: outcome.error } : outcome.result;
+    };
+
+    return [
+      {
+        name: 'fs_list',
+        description: "Liste le contenu d'un dossier du projet.",
+        parameters: { type: 'object', properties: { path: { type: 'string' } } },
+        execute: (args: any) => call('fs_list', args)
+      },
+      {
+        name: 'fs_read',
+        description: 'Lit un fichier du projet.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+        execute: (args: any) => call('fs_read', args)
+      },
+      {
+        name: 'fs_search',
+        description: 'Cherche un motif dans les fichiers du projet.',
+        parameters: {
+          type: 'object',
+          properties: { pattern: { type: 'string' }, extensions: { type: 'array', items: { type: 'string' } } },
+          required: ['pattern']
+        },
+        execute: (args: any) => call('fs_search', args)
+      },
+      {
+        name: 'fs_write',
+        description: `Écrit un fichier du projet (racine ${WORKDIR}).`,
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, content: { type: 'string' } },
+          required: ['path', 'content']
+        },
+        execute: (args: any) => call('fs_write', args)
+      },
+      {
+        name: 'shell',
+        description: 'Lance une commande dans le projet (npm, node…).',
+        parameters: {
+          type: 'object',
+          properties: { bin: { type: 'string' }, args: { type: 'array', items: { type: 'string' } } },
+          required: ['bin']
+        },
+        execute: (args: any) => call('shell', args)
+      },
+      {
+        name: 'git',
+        description: 'Commande git dans le projet.',
+        parameters: {
+          type: 'object',
+          properties: { args: { type: 'array', items: { type: 'string' } } },
+          required: ['args']
+        },
+        execute: (args: any) => call('git', args)
+      }
+    ];
+  }
 
   /** L'étape désigne ses responsables : on prend le premier qui existe. */
   private pickAgent(phase: Phase) {

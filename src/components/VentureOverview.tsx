@@ -9,7 +9,7 @@ import { readAccessRequests } from '../lib/agenda';
 import { releasesOf } from '../lib/releases';
 import { HORIZONS, ORIGIN_STYLE, roadmapOf } from '../lib/roadmap';
 import { currentSprint, sprintProgress } from '../lib/sprint';
-import { readWorksite } from '../lib/worksite';
+import { cachedRun, SERVER_RUN_EVENT, watchRun } from '../lib/server-run';
 import { readTasks } from '../lib/workspace';
 
 interface Props {
@@ -37,7 +37,7 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
 
   useEffect(() => {
     const events = [
-      'omniventure_worksite_updated',
+      SERVER_RUN_EVENT,
       'omniventure_workspace_updated',
       'omniventure_artifacts_updated',
       'omniventure_releases_updated',
@@ -47,17 +47,20 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
       'omniventure_ledger_updated'
     ];
     for (const event of events) window.addEventListener(event, refresh);
+    // Le chantier vit sur le serveur : on le suit au lieu de le lire sur place.
+    const stopWatching = watchRun(venture.id);
     return () => {
       for (const event of events) window.removeEventListener(event, refresh);
+      stopWatching();
     };
-  }, [refresh]);
+  }, [refresh, venture.id]);
 
   const life = readLifecycle(venture.id, venture.type);
   const stage = stageById(life.stage);
   const sub = subStageOf(life);
 
-  const worksite = readWorksite();
-  const running = worksite.running && worksite.ventureId === venture.id;
+  const worksite = cachedRun(venture.id);
+  const running = worksite?.status === 'en-cours';
 
   const tasks = readTasks().filter((task) => task.source === venture.name);
   const open = tasks.filter((task) => task.status === 'todo' || task.status === 'doing').length;
@@ -85,24 +88,16 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
         >
           <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-indigo-600" />
           <span className="min-w-0 flex-1">
-            {/* Plusieurs agents peuvent travailler de front : on annonce le nombre. */}
             <span className="block text-xs font-semibold text-indigo-900">
-              {phaseById(worksite.phase).icon} {phaseById(worksite.phase).label} —{' '}
-              {worksite.workers.length === 0
-                ? 'attribution'
-                : worksite.workers.length === 1
-                  ? worksite.workers[0].agentName
-                  : `${worksite.workers.length} agents au travail`}
+              {phaseById(worksite!.phase as any).icon} {phaseById(worksite!.phase as any).label}
             </span>
-            <span className="block truncate text-[11px] text-slate-700">
-              {worksite.workers[0]?.title || worksite.currentStep}
-            </span>
+            <span className="block truncate text-[11px] text-slate-700">{worksite!.step}</span>
           </span>
           <span className="shrink-0 font-mono text-[10px] text-indigo-700">
-            {worksite.done} livrée(s) · cycle {worksite.cycle}
+            {worksite!.done} livrée(s) · cycle {worksite!.cycle}
           </span>
         </button>
-      ) : worksite.ventureId === venture.id && worksite.error ? (
+      ) : worksite?.error ? (
         <button
           onClick={() => onGo('chantier')}
           className="flex w-full items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-left"

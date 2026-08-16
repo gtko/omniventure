@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ACCESS_EVENT, answerAccess, readAccessRequests, type AccessRequest } from '../lib/agenda';
-import { AUTOPILOT_EVENT, isAutopilotRunning, pause, play, readAutopilot, recoverAutopilot, type AutopilotState } from '../lib/autopilot';
+import { readLocal } from '../lib/local';
 import { setLifecycle, nextStep, readLifecycle } from '../lib/lifecycle';
 import { answer, INBOX_EVENT, INBOX_LABEL, pendingFor, type InboxItem } from '../lib/operator-inbox';
+import { commandRun, fetchRun, SERVER_RUN_EVENT, watchRun, type ServerRun } from '../lib/server-run';
 import { Portal } from './Portal';
 
 interface Props {
@@ -21,32 +22,50 @@ interface Props {
  * réponse de vous.
  */
 export const ProjectPilot: React.FC<Props> = ({ venture }) => {
-  const [state, setState] = useState<AutopilotState>(readAutopilot());
+  const [run, setRun] = useState<ServerRun | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [access, setAccess] = useState<AccessRequest[]>([]);
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    setState(readAutopilot());
     setInbox(pendingFor(venture.name));
     setAccess(readAccessRequests().filter((request) => request.status === 'attente'));
   }, [venture.name]);
 
   useEffect(() => {
-    recoverAutopilot();
     refresh();
-    for (const event of [AUTOPILOT_EVENT, INBOX_EVENT, ACCESS_EVENT]) window.addEventListener(event, refresh);
-    // Le pilote avance par étapes longues : un rafraîchissement régulier suffit
-    // à voir bouger la ligne d'état sans multiplier les événements.
-    const tick = window.setInterval(refresh, 4000);
-    return () => {
-      for (const event of [AUTOPILOT_EVENT, INBOX_EVENT, ACCESS_EVENT]) window.removeEventListener(event, refresh);
-      window.clearInterval(tick);
+    const onRun = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.ventureId === venture.id) setRun(detail.run ?? null);
     };
-  }, [refresh]);
 
-  const running = state.running && state.ventureId === venture.id;
-  const mine = state.ventureId === venture.id;
+    window.addEventListener(SERVER_RUN_EVENT, onRun);
+    for (const event of [INBOX_EVENT, ACCESS_EVENT]) window.addEventListener(event, refresh);
+    // L'état vient du serveur : on le suit, on ne le détient pas.
+    const stopWatching = watchRun(venture.id);
+
+    return () => {
+      window.removeEventListener(SERVER_RUN_EVENT, onRun);
+      for (const event of [INBOX_EVENT, ACCESS_EVENT]) window.removeEventListener(event, refresh);
+      stopWatching();
+    };
+  }, [refresh, venture.id]);
+
+  const command = async (action: 'start' | 'stop') => {
+    setBusy(true);
+    setNotice(null);
+    const result = await commandRun(action, venture, {
+      openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined,
+      autonomy: 'full'
+    });
+    if (result.error) setNotice(result.error);
+    await fetchRun(venture.id);
+    setBusy(false);
+  };
+
+  const running = run?.status === 'en-cours';
   const waiting = inbox.length + access.length;
 
   /** Répondre « oui » à une étape la franchit : c'est tout l'intérêt de la question. */
@@ -64,22 +83,23 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
       <div className="flex items-center gap-1.5">
         {running ? (
           <button
-            onClick={pause}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+            onClick={() => command('stop')}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
             title="Le travail en cours va à son terme, puis l'agence s'arrête"
           >
             <span>⏸</span>
-            <span>Pause</span>
+            <span>{busy ? '…' : 'Pause'}</span>
           </button>
         ) : (
           <button
-            onClick={() => play(venture)}
-            disabled={isAutopilotRunning()}
+            onClick={() => command('start')}
+            disabled={busy}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-2 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
-            title="L'agence enchaîne seule : sprint, réunions, priorisation, chaîne de valeur"
+            title="L'agence travaille sur le serveur : fermer l'onglet ne l'arrête pas"
           >
             <span>▶</span>
-            <span>Lancer l'agence</span>
+            <span>{busy ? '…' : "Lancer l'agence"}</span>
           </button>
         )}
 
@@ -102,18 +122,20 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
       </div>
 
       {/* Ce que fait l'agence, ou pourquoi elle s'est arrêtée */}
-      {running ? (
+      {notice ? (
+        <p className="px-0.5 text-[10px] leading-snug text-amber-700">{notice}</p>
+      ) : running ? (
         <p className="flex items-center gap-1.5 px-0.5 text-[10px] text-emerald-700">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-600" />
-          <span className="truncate">{state.step || 'en route'}</span>
+          <span className="truncate">{run?.step || 'en route'}</span>
         </p>
-      ) : mine && state.reason ? (
-        <p className="px-0.5 text-[10px] leading-snug text-slate-500" title={state.reason}>
-          {state.reason.length > 90 ? `${state.reason.slice(0, 88)}…` : state.reason}
+      ) : run?.error ? (
+        <p className="px-0.5 text-[10px] leading-snug text-slate-500" title={run.error}>
+          {run.error.length > 90 ? `${run.error.slice(0, 88)}…` : run.error}
         </p>
       ) : (
         <p className="px-0.5 text-[10px] text-slate-400">
-          À l'arrêt. Lancer enchaîne sprint, réunions, priorisation et chaîne de valeur.
+          À l'arrêt. L'agence travaille sur le serveur : fermer l'onglet ne l'arrête pas.
         </p>
       )}
 

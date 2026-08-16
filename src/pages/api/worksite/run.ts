@@ -53,6 +53,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       ventureName: String(body?.ventureName ?? 'Produit'),
       ventureSlug: String(body?.ventureSlug ?? ventureId),
       dossier: String(body?.dossier ?? '').slice(0, 8000),
+      autonomy: ['read', 'write', 'full'].includes(body?.autonomy) ? body.autonomy : 'full',
       // La clé traverse une fois pour être rangée dans le stockage du Durable
       // Object. Elle n'est jamais écrite dans la base ni dans le journal.
       openRouterKey: body?.openRouterKey

@@ -17,7 +17,6 @@ import { GraphicStudio } from './studio/GraphicStudio';
 import { TicketsBoard } from './TicketsBoard';
 import { VentureOverview } from './VentureOverview';
 import { VentureReset } from './VentureReset';
-import { WorksitePanel } from './WorksitePanel';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 const FIELD =
@@ -193,13 +192,14 @@ export const MissionControl: React.FC = () => {
         </>
       )}
 
-      {view === 'chantier' && (
-        <div className="space-y-4">
-          <WorksitePanel venture={identity} />
-          {/* Le même travail, mais qui ne meurt pas avec l'onglet. */}
-          <ServerWorksite venture={identity} />
-        </div>
-      )}
+      {/*
+        Un seul chantier, celui du serveur.
+
+        Il y en avait deux un temps : celui du navigateur, qui mourait au
+        rechargement, et celui-ci. Deux conducteurs pour une même chaîne, c'est
+        un de trop — et c'était le mauvais qui subsistait.
+      */}
+      {view === 'chantier' && <ServerWorksite venture={identity} />}
 
       {view === 'tickets' && <TicketsBoard venture={identity} />}
 

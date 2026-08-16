@@ -1,19 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { readLocal } from '../lib/local';
+import { PHASES, phaseIndex } from '../lib/pipeline';
+import { commandRun, fetchRun, type ServerRun } from '../lib/server-run';
 
 interface Props {
   venture: { id: string; name: string; slug: string };
-}
-
-interface Run {
-  id: string;
-  status: 'en-cours' | 'arrete' | 'termine' | 'echec';
-  phase: string;
-  step: string;
-  done: number;
-  failed: number;
-  error: string | null;
-  startedAt: number;
 }
 
 interface JournalEntry {
@@ -51,10 +42,16 @@ const KIND_ICON: Record<string, string> = {
  * reprend au dernier événement reçu.
  */
 export const ServerWorksite: React.FC<Props> = ({ venture }) => {
-  const [run, setRun] = useState<Run | null>(null);
+  const [run, setRun] = useState<ServerRun | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Ce que les agents ont le droit de faire dans le conteneur. « Complète »
+   * par défaut : c'est le seul niveau qui laisse écrire du code et lancer un
+   * build, donc le seul qui permette de livrer un produit.
+   */
+  const [autonomy, setAutonomy] = useState<'read' | 'write' | 'full'>('full');
   const source = useRef<EventSource | null>(null);
 
   /** S'abonner au flux. Le navigateur se reconnecte seul s'il est coupé. */
@@ -108,6 +105,7 @@ export const ServerWorksite: React.FC<Props> = ({ venture }) => {
           ventureId: venture.id,
           ventureName: venture.name,
           ventureSlug: venture.slug,
+          autonomy,
           openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
@@ -132,14 +130,17 @@ export const ServerWorksite: React.FC<Props> = ({ venture }) => {
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-            Chantier serveur
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-              hors navigateur
-            </span>
+            Chantier
+            {run && run.cycle > 1 && (
+              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                cycle {run.cycle}
+              </span>
+            )}
           </h2>
           <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
-            La chaîne avance sur Cloudflare, par réveils programmés. Fermer l'onglet, recharger la page ou éteindre la
-            machine ne l'arrête pas — cette vue n'est qu'une fenêtre dessus.
+            La direction pose la vision, le PM spécifie, le design maquette, la tech développe et déploie, la QA et la
+            data mesurent. Tout avance sur Cloudflare : fermer l'onglet, recharger la page ou éteindre la machine ne
+            l'arrête pas — cette vue n'est qu'une fenêtre dessus.
           </p>
         </div>
 
@@ -152,11 +153,70 @@ export const ServerWorksite: React.FC<Props> = ({ venture }) => {
               : 'bg-slate-900 text-white hover:bg-slate-800'
           }`}
         >
-          {busy ? '…' : live ? '⏹ Arrêter' : '▶ Ouvrir le chantier serveur'}
+          {busy ? '…' : live ? '⏹ Arrêter' : '▶ Lancer la chaîne'}
         </button>
       </div>
 
       {notice && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">{notice}</p>}
+
+      {/* La chaîne, et où elle en est */}
+      <ol className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+        {PHASES.map((phase, index) => {
+          const current = run ? phaseIndex(run.phase as any) : -1;
+          const here = index === current;
+          const passed = current >= 0 && index < current;
+          return (
+            <li
+              key={phase.id}
+              className={`rounded-lg border p-2 transition-colors ${
+                here ? 'border-indigo-500 bg-indigo-50' : passed ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'
+              }`}
+            >
+              <p className="flex items-center gap-1 text-[11px] font-semibold text-slate-800">
+                <span>{phase.icon}</span>
+                <span className="truncate">{phase.label}</span>
+                {here && live && <span className="ml-auto inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-600" />}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Ce que les agents ont le droit de faire */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Permissions</span>
+        {(
+          [
+            ['read', 'Lecture seule'],
+            ['write', 'Écriture'],
+            ['full', 'Autonomie complète']
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            disabled={live}
+            onClick={() => setAutonomy(id)}
+            title={
+              id === 'full'
+                ? 'Le seul niveau qui laisse écrire du code et lancer un build : sans lui, rien ne se livre'
+                : undefined
+            }
+            className={`rounded-lg border px-2 py-1 text-[11px] transition-colors disabled:opacity-50 ${
+              autonomy === id
+                ? id === 'full'
+                  ? 'border-rose-300 bg-rose-50 font-semibold text-rose-700'
+                  : 'border-indigo-500 bg-indigo-50 font-semibold text-indigo-700'
+                : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="ml-auto font-mono text-[10px] text-slate-400">
+          conteneur Cloudflare · sans machine allumée
+        </span>
+      </div>
 
       {run ? (
         <>
