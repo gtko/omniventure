@@ -173,6 +173,8 @@ export const DesignSystemStudio: React.FC<{
                 <h3 className="text-base font-bold text-slate-900">{system.name}</h3>
                 <p className="font-mono text-[10px] text-slate-400">
                   {system.tokens.length} tokens · {system.components.length} composants · {system.modelUsed}
+                  {system.authorName ? ` · posé par ${system.authorName}` : ''}
+                  {system.project ? ` · ${system.project}` : ''}
                 </p>
               </div>
               <div className="flex gap-1">

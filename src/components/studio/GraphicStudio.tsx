@@ -13,6 +13,9 @@ export interface StoredAsset {
   model: string;
   kind: string;
   project: string;
+  /** Qui l'a demandé : un visuel sans auteur ne s'attribue pas. */
+  agentId?: string;
+  agentName?: string;
   createdAt: number;
 }
 
@@ -339,8 +342,15 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
                   loading="lazy"
                   className="h-28 w-full bg-slate-50 object-contain"
                 />
-                <span className="block truncate border-t border-slate-100 px-2 py-1 text-[10px] text-slate-500">
-                  {asset.kind} · {asset.prompt.slice(0, 40)}
+                <span className="block border-t border-slate-100 px-2 py-1">
+                  <span className="block truncate text-[10px] text-slate-500">
+                    {asset.kind} · {asset.prompt.slice(0, 40)}
+                  </span>
+                  {/* Attribution : un visuel sans auteur est orphelin. */}
+                  <span className="block truncate text-[9px] text-slate-400">
+                    {asset.agentName || 'auteur inconnu'}
+                    {asset.project ? ` · ${asset.project}` : ''}
+                  </span>
                 </span>
               </button>
             ))}

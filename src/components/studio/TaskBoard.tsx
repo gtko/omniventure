@@ -140,6 +140,15 @@ export const TaskBoard: React.FC = () => {
                       )}
                     </div>
 
+                    {/* Qui l'a demandee, distinct de qui doit la faire. */}
+                    {task.createdByName && (
+                      <p className="mt-1 truncate text-[9px] text-slate-400">
+                        demandée par {task.createdByName.split('—')[0].trim()}
+                        {task.phase ? ` · ${task.phase}` : ''}
+                        {task.cycle && task.cycle > 1 ? ` · cycle ${task.cycle}` : ''}
+                      </p>
+                    )}
+
                     <div className="mt-2 flex gap-1">
                       <button
                         type="button"

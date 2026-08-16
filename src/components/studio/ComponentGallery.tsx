@@ -144,6 +144,12 @@ ${html}
               <div>
                 <h3 className="text-sm font-bold text-slate-900">{component.name}</h3>
                 <p className="text-[11px] text-slate-500">{component.description}</p>
+                {/* Un composant vient du design system : on dit lequel, et de qui. */}
+                {system?.authorName && (
+                  <p className="text-[10px] text-slate-400">
+                    {system.name} · posé par {system.authorName}
+                  </p>
+                )}
               </div>
 
               <div className="ml-auto flex flex-wrap items-center gap-1.5">
