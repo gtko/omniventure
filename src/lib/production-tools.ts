@@ -359,6 +359,107 @@ function runnerHeaders(): Record<string, string> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Préparation du projet                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pose l'ossature et y verse le design, avant que le développement commence.
+ *
+ * Sans ça, chaque tâche de développement écrivait un fichier isolé dans un
+ * dossier vide : les agents produisaient un tas de code qui ne formait jamais
+ * une application, et personne ne pouvait vérifier quoi que ce soit. Ici le
+ * produit démarre comme un projet qui compile, et les agents l'éditent.
+ *
+ * Silencieux quand le projet existe déjà : on ne réécrit rien.
+ */
+export async function prepareVentureProject(
+  context: ProductionContext,
+  stack: string
+): Promise<{ ready: boolean; note: string }> {
+  try {
+    const init = await callBridge('projet_initialiser', { name: context.ventureName, stack }, 'write', context.ventureSlug);
+    if (init.error) return { ready: false, note: init.error };
+
+    // Les jetons du design system deviennent des variables CSS : c'est le seul
+    // lien entre ce que le design a décidé et ce que le produit affiche.
+    const system = readDesignSystem();
+    if (system?.tokens?.length) {
+      await callBridge(
+        'fs_write',
+        { path: 'src/styles/tokens.css', content: tokensCss(system) },
+        'write',
+        context.ventureSlug
+      );
+    }
+
+    const created = init.result?.created;
+    return {
+      ready: true,
+      note: created
+        ? `Ossature posée (${init.result?.files} fichiers)${system?.tokens?.length ? ', jetons de design appliqués' : ''}.`
+        : 'Projet déjà en place.'
+    };
+  } catch (error) {
+    return { ready: false, note: error instanceof Error ? error.message : 'Préparation impossible' };
+  }
+}
+
+/**
+ * Les jetons du design system, en CSS.
+ *
+ * On écrit tous les jetons sous leur propre nom, puis on renseigne les cinq
+ * variables que l'ossature utilise en cherchant le rôle dans le nom du jeton.
+ * Quand aucun ne correspond, on laisse la valeur par défaut : mieux vaut un
+ * indigo neutre qu'une couleur prise au hasard dans la palette.
+ */
+function tokensCss(system: NonNullable<ReturnType<typeof readDesignSystem>>): string {
+  const colors = system.tokens.filter((token) => token.group === 'color' || /^#|rgb|hsl/.test(token.value));
+  const find = (pattern: RegExp) => colors.find((token) => pattern.test(token.name))?.value;
+
+  const marque = find(/primary|marque|brand|accent|principal/i);
+  const surface = find(/surface|background|fond|bg/i);
+  const encre = find(/\btext\b|ink|encre|foreground|neutral-9|slate-9/i);
+
+  return [
+    '/*',
+    ` * Jetons de design — écrits par le design system « ${system.name} ».`,
+    ' *',
+    " * Ne pas modifier à la main : la prochaine génération écraserait vos",
+    ' * changements. Pour changer l’apparence, changez le design system.',
+    ' */',
+    ':root {',
+    ...system.tokens.map((token) => `  --${token.name.replace(/[^a-zA-Z0-9-]/g, '-')}: ${token.value};`),
+    '',
+    '  /* Ce que l’ossature utilise. */',
+    `  --couleur-marque: ${marque ?? '#4f46e5'};`,
+    `  --couleur-marque-sombre: ${marque ?? '#4338ca'};`,
+    `  --couleur-surface: ${surface ?? '#ffffff'};`,
+    `  --couleur-encre: ${encre ?? '#0f172a'};`,
+    '  --couleur-encre-douce: #475569;',
+    '  --rayon: 0.75rem;',
+    '  --police-titre: ui-sans-serif, system-ui, sans-serif;',
+    '  --police-texte: ui-sans-serif, system-ui, sans-serif;',
+    '}',
+    ''
+  ].join('\n');
+}
+
+/** Appel direct au pont, hors du circuit des outils exposés au modèle. */
+async function callBridge(
+  tool: string,
+  args: Record<string, unknown>,
+  autonomy: string,
+  workspace: string
+): Promise<{ result?: any; error?: string }> {
+  const res = await fetch(`${runnerUrl()}/tools/call`, {
+    method: 'POST',
+    headers: runnerHeaders(),
+    body: JSON.stringify({ tool, args, autonomy, workspace })
+  });
+  return (await res.json()) as { result?: any; error?: string };
+}
+
+/* ------------------------------------------------------------------ */
 /* Mesure                                                              */
 /* ------------------------------------------------------------------ */
 

@@ -18,6 +18,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { browserAct, browserLogin, closeBrowser } from './browser.mjs';
+import { scaffold } from './scaffold.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -471,6 +472,58 @@ export function buildTools(projectRoot) {
       parameters: { type: 'object', properties: { profile: { type: 'string' } } },
       async run({ profile = 'agence' }) {
         return { closed: closeBrowser(profile), profile };
+      }
+    },
+    {
+      name: 'projet_initialiser',
+      level: 'write',
+      description:
+        "Pose l'ossature du produit : un projet Astro + React + Tailwind sur Cloudflare qui compile déjà. À appeler une fois, avant d'écrire du code. Ne fait rien si le projet existe.",
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Nom du produit' },
+          stack: { type: 'string', description: 'saas | ecommerce | contenu | mobile' }
+        }
+      },
+      async run({ name, stack }) {
+        return scaffold(root, { name: name ?? 'Produit', stack: stack ?? 'saas' });
+      }
+    },
+    {
+      name: 'projet_verifier',
+      level: 'full',
+      description:
+        "Vérifie que le produit compile : installe les dépendances si besoin, puis lance la construction. C'est ce qui tranche entre « du code a été écrit » et « le produit marche ».",
+      parameters: {
+        type: 'object',
+        properties: {
+          install: { type: 'boolean', description: 'Forcer la réinstallation des dépendances' }
+        }
+      },
+      async run({ install = false }) {
+        if (!existsSync(join(root, 'package.json'))) {
+          return { ok: false, erreur: "Aucun projet : appelle projet_initialiser d'abord." };
+        }
+
+        // L'installation est longue et rarement nécessaire : on ne la refait
+        // que si node_modules manque, ou si on la demande explicitement.
+        const needsInstall = install || !existsSync(join(root, 'node_modules'));
+        if (needsInstall) {
+          const installed = await run('npm', ['install', '--no-audit', '--no-fund'], { cwd: root, timeout: 420_000 });
+          if (!installed.ok) {
+            return { ok: false, etape: 'installation', code: installed.code, sortie: clip(installed.stderr || installed.stdout, 4000) };
+          }
+        }
+
+        const built = await run('npm', ['run', 'build'], { cwd: root, timeout: 420_000 });
+        return {
+          ok: built.ok,
+          etape: 'construction',
+          code: built.code,
+          // En cas d'échec, la sortie du compilateur est la seule chose utile.
+          sortie: clip(built.ok ? built.stdout : built.stderr || built.stdout, 6000)
+        };
       }
     },
     {

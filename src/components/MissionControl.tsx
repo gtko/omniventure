@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { getStoredVentures, saveStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
-import type { Venture, AgentTask } from '../types';
+import type { Venture } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
 import { LifecyclePanel } from './LifecyclePanel';
+import { VentureLedger } from './VentureLedger';
 import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { WorksitePanel } from './WorksitePanel';
@@ -10,7 +11,6 @@ import { WorksitePanel } from './WorksitePanel';
 export const MissionControl: React.FC = () => {
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeId, setActiveId] = useState<string>('');
-  const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -48,35 +48,6 @@ export const MissionControl: React.FC = () => {
     saveStoredVentures(updatedList);
     setNotification('Modifications enregistrées.');
     setTimeout(() => setNotification(null), 3000);
-  };
-
-  const handleDeployCanary = () => {
-    if (!activeVenture) return;
-    handleUpdateActiveVenture({ status: 'canary', canaryTrafficPct: 10, activeVersion: 'v1.1.0-canary' });
-    const newTask: AgentTask = {
-      id: `tsk-${Date.now()}`,
-      ventureId: activeVenture.id,
-      ventureName: activeVenture.name,
-      agentRole: 'DevOps Deployer',
-      modelName: 'Qwen 3.8-Max',
-      status: 'success',
-      promptSummary: `Déploiement Canary 10% de ${activeVenture.name} sur Cloudflare Pages/Workers`,
-      tokensInput: 450,
-      tokensOutput: 120,
-      costUsd: 0.0004,
-      latencyMs: 320,
-      outputPreview: 'Version v1.1.0-canary déployée. Routage 10% actif.',
-      createdAt: 'À l\'instant'
-    };
-    setTasks([newTask, ...tasks]);
-    setNotification(`Déploiement Canary (10% trafic) lancé pour "${activeVenture.name}".`);
-    setTimeout(() => setNotification(null), 4000);
-  };
-
-  const handleSimulateTrial = () => {
-    if (!activeVenture) return;
-    setNotification(`Simulation : Débit de ${(activeVenture.priceTrialCents / 100).toFixed(2)}$ validé. Souscription $${(activeVenture.priceRecurringCents / 100).toFixed(2)}/mois programmée dans ${activeVenture.trialDurationHours}h.`);
-    setTimeout(() => setNotification(null), 5000);
   };
 
   if (!activeVenture) {
@@ -143,23 +114,6 @@ export const MissionControl: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Project Actions */}
-          <div className="flex items-center gap-2">
-            {activeVenture.type === 'saas' && (
-              <button
-                onClick={handleSimulateTrial}
-                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold rounded-lg transition-colors"
-              >
-                Tester Tunnel Trial 0.50$
-              </button>
-            )}
-            <button
-              onClick={handleDeployCanary}
-              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
-            >
-              Déployer en Canary
-            </button>
-          </div>
         </div>
       </div>
 
@@ -286,41 +240,8 @@ export const MissionControl: React.FC = () => {
 
         </div>
 
-        {/* Right 1 Col: Execution History for this Venture */}
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
-            <h3 className="font-bold text-slate-900 text-sm">Activité des Agents</h3>
-
-            {tasks.length === 0 ? (
-              <div className="text-center py-8 text-xs text-slate-400 space-y-2">
-                <div>Aucune tâche exécutée pour le moment.</div>
-                <button
-                  onClick={handleDeployCanary}
-                  className="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-semibold rounded-md hover:bg-indigo-100"
-                >
-                  Lancer la première tâche
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {tasks.map(t => (
-                  <div key={t.id} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-900">{t.agentRole}</span>
-                      <span className="text-[10px] text-slate-500 font-mono">{t.modelName}</span>
-                    </div>
-                    <p className="text-slate-600 text-[11px]">{t.promptSummary}</p>
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pt-1">
-                      <span>${t.costUsd.toFixed(5)}</span>
-                      <span>{t.latencyMs}ms</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
+        {/* Ce que le projet a réellement consommé, pas une tâche fabriquée */}
+        <VentureLedger ventureName={activeVenture.name} />
       </div>
 
       <VentureFactoryModal

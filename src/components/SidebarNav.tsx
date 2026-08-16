@@ -138,11 +138,9 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
               <div className="space-y-0.5">
                 {[
                   { label: 'Vue d\'ensemble', href: '/', icon: '📊' },
-                  { label: 'Marketing & Ads 360°', href: '/marketing', icon: '📢' },
-                  { label: 'Vidéos TikTok & Média', href: '/media', icon: '🎬' },
-                  { label: 'A/B Testing & CRO', href: '/cro', icon: '📈' },
-                  { label: 'DevOps & Canary', href: '/canary', icon: '🛡️' },
-                  { label: 'Stripe & Monétisation', href: '/monetization', icon: '💳' }
+                  { label: 'Livrables & ateliers', href: '/studio', icon: '🎨' },
+                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
+                  { label: 'Mesure', href: '/analytics', icon: '📊' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
                   return (
@@ -176,11 +174,8 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
                   { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
                   { label: 'Auto-amélioration', href: '/improve', icon: '♻️' },
-                  { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
                   { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
                   { label: 'Agenda', href: '/agenda', icon: '📅' },
-                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
-                  { label: 'Mesure', href: '/analytics', icon: '📊' },
                   { label: 'Coffre-fort', href: '/vault', icon: '🔐' },
                   { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
@@ -213,7 +208,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                 <span>Aucun projet sélectionné</span>
               </div>
               <p className="text-[11px] text-amber-800 leading-snug">
-                Sélectionnez ou créez un projet ci-dessus pour débloquer les outils d'acquisition, canary et monétisation.
+                Sélectionnez ou créez un projet ci-dessus : le chantier, la feuille de route et la mesure sont rattachés à un produit.
               </p>
             </div>
 

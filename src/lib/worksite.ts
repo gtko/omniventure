@@ -25,7 +25,7 @@ import { primeLedger, record } from './agent-ledger';
 import { runAgent, type AgentStep } from './agent-sdk';
 import { apiCallTool, buildAgentTools, fetchTools, type ToolProvider } from './agent-tools';
 import { ARTIFACT_KINDS, readArtifacts, type Artifact, type ArtifactKind } from './artifacts';
-import { productionTools } from './production-tools';
+import { prepareVentureProject, productionTools } from './production-tools';
 import { cultureBlock, readCulture } from './culture';
 import { type Autonomy } from './harness-client';
 import { readGraph, type GraphAgent } from './hiring';
@@ -286,6 +286,35 @@ async function drive(venture: { id: string; name: string; slug: string }, openRo
       if (!seeded) {
         if (!(await advance(phase, context))) return;
         continue;
+      }
+    }
+
+    /**
+     * On ne code pas dans le vide.
+     *
+     * Au moment d'entrer dans le développement, le produit doit être un projet
+     * qui compile : sinon chaque tâche écrit un fichier isolé et rien ne forme
+     * jamais une application. C'est aussi ce qui rend la vérification possible.
+     */
+    if (phase.id === 'build' && state.autonomy !== 'read') {
+      patch({ currentStep: 'préparation du projet…' });
+      const prepared = await prepareVentureProject(
+        {
+          agent: { id: 'lead_dev', name: 'Architecture' },
+          ventureName: venture.name,
+          ventureSlug: venture.slug,
+          phase: phase.id
+        },
+        readLifecycle(venture.id).stack
+      );
+      patch({ currentStep: prepared.note });
+      if (!prepared.ready) {
+        patch({
+          running: false,
+          error: `Le projet n'a pas pu être préparé : ${prepared.note}. Le pont local doit tourner, au niveau « écriture » au minimum.`,
+          stoppedAt: Date.now()
+        });
+        return;
       }
     }
 

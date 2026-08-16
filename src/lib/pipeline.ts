@@ -89,7 +89,7 @@ export const PHASES: Phase[] = [
     owners: ['lead_dev', 'frontend_agent', 'worker_dev'],
     produces: ['code'] as ArtifactKind[],
     deliverable:
-      "le code de l'unité demandée, conforme aux critères d'acceptation, avec ce qu'il faut pour le vérifier.",
+      "du code écrit dans le projet du produit, qui compile. Le projet est déjà en place — Astro, React, Tailwind, Cloudflare : tu l'édites, tu ne le réinventes pas. Lis CONVENTIONS.md avant d'écrire, et lance projet_verifier avant de dire que c'est fini : si ça ne compile pas, ce n'est pas livré.",
     next: 'deploy',
     handoff:
       "Tu es Head of DevOps. À partir de ce qui vient d'être développé, liste les étapes de mise en ligne : vérifications avant bascule, déploiement, contrôle après bascule, retour arrière possible."
@@ -100,7 +100,7 @@ export const PHASES: Phase[] = [
     icon: '🚀',
     owners: ['devops_agent', 'lead_dev'],
     produces: ['code', 'memo'] as ArtifactKind[],
-    deliverable: "la mise en ligne effectuée ou décrite pas à pas, avec le contrôle d'après bascule et la procédure de retour arrière.",
+    deliverable: "la preuve que le produit tient : projet_verifier passe au vert, puis la mise en ligne décrite pas à pas — création des ressources Cloudflare, application du schéma, déploiement, contrôle sur /api/sante, et retour arrière possible. Commence toujours par projet_verifier : un déploiement dont le build échoue n'existe pas.",
     next: 'measure',
     handoff:
       "Tu es responsable de la qualité et de la mesure. Liste ce qu'il faut vérifier et mesurer maintenant que c'est en ligne : recette fonctionnelle, écarts avec les résultats visés, points de friction dans le parcours."
