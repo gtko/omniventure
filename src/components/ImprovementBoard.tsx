@@ -28,10 +28,35 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: 'Écartée'
 };
 
+const DIRECTION_KEY = 'omniventure_improve_direction';
+
+/** Quelques caps courants, pour ne pas partir de la page blanche. */
+const DIRECTION_PRESETS: Array<{ label: string; text: string }> = [
+  {
+    label: 'Augmenter la conversion',
+    text: "Augmenter le taux de conversion de l'essai à 0,50 € vers l'abonnement à 29 €/mois. Priorité aux frictions du tunnel et à la preuve de valeur pendant les 48 h d'essai."
+  },
+  {
+    label: 'Réduire le coût des modèles',
+    text: "Réduire le coût OpenRouter par venture sans perdre en qualité : routage vers des modèles moins chers, cache des appels répétés, budgets par agent."
+  },
+  {
+    label: 'Accélérer la mise en ligne',
+    text: "Raccourcir le délai entre l'idée de niche et le site en ligne : automatiser ce qui est encore manuel dans la chaîne build → canary → domaine."
+  },
+  {
+    label: 'Fiabiliser la production',
+    text: "Fiabiliser l'exploitation : détection d'incident, rollback, alertes, et visibilité sur ce qui tourne réellement en production."
+  }
+];
+
 /**
- * Plan d'auto-amélioration : l'agence propose ce qui lui manque pour gagner de
- * l'argent, puis délègue l'implémentation à un harnais de codage. La relecture
- * et la mise en production restent humaines — c'est le garde-fou de la boucle.
+ * Plan d'auto-amélioration — VOUS DIRIGEZ.
+ *
+ * Vous fixez le cap ; l'agence propose des évolutions qui le servent, les
+ * classe, puis vous choisissez celles qui partent vers un harnais de codage.
+ * La relecture et la mise en production restent humaines : c'est le garde-fou
+ * de la boucle.
  */
 export const ImprovementBoard: React.FC = () => {
   const [items, setItems] = useState<Improvement[]>([]);
@@ -40,6 +65,7 @@ export const ImprovementBoard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [harnesses, setHarnesses] = useState<HarnessInfo[]>([]);
   const [harnessId, setHarnessId] = useState('claude');
+  const [direction, setDirection] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +83,11 @@ export const ImprovementBoard: React.FC = () => {
 
   useEffect(() => {
     void load();
+    try {
+      setDirection(localStorage.getItem(DIRECTION_KEY) ?? '');
+    } catch {
+      /* stockage indisponible */
+    }
     void checkRunner().then((health) => {
       if (!health) return;
       setHarnesses(health.harnesses);
@@ -65,7 +96,20 @@ export const ImprovementBoard: React.FC = () => {
     });
   }, [load]);
 
+  const rememberDirection = (text: string) => {
+    setDirection(text);
+    try {
+      localStorage.setItem(DIRECTION_KEY, text);
+    } catch {
+      /* stockage indisponible */
+    }
+  };
+
   const propose = async () => {
+    if (direction.trim().length < 8) {
+      setError("Donnez d'abord une direction : c'est vous qui fixez le cap.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -82,6 +126,7 @@ export const ImprovementBoard: React.FC = () => {
         body: JSON.stringify({
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined,
           context,
+          direction: direction.trim(),
           count: 6
         })
       });
@@ -109,7 +154,17 @@ export const ImprovementBoard: React.FC = () => {
     try {
       const runId = await startRun(
         harnessId,
-        `${item.prompt}\n\n[CONTEXTE] Proposition « ${item.title} » du backlog d'auto-amélioration OmniVenture. Travaille dans ce dépôt, en petits commits lisibles, sans rien déployer.`
+        [
+          item.prompt,
+          '',
+          `[CONTEXTE] Proposition « ${item.title} » du backlog d'auto-amélioration OmniVenture.`,
+          direction.trim() ? `[DIRECTION DE L'OPÉRATEUR] ${direction.trim()}` : '',
+          'Travaille dans ce dépôt, en petits commits lisibles, sans rien déployer.'
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        undefined,
+        'improve'
       );
       await patch(item.id, { status: 'dispatched', runId });
     } catch (err) {
@@ -127,11 +182,11 @@ export const ImprovementBoard: React.FC = () => {
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">Auto-amélioration</h2>
+          <h2 className="text-xl font-bold text-slate-900">Auto-amélioration — vous dirigez</h2>
           <p className="mt-0.5 max-w-3xl text-sm text-slate-500">
-            L'agence analyse son propre produit et propose les évolutions qui augmentent le revenu. Chaque idée part
-            ensuite vers un harnais de codage. <strong>La relecture et la mise en production restent manuelles</strong> —
-            rien ne se déploie tout seul.
+            <strong>Vous fixez le cap</strong> ; l'agence propose des évolutions qui le servent et vous choisissez celles
+            qui partent vers un harnais de codage. Rien n'est proposé sans votre direction, rien n'est confié sans votre
+            clic, <strong>et la relecture comme la mise en production restent manuelles</strong>.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -153,13 +208,45 @@ export const ImprovementBoard: React.FC = () => {
           <button
             type="button"
             onClick={propose}
-            disabled={busy}
+            disabled={busy || direction.trim().length < 8}
+            title={direction.trim().length < 8 ? 'Indiquez d’abord la direction à suivre' : undefined}
             className="rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
           >
-            {busy ? 'Analyse en cours…' : '🧠 Proposer des évolutions'}
+            {busy ? 'Analyse en cours…' : '🧠 Proposer sur cette direction'}
           </button>
         </div>
       </header>
+
+      {/* Le cap, donné par l'opérateur : point de départ obligatoire */}
+      <section className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
+        <label htmlFor="improve-direction" className="text-xs font-bold text-slate-900">
+          🎯 Votre direction
+        </label>
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          Ce que l'agence doit chercher à améliorer, dans vos mots. Tout ce qui n'y répond pas est écarté.
+        </p>
+        <textarea
+          id="improve-direction"
+          value={direction}
+          onChange={(event) => rememberDirection(event.target.value)}
+          rows={3}
+          placeholder="Ex. « Fais passer le taux de conversion essai → abonnement au-dessus de 8 %, sans toucher au prix. »"
+          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-600 focus:outline-none"
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Caps courants</span>
+          {DIRECTION_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => rememberDirection(preset.text)}
+              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
       {!runnerReady && (
@@ -175,7 +262,7 @@ export const ImprovementBoard: React.FC = () => {
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
           <p className="text-sm font-semibold text-slate-900">Backlog vide</p>
           <p className="mt-1 text-xs text-slate-500">
-            Lancez une analyse : l'agence identifiera ce qui lui manque pour générer du revenu.
+            Donnez une direction ci-dessus, puis lancez l'analyse : l'agence proposera ce qui sert ce cap.
           </p>
         </div>
       ) : (

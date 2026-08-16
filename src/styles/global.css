@@ -35,9 +35,11 @@
   left: 0;
   /* Au-dessus des modales : on doit pouvoir passer d'un studio à l'autre. */
   z-index: 50;
-  background-color: rgba(2, 6, 23, 0.42);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  /* Même matière que les widgets posés sur la carte (bg-slate-950/60 +
+     backdrop-blur-xl) : sans ça la nav paraît délavée à côté d'eux. */
+  background-color: rgba(2, 6, 23, 0.6);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
   border-right-color: rgba(255, 255, 255, 0.1);
   transition: opacity 0.25s ease;
 }
@@ -45,6 +47,25 @@
 /* Le calque d'interface du bureau démarre après la nav pour ne pas passer dessous. */
 .office-immersive .office-ui-layer {
   left: 16rem;
+}
+
+/* Les modales de page sont posées sur un panneau clair : elles ne doivent PAS
+   hériter de l'encre claire de l'ambiance sombre, sinon un texte sans classe
+   explicite (champ de saisie, paragraphe brut) devient illisible. */
+.office-immersive [data-page-modal] {
+  color: #0f172a;
+}
+
+/* Les contrôles de formulaire n'héritent pas de la couleur : on la leur donne. */
+.office-immersive [data-page-modal] input,
+.office-immersive [data-page-modal] textarea,
+.office-immersive [data-page-modal] select {
+  color: #0f172a;
+}
+
+.office-immersive [data-page-modal] input::placeholder,
+.office-immersive [data-page-modal] textarea::placeholder {
+  color: #94a3b8;
 }
 
 /* « Masquer l'UI » : on ne garde que le bureau. */

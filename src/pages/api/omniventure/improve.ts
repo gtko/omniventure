@@ -1,15 +1,19 @@
 /**
- * Boucle d'auto-amélioration d'OmniVenture.
+ * Boucle d'auto-amélioration d'OmniVenture — DIRIGÉE PAR L'OPÉRATEUR.
  *
- * L'organisation propose elle-même les fonctionnalités qui lui manquent pour
- * générer du revenu, les classe, puis chaque idée peut être confiée à un
- * harnais de codage local.
+ * L'organisation ne décide pas de son propre cap : vous donnez la direction,
+ * elle propose des évolutions qui la servent, les classe, puis chaque idée peut
+ * être confiée à un harnais de codage local.
  *
- * Garde-fou volontaire : rien n'est implémenté ni déployé automatiquement.
- * Une proposition passe par « proposée → confiée à un harnais → relue par un
- * humain → livrée ». Le dernier maillon reste manuel, et c'est délibéré :
- * un système qui modifie et déploie son propre code sans relecture n'est pas
- * une fonctionnalité, c'est un incident en attente.
+ * Deux garde-fous, dans cet ordre :
+ *   1. rien n'est proposé sans direction explicite (cette route refuse la
+ *      requête sans elle) ;
+ *   2. rien n'est implémenté ni déployé automatiquement — une proposition passe
+ *      par « proposée → confiée à un harnais → relue par un humain → livrée ».
+ *
+ * Le dernier maillon reste manuel, et c'est délibéré : un système qui modifie
+ * et déploie son propre code sans relecture n'est pas une fonctionnalité, c'est
+ * un incident en attente.
  */
 
 import type { APIRoute } from 'astro';
@@ -156,6 +160,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     model?: string;
     context?: string;
     count?: number;
+    direction?: string;
   };
 
   const key = body.openRouterKey?.trim() || env?.OPENROUTER_API_KEY;
@@ -163,11 +168,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return json({ error: 'Clé OpenRouter absente : renseignez-la dans le studio d’agents.' }, 400);
   }
 
+  // L'organisation ne choisit pas son cap toute seule : sans consigne de votre
+  // part, il n'y a rien à proposer.
+  const direction = body.direction?.trim() ?? '';
+  if (direction.length < 8) {
+    return json({ error: 'Direction manquante : indiquez ce que l’agence doit chercher à améliorer.' }, 400);
+  }
+
   const existing = await readAll(env);
   const count = Math.max(3, Math.min(12, body.count ?? 6));
   const model = body.model?.trim() || 'deepseek/deepseek-v4-flash';
 
   const prompt = `Tu es le Chief of Staff d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS rentables.
+Tu n'as PAS autorité sur la feuille de route : elle est fixée par l'opérateur humain, ci-dessous.
+
+[DIRECTION DONNÉE PAR L'OPÉRATEUR — c'est la consigne qui prime sur tout le reste]
+${direction.slice(0, 1500)}
 
 [ÉTAT ACTUEL]
 ${body.context?.slice(0, 3000) || 'Usine à micro-SaaS sur Cloudflare Edge : Astro SSR, D1, Workers, agents OpenRouter, bureau virtuel de pilotage.'}
@@ -176,7 +192,8 @@ ${body.context?.slice(0, 3000) || 'Usine à micro-SaaS sur Cloudflare Edge : Ast
 ${existing.slice(0, 25).map((item) => `- ${item.title}`).join('\n') || '(vide)'}
 
 [MISSION]
-Propose ${count} évolutions concrètes du PRODUIT qui augmentent réellement le revenu ou réduisent le coût.
+Propose ${count} évolutions concrètes du PRODUIT qui SERVENT LA DIRECTION ci-dessus.
+Écarte tout ce qui n'y répond pas, même si l'idée te paraît bonne par ailleurs.
 Chaque idée doit être implémentable par un agent de code dans ce dépôt (Astro 5 + React + Cloudflare Workers/D1).
 
 Réponds STRICTEMENT par un tableau JSON, sans texte autour :
@@ -197,7 +214,7 @@ Réponds STRICTEMENT par un tableau JSON, sans texte autour :
         'Content-Type': 'application/json',
         Authorization: `Bearer ${key}`,
         'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI — Auto-amélioration'
+        'X-Title': 'OmniVenture AI - Self Improvement'
       },
       body: JSON.stringify({
         model,
@@ -245,7 +262,7 @@ Réponds STRICTEMENT par un tableau JSON, sans texte autour :
   if (created.length === 0) return json({ error: 'Aucune proposition exploitable' }, 502);
 
   const stored = await writeAll(env, [...created, ...existing].slice(0, MAX_ITEMS));
-  return json({ items: created, stored, modelUsed: model });
+  return json({ items: created, stored, modelUsed: model, direction });
 };
 
 function json(payload: unknown, status = 200): Response {

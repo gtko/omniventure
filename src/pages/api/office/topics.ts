@@ -197,7 +197,7 @@ ${context}
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`,
       'HTTP-Referer': 'https://factory.dev',
-      'X-Title': 'OmniVenture AI — Bureau Virtuel'
+      'X-Title': 'OmniVenture AI - Virtual Office'
     },
     body: JSON.stringify({
       model,

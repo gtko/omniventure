@@ -22,6 +22,7 @@ import {
   ZOOM_MAX,
   ZOOM_MIN
 } from './constants';
+import { drawHarnessBadge } from './harnessMarks';
 import type { Actor, OfficeSim } from './simulation';
 import { TileType, type OfficeMap } from './types';
 
@@ -350,10 +351,31 @@ export function renderFrame(
 
   // Étiquettes et bulles au-dessus de la scène, du fond vers l'avant.
   const ordered = visibleActors.sort((a, b) => a.y - b.y);
+
+  // Les harnais portent leur badge en toutes circonstances : c'est ce qui
+  // permet de reconnaître d'un coup d'œil qui, sur le plateau, est une CLI.
+  // Épinglé à l'épaule plutôt qu'au-dessus de la tête : le haut du sprite est
+  // vide, et c'est là que sortent les bulles.
+  for (const actor of ordered) {
+    if (!actor.profile.harness) continue;
+    const anchor = px(view, actor.x + 8, actor.y - 20 + (isSeated(actor) ? SITTING_OFFSET_PX : 0));
+    drawHarnessBadge(
+      ctx,
+      actor.profile.harness,
+      anchor.x,
+      anchor.y,
+      Math.max(11, 6.5 * Math.min(view.zoom, 3)),
+      actor.mode !== 'leave'
+    );
+  }
+
   if (options.showNames && view.zoom >= 1) {
     for (const actor of ordered) {
       const tagged =
-        actor.profile.key || options.selectedId === actor.profile.id || options.hoveredId === actor.profile.id;
+        actor.profile.key ||
+        !!actor.profile.harness ||
+        options.selectedId === actor.profile.id ||
+        options.hoveredId === actor.profile.id;
       if (tagged) drawNameTag(ctx, view, actor, options.selectedId === actor.profile.id);
     }
   }

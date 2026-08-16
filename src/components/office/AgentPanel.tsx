@@ -174,11 +174,11 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
     <aside
       className="pointer-events-auto flex h-full w-[min(92vw,390px)] flex-col overflow-hidden rounded-2xl border border-white/15 text-slate-100 shadow-2xl"
       style={{
-        // Verre noir : assez de flou pour rester lisible, assez peu pour qu'on
-        // reconnaisse le bureau derrière.
-        background: 'linear-gradient(180deg, rgba(2,6,23,0.42) 0%, rgba(2,6,23,0.30) 100%)',
-        backdropFilter: 'blur(10px) saturate(140%)',
-        WebkitBackdropFilter: 'blur(10px) saturate(140%)'
+        // Verre noir, même densité que les widgets posés sur la carte
+        // (bg-slate-950/60 + backdrop-blur-xl) : tout doit être de la même matière.
+        background: 'linear-gradient(180deg, rgba(2,6,23,0.62) 0%, rgba(2,6,23,0.52) 100%)',
+        backdropFilter: 'blur(20px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(140%)'
       }}
     >
       {/* En-tête */}

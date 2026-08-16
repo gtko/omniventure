@@ -73,9 +73,9 @@ export const EditorPalette: React.FC<Props> = ({
     <aside
       className="pointer-events-auto flex h-full w-[min(92vw,320px)] flex-col overflow-hidden rounded-2xl border border-white/15 text-slate-100 shadow-2xl"
       style={{
-        background: 'linear-gradient(180deg, rgba(2,6,23,0.44) 0%, rgba(2,6,23,0.32) 100%)',
-        backdropFilter: 'blur(10px) saturate(140%)',
-        WebkitBackdropFilter: 'blur(10px) saturate(140%)'
+        background: 'linear-gradient(180deg, rgba(2,6,23,0.62) 0%, rgba(2,6,23,0.52) 100%)',
+        backdropFilter: 'blur(20px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(140%)'
       }}
     >
       <header className="flex items-center justify-between border-b border-white/10 bg-white/[0.06] px-4 py-3">

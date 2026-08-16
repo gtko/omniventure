@@ -118,6 +118,14 @@ export interface AgentProfile {
   level?: string;
   /** Droit à un bureau fermé individuel (C-level, VP, Head of). */
   senior?: boolean;
+  /**
+   * Harnais de codage piloté depuis l'application (claude, codex, opencode…).
+   * Un profil qui porte ce champ est un intervenant TEMPORAIRE : il entre le
+   * temps d'un run puis quitte le plateau, et n'est jamais persisté.
+   */
+  harness?: string;
+  /** Identifiant du run associé, pour retrouver l'intervenant à la sortie. */
+  runId?: string;
 }
 
 /** Rituels d'équipe joués en salle de réunion. */
@@ -141,7 +149,7 @@ const RITUALS: Ritual[] = [
   { name: 'Grooming produit', size: 4, duration: [20, 35] }
 ];
 
-export type ActorMode = 'desk' | 'goto' | 'activity' | 'return' | 'work';
+export type ActorMode = 'desk' | 'goto' | 'activity' | 'return' | 'work' | 'leave';
 
 export interface Actor {
   profile: AgentProfile;
@@ -176,6 +184,11 @@ export interface Actor {
   bubble: string | null;
   bubbleTone: 'idle' | 'chat' | 'real';
   bubbleUntil: number;
+
+  /** Cloué à son poste : ne part jamais en pause (intervenant au travail). */
+  pinned?: boolean;
+  /** Heure de simulation à laquelle l'intervenant disparaît du plateau. */
+  leaveAt?: number;
 }
 
 export interface OfficeEvent {
@@ -320,7 +333,8 @@ export class OfficeSim {
     if (this.paused) return;
     const dt = Math.min(rawDt, MAX_DELTA_SEC) * this.timeScale;
     this.clock += dt;
-    for (const actor of this.actors) this.stepActor(actor, dt);
+    // À rebours : un intervenant temporaire peut se retirer pendant la boucle.
+    for (let i = this.actors.length - 1; i >= 0; i--) this.stepActor(this.actors[i], dt);
     if (this.idleEnabled && this.clock >= this.nextRitualAt) this.startRitual();
   }
 
@@ -394,6 +408,10 @@ export class OfficeSim {
       case 'activity':
         this.tickActivity(actor);
         break;
+      case 'leave':
+        // Arrivé à la porte : l'intervenant quitte définitivement le plateau.
+        if (this.clock >= (actor.leaveAt ?? 0)) this.removeActor(actor);
+        break;
       case 'return':
         actor.mode = 'desk';
         actor.activity = 'desk';
@@ -406,6 +424,8 @@ export class OfficeSim {
         break;
       case 'desk':
       default:
+        // Un intervenant au travail ne part pas à la machine à café.
+        if (actor.pinned) break;
         if (this.idleEnabled && this.clock >= actor.decideAt) this.decide(actor);
         break;
     }
@@ -674,6 +694,118 @@ export class OfficeSim {
     return { col: seat.col, row: seat.row + 1 };
   }
 
+  /* ── Intervenants temporaires : les harnais de code ──────── */
+
+  /**
+   * Fait entrer un harnais sur le plateau. Il arrive par la porte principale,
+   * s'installe à un poste libre et y reste tant que son run tourne.
+   *
+   * Ces intervenants ne sont jamais enregistrés en base : ils n'existent que le
+   * temps de l'exécution, contrairement aux agents du graphe.
+   */
+  spawnHarness(profile: AgentProfile, entrance: Step): Actor | null {
+    const existing = this.byId.get(profile.id);
+    if (existing) return existing;
+
+    const taken = new Set(this.actors.map((actor) => actor.seat.id));
+    const seat =
+      this.seats.find((s) => s.kind !== 'private' && !taken.has(s.id)) ??
+      this.seats.find((s) => !taken.has(s.id));
+    if (!seat) return null;
+
+    const start = isWalkable(this.nav, entrance.col, entrance.row) ? entrance : { col: seat.col, row: seat.row };
+    const index = this.actors.length;
+    const actor: Actor = {
+      profile,
+      palette: index % 6,
+      hueShift: 0,
+      seat,
+      speed: WALK_SPEED_PX_S * 1.25, // il traverse d'un pas décidé
+      col: start.col,
+      row: start.row,
+      x: tileCenter(start.col),
+      y: tileCenter(start.row),
+      dir: Direction.UP,
+      pose: 'walk',
+      frame: 0,
+      frameTimer: 0,
+      path: findPath(this.nav, start, { col: seat.col, row: seat.row }),
+      moveProgress: 0,
+      mode: 'return',
+      activity: 'work',
+      spot: null,
+      partnerId: null,
+      untilAt: 0,
+      decideAt: Infinity,
+      nextLineAt: 0,
+      ritual: null,
+      ritualDuration: 0,
+      bubble: null,
+      bubbleTone: 'real',
+      bubbleUntil: 0,
+      pinned: true
+    };
+    if (actor.path.length === 0) {
+      actor.col = seat.col;
+      actor.row = seat.row;
+      actor.x = tileCenter(seat.col);
+      actor.y = tileCenter(seat.row);
+      actor.dir = seat.dir;
+      actor.pose = 'type';
+      actor.mode = 'desk';
+    }
+
+    this.actors.push(actor);
+    this.byId.set(profile.id, actor);
+    this.say(actor, `👋 ${profile.short} prend un poste`, 'real', 14);
+    this.log(`${profile.short} entre sur le plateau — ${profile.role}`, 'real');
+    return actor;
+  }
+
+  /**
+   * Reprend une ligne de sortie du harnais dans sa bulle. Rien n'est généré :
+   * c'est le texte que le processus vient d'écrire, simplement espacé pour
+   * rester lisible.
+   */
+  harnessSay(runId: string, line: string): void {
+    const actor = this.actors.find((entry) => entry.profile.runId === runId);
+    if (!actor || this.clock < actor.nextLineAt) return;
+    const text = line.replace(/\s+/g, ' ').trim();
+    if (text.length < 2) return;
+    this.say(actor, text.length > 90 ? `${text.slice(0, 89)}…` : text, 'real', 12);
+    actor.nextLineAt = this.clock + 5;
+  }
+
+  /** Fin du run : l'intervenant salue, rejoint la porte et disparaît. */
+  dismissHarness(runId: string, ok: boolean, entrance: Step): void {
+    const actor = this.actors.find((entry) => entry.profile.runId === runId);
+    if (!actor) return;
+
+    this.release(actor);
+    actor.pinned = false;
+    actor.mode = 'leave';
+    actor.partnerId = null;
+    actor.path = findPath(this.nav, { col: actor.col, row: actor.row }, entrance);
+    actor.moveProgress = 0;
+    actor.pose = actor.path.length > 0 ? 'walk' : 'read';
+    actor.leaveAt = this.clock + 4;
+    this.say(actor, ok ? '✓ Tâche terminée' : '✗ Run interrompu', 'real', 25);
+    this.log(`${actor.profile.short} quitte le plateau — ${ok ? 'tâche terminée' : 'run interrompu'}`, 'real');
+  }
+
+  /** Retire un acteur du plateau (uniquement les intervenants temporaires). */
+  private removeActor(actor: Actor): void {
+    this.release(actor);
+    const index = this.actors.indexOf(actor);
+    if (index >= 0) this.actors.splice(index, 1);
+    this.byId.delete(actor.profile.id);
+  }
+
+  /** Intervenants actuellement présents, pour le HUD. */
+  harnessActors(): Actor[] {
+    return this.actors.filter((actor) => !!actor.profile.harness);
+  }
+
   /* ── Bulles & journal ────────────────────────────────────── */
 
   /** Fait parler un agent depuis l'extérieur (conversation avec l'opérateur). */
@@ -708,7 +840,9 @@ export class OfficeSim {
       version: 2,
       clock: Math.round(this.clock),
       savedAt: Date.now(),
-      actors: this.actors.map((actor) => ({
+      // Les intervenants temporaires (harnais) ne sont pas des collaborateurs :
+      // ils ne survivent pas à la session.
+      actors: this.actors.filter((actor) => !actor.profile.harness).map((actor) => ({
         id: actor.profile.id,
         col: actor.col,
         row: actor.row,
@@ -881,6 +1015,11 @@ export class OfficeSim {
   }
 
   statusOf(actor: Actor): string {
+    if (actor.profile.harness) {
+      if (actor.mode === 'leave') return 'Quitte le plateau';
+      if (actor.mode === 'return') return 'Rejoint un poste libre';
+      return 'Exécution en cours sur votre machine';
+    }
     if (actor.mode === 'work') return 'Tâche réelle en cours';
     if (actor.ritual) return actor.mode === 'goto' ? `En route — ${actor.ritual}` : `${actor.ritual} en cours`;
     if (actor.mode === 'goto') return `En route — ${ACTIVITY_LABEL[actor.activity]}`;

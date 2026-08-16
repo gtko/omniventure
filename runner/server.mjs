@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -141,6 +141,10 @@ function startRun({ harnessId, prompt, cwd }) {
 
   const args = harness.runArgs.map((arg) => arg.replaceAll('{prompt}', prompt));
   const workdir = cwd ? resolve(PROJECT_ROOT, cwd) : PROJECT_ROOT;
+  // Le harnais tourne avec vos droits : au minimum, il reste dans le projet.
+  if (workdir !== PROJECT_ROOT && !workdir.startsWith(PROJECT_ROOT + sep)) {
+    throw new Error('Dossier de travail hors du projet');
+  }
   const id = `run-${++runSeq}-${Date.now().toString(36)}`;
 
   const child = spawnHarness(harness.bin, args, { cwd: workdir, env: process.env });
@@ -231,6 +235,20 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const run = startRun(body);
       return sendJson(res, 200, { runId: run.id, harnessId: run.harnessId, cwd: run.cwd });
+    }
+
+    // Runs connus du pont : permet au bureau de se raccrocher aux exécutions
+    // encore en cours après un rechargement de page.
+    if (req.method === 'GET' && url.pathname === '/runs') {
+      return sendJson(res, 200, {
+        runs: [...runs.values()].map((run) => ({
+          runId: run.id,
+          harnessId: run.harnessId,
+          startedAt: run.startedAt,
+          exitCode: run.exitCode,
+          prompt: run.prompt.slice(0, 200)
+        }))
+      });
     }
 
     const streamMatch = url.pathname.match(/^\/run\/([\w-]+)\/stream$/);

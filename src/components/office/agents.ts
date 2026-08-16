@@ -8,6 +8,7 @@
  * apparaître dans le bureau, en supprimer un le fait disparaître.
  */
 
+import { harnessBrand } from './harnessMarks';
 import type { AgentProfile } from './simulation';
 
 type Category = 'orchestration' | 'research' | 'engineering' | 'growth' | 'operations';
@@ -140,4 +141,31 @@ export function loadGraphProfiles(): AgentProfile[] {
 
   const source = stored.filter((agent) => agent && typeof agent.id === 'string' && typeof agent.role === 'string');
   return (source.length > 0 ? source : GRAPH_DEFAULTS).map(toProfile);
+}
+
+/**
+ * Profil d'un harnais de codage lancé depuis l'application.
+ *
+ * Ce n'est pas un agent du graphe et ça ne le devient jamais : c'est un
+ * intervenant extérieur, identifié par son run, qui occupe un poste le temps
+ * de son exécution puis repart. Le bureau ne contient donc toujours que les
+ * agents du graphe — plus, ponctuellement, les CLI que vous avez lancées.
+ */
+export function harnessProfile(harnessId: string, runId: string): AgentProfile {
+  const brand = harnessBrand(harnessId);
+  return {
+    id: `harness:${runId}`,
+    short: brand.short,
+    name: `${brand.label} — ${runId}`,
+    role: `Harnais de codage — ${brand.label}`,
+    emoji: '🛠️',
+    tier: 2,
+    modelId: brand.label,
+    accent: brand.accent,
+    room: 'engineering',
+    department: 'Intervenants (machine locale)',
+    level: 'lead',
+    harness: harnessId,
+    runId
+  };
 }

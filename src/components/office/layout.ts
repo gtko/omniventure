@@ -37,6 +37,12 @@ export const BUILDING = {
   h: BUILDING_ROWS
 };
 
+/**
+ * Porte principale, percée dans la façade sud. C'est par là qu'arrivent et
+ * repartent les intervenants temporaires (les harnais de code).
+ */
+export const ENTRANCE = { col: OUTDOOR_MARGIN + 32, row: OUTDOOR_MARGIN + 39 };
+
 /* ── Motifs de sol ────────────────────────────────────────────── */
 const F_PLANK = 2;
 const F_BRICK = 6;
@@ -341,9 +347,9 @@ export function buildOffice(patches: Patch[] = []): OfficeBlueprint {
     (nearBand(row, ROAD_NORTH) || nearBand(row, ROAD_SOUTH) || nearBand(col, ROAD_WEST) || nearBand(col, ROAD_EAST));
   const ROAD_TOP = ROAD_SOUTH; // route desservant l'entrée principale
 
-  // Parvis devant l'entrée principale.
-  const ENTRY_COL = OX + 32;
-  const ENTRY_WALL_ROW = OY + 39;
+  // Parvis devant l'entrée principale (même repère que la constante exportée).
+  const ENTRY_COL = ENTRANCE.col;
+  const ENTRY_WALL_ROW = ENTRANCE.row;
   const isForecourt = (col: number, row: number) =>
     col >= ENTRY_COL - 1 && col <= ENTRY_COL + 2 && row > ENTRY_WALL_ROW && row < ROAD_TOP;
 

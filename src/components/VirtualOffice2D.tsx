@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clearRealAgentLogs, getRealAgentLogs, saveRealAgentLog, type RealAgentActivity } from '../lib/agent-bus';
-import { loadGraphProfiles } from './office/agents';
+import {
+  HARNESS_EVENTS,
+  listRuns,
+  trackRun,
+  type HarnessExitDetail,
+  type HarnessLineDetail,
+  type HarnessStartDetail
+} from '../lib/harness-client';
+import { harnessProfile, loadGraphProfiles } from './office/agents';
+import { drawHarnessBadge, harnessBrand } from './office/harnessMarks';
 import { AgentPanel, type AgentView } from './office/AgentPanel';
 import {
   DEFAULT_SEAT_DIR,
@@ -15,7 +24,7 @@ import { loadOfficeAssets, type OfficeAssets } from './office/assets';
 import { CATALOG } from './office/catalog';
 import { SAVE_INTERVAL_SEC, TIME_SCALES, TILE, ZOOM_MAX, ZOOM_MIN } from './office/constants';
 import { buildNav } from './office/grid';
-import { BUILDING, buildOffice } from './office/layout';
+import { BUILDING, buildOffice, ENTRANCE } from './office/layout';
 import { flushSnapshot, generateTopics, loadSnapshot, loadTopics, saveSnapshot, type StateSource } from './office/persistence';
 import {
   bakeBackground,
@@ -46,6 +55,15 @@ interface Hud {
   clock: number;
 }
 
+/** Run de harnais visible sur le plateau (un intervenant = un run). */
+interface HarnessRunView {
+  runId: string;
+  harnessId: string;
+  startedAt: number;
+  done: boolean;
+  exitCode?: number;
+}
+
 const CENSUS_LABELS: Array<{ key: string; icon: string; label: string }> = [
   { key: 'desk', icon: '🖥️', label: 'Au poste' },
   { key: 'moving', icon: '🚶', label: 'En chemin' },
@@ -70,6 +88,23 @@ const SOURCE_LABEL: Record<StateSource, string> = {
 const GLASS = 'rounded-2xl border border-white/10 bg-slate-950/60 text-slate-100 shadow-2xl backdrop-blur-xl';
 const CHIP =
   'rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-white/15';
+
+/** Badge d'un harnais en HTML — même dessin que sur la carte. */
+const HarnessBadgeIcon: React.FC<{ id: string; size?: number; busy?: boolean }> = ({ id, size = 18, busy = true }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    drawHarnessBadge(ctx, id, size / 2, size / 2, size - 2, busy);
+  }, [id, size, busy]);
+  return <canvas ref={ref} style={{ width: size, height: size }} aria-hidden />;
+};
 
 export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height }) => {
   // Aménagement
@@ -136,6 +171,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   const [topicModel, setTopicModel] = useState<string | null>(null);
   const [topicBusy, setTopicBusy] = useState(false);
 
+  const [harnessRuns, setHarnessRuns] = useState<HarnessRunView[]>([]);
   const [realLogs, setRealLogs] = useState<RealAgentActivity[]>([]);
   const [liveTestQuery, setLiveTestQuery] = useState('loom.com');
   const [isExecutingLiveTest, setIsExecutingLiveTest] = useState(false);
@@ -382,6 +418,59 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     return () => {
       window.removeEventListener('omniventure_real_agent_activity', onActivity);
       window.removeEventListener('omniventure_real_agent_activity_cleared', onCleared);
+    };
+  }, [notify]);
+
+  /* ── Harnais de code : un run = un intervenant sur le plateau ── */
+  useEffect(() => {
+    const onStart = (event: Event) => {
+      const detail = (event as CustomEvent<HarnessStartDetail>).detail;
+      const sim = simRef.current;
+      if (!detail || !sim) return;
+      const actor = sim.spawnHarness(harnessProfile(detail.harnessId, detail.runId), ENTRANCE);
+      if (!actor) {
+        notify('Aucun poste libre pour accueillir le harnais.');
+        return;
+      }
+      setHarnessRuns((prev) => [
+        { runId: detail.runId, harnessId: detail.harnessId, startedAt: Date.now(), done: false },
+        ...prev.filter((run) => run.runId !== detail.runId)
+      ]);
+      notify(`${harnessBrand(detail.harnessId).label} arrive dans le bureau.`);
+    };
+
+    const onLine = (event: Event) => {
+      const detail = (event as CustomEvent<HarnessLineDetail>).detail;
+      if (detail) simRef.current?.harnessSay(detail.runId, detail.line);
+    };
+
+    const onExit = (event: Event) => {
+      const detail = (event as CustomEvent<HarnessExitDetail>).detail;
+      if (!detail) return;
+      simRef.current?.dismissHarness(detail.runId, detail.exitCode === 0, ENTRANCE);
+      setHarnessRuns((prev) =>
+        prev.map((run) => (run.runId === detail.runId ? { ...run, done: true, exitCode: detail.exitCode } : run))
+      );
+      // La ligne du tableau de bord s'efface une fois l'intervenant sorti.
+      window.setTimeout(() => setHarnessRuns((prev) => prev.filter((run) => run.runId !== detail.runId)), 30000);
+    };
+
+    window.addEventListener(HARNESS_EVENTS.start, onStart);
+    window.addEventListener(HARNESS_EVENTS.line, onLine);
+    window.addEventListener(HARNESS_EVENTS.exit, onExit);
+
+    // Un run peut avoir été lancé avant l'ouverture de cette page : on se
+    // raccroche à ceux qui tournent encore, sinon l'intervenant manquerait.
+    void listRuns().then((runs) => {
+      for (const run of runs) {
+        if (run.exitCode === null) trackRun(run.runId, run.harnessId, run.prompt, 'reprise');
+      }
+    });
+
+    return () => {
+      window.removeEventListener(HARNESS_EVENTS.start, onStart);
+      window.removeEventListener(HARNESS_EVENTS.line, onLine);
+      window.removeEventListener(HARNESS_EVENTS.exit, onExit);
     };
   }, [notify]);
 
@@ -938,6 +1027,46 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
               </button>
             )}
           </div>
+
+          {/* Harnais présents sur le plateau — un intervenant par run */}
+          {harnessRuns.length > 0 && (
+            <div className={`pointer-events-auto absolute left-1/2 top-3 w-[min(92vw,340px)] -translate-x-1/2 ${GLASS}`}>
+              <div className="flex items-center gap-1.5 border-b border-white/10 px-3.5 py-2 text-[11px] font-semibold text-slate-200">
+                <span>🛠️</span>
+                <span>Harnais sur le plateau</span>
+                <span className="ml-auto rounded bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-slate-300">
+                  votre machine
+                </span>
+              </div>
+              <div className="space-y-0.5 px-1.5 py-1.5">
+                {harnessRuns.map((run) => (
+                  <button
+                    key={run.runId}
+                    type="button"
+                    onClick={() => focusAgent(`harness:${run.runId}`)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors hover:bg-white/10"
+                  >
+                    <HarnessBadgeIcon id={run.harnessId} busy={!run.done} />
+                    <span className="text-[11px] font-semibold text-slate-100">
+                      {harnessBrand(run.harnessId).label}
+                    </span>
+                    <span className="font-mono text-[9.5px] text-slate-500">{run.runId}</span>
+                    <span
+                      className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[9px] ${
+                        !run.done
+                          ? 'bg-indigo-400/15 text-indigo-200'
+                          : run.exitCode === 0
+                            ? 'bg-emerald-400/15 text-emerald-300'
+                            : 'bg-rose-400/15 text-rose-300'
+                      }`}
+                    >
+                      {!run.done ? '● en cours' : run.exitCode === 0 ? '✓ terminé' : `✗ code ${run.exitCode}`}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Journal de vie */}
           <div className={`pointer-events-auto absolute bottom-3 left-3 w-[min(92vw,360px)] ${GLASS}`}>

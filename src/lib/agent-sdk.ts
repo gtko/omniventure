@@ -117,7 +117,7 @@ export async function runAgent(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${options.openRouterKey}`,
         'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI — Agent SDK'
+        'X-Title': 'OmniVenture AI - Agent SDK'
       },
       body: JSON.stringify({
         model: def.model,
