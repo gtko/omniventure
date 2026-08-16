@@ -49,6 +49,8 @@ export interface Task {
   phase?: PhaseId;
   /** Cycle d'amélioration qui l'a produite : 1 pour la première traversée. */
   cycle?: number;
+  /** Sprint dans lequel l'équipe s'est engagée à la livrer. */
+  sprint?: number;
   labels: string[];
   createdAt: number;
   updatedAt: number;

@@ -179,6 +179,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
                   { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
                   { label: 'Agenda', href: '/agenda', icon: '📅' },
+                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
                   { label: 'Coffre-fort', href: '/vault', icon: '🔐' },
                   { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {
@@ -230,6 +231,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Ateliers Métier', href: '/studio', icon: '🎨' },
                   { label: 'Mission Autonome', href: '/autonome', icon: '🛰️' },
                   { label: 'Agenda', href: '/agenda', icon: '📅' },
+                  { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
                   { label: 'Coffre-fort', href: '/vault', icon: '🔐' },
                   { label: 'Ressources Humaines', href: '/hr', icon: '🧑‍💼' }
                 ].map(item => {

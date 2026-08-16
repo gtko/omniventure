@@ -21,9 +21,20 @@ import { runAgent } from './agent-sdk';
 import { cultureBlock, readCulture } from './culture';
 import { readGraph, type GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
-import { addTask, readTasks, removeTask, upsertDoc } from './workspace';
+import { commit, sprintById, updateSprint, type Sprint } from './sprint';
+import { addTask, readTasks, removeTask, updateTask, upsertDoc } from './workspace';
 
 export type MeetingKind = 'rituel' | 'un-a-un' | 'revue' | 'atelier' | 'incident' | 'comite';
+
+/**
+ * La forme de la réunion.
+ *
+ * Une planification, une démo et une rétro ne se concluent pas de la même
+ * façon : l'une engage, l'autre accepte ou refuse, la troisième change la
+ * manière de travailler. Le modèle détermine ce qu'on demande à l'organisateur
+ * en sortie, et ce qui s'applique ensuite.
+ */
+export type MeetingTemplate = 'libre' | 'planning' | 'demo' | 'retro';
 export type MeetingStatus = 'prevu' | 'en-cours' | 'termine' | 'annule';
 
 export interface Meeting {
@@ -42,6 +53,10 @@ export interface Meeting {
   duration: number;
   status: MeetingStatus;
   ventureName?: string;
+  template: MeetingTemplate;
+  /** Contexte préparé avant la réunion : roadmap, livrables, faits du sprint. */
+  brief?: string;
+  sprintId?: string;
   report?: string;
   outcomes: Outcome[];
   createdAt: number;
@@ -134,6 +149,9 @@ export interface ScheduleInput {
   hour: number;
   duration?: number;
   ventureName?: string;
+  template?: MeetingTemplate;
+  brief?: string;
+  sprintId?: string;
 }
 
 export function schedule(input: ScheduleInput): { meeting?: Meeting; error?: string } {
@@ -170,6 +188,9 @@ export function schedule(input: ScheduleInput): { meeting?: Meeting; error?: str
     duration,
     status: 'prevu',
     ventureName: input.ventureName,
+    template: input.template ?? 'libre',
+    brief: input.brief,
+    sprintId: input.sprintId,
     outcomes: [],
     createdAt: Date.now()
   };
@@ -328,7 +349,10 @@ async function run(meeting: Meeting, openRouterKey: string): Promise<void> {
     );
 
     const parsed = parseModelJson(result.text ?? '', organiser.modelId ?? 'modèle');
-    const outcomes = applyOutcomes(meeting, Array.isArray(parsed?.suites) ? parsed.suites : [], graph);
+    const outcomes =
+      meeting.template === 'libre'
+        ? applyOutcomes(meeting, Array.isArray(parsed?.suites) ? parsed.suites : [], graph)
+        : applyTemplate(meeting, parsed, graph);
 
     const report = [
       `# ${meeting.title}`,
@@ -504,6 +528,217 @@ function applyOutcomes(meeting: Meeting, raw: any[], graph: GraphAgent[]): Outco
 }
 
 /* ------------------------------------------------------------------ */
+/* Conclusions des rituels de sprint                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Une planification engage, une démo tranche, une rétro change la méthode.
+ *
+ * Chacune s'applique différemment, et chacune touche le sprint : c'est ce qui
+ * fait la différence entre un rituel qui structure le travail et une réunion
+ * de plus au calendrier.
+ */
+function applyTemplate(meeting: Meeting, parsed: any, graph: GraphAgent[]): Outcome[] {
+  const sprint = meeting.sprintId ? sprintById(meeting.sprintId) : null;
+  if (!sprint) return [{ kind: 'decision', label: 'Sprint introuvable : rien à appliquer.', applied: false }];
+
+  if (meeting.template === 'planning') return applyPlanning(meeting, parsed, sprint, graph);
+  if (meeting.template === 'demo') return applyDemo(parsed, sprint);
+  if (meeting.template === 'retro') return applyRetro(meeting, parsed, sprint, graph);
+  return [];
+}
+
+/**
+ * L'équipe s'engage.
+ *
+ * On rattache d'abord au backlog existant : un engagement qui recrée une tâche
+ * déjà là dédoublerait le tableau. Ce qui est écarté est écrit — un sprint sans
+ * renoncement n'a pas arbitré.
+ */
+function applyPlanning(meeting: Meeting, parsed: any, sprint: Sprint, graph: GraphAgent[]): Outcome[] {
+  const outcomes: Outcome[] = [];
+  const goal = String(parsed?.objectif ?? '').trim();
+  if (goal) updateSprint(sprint.id, { goal: goal.slice(0, 300), status: 'en-cours' });
+  else updateSprint(sprint.id, { status: 'en-cours' });
+
+  const backlog = readTasks().filter((task) => task.source === meeting.ventureName && task.status !== 'done');
+
+  for (const entry of (Array.isArray(parsed?.engagements) ? parsed.engagements : []).slice(0, 12)) {
+    const label = String(entry?.intitule ?? '').trim();
+    if (label.length < 4) continue;
+    const owner = graph.find((agent) => agent.id === entry?.responsable);
+
+    const existing = backlog.find((task) => task.title.toLowerCase() === label.toLowerCase());
+    const taskId =
+      existing?.id ??
+      addTask({
+        title: label.slice(0, 140),
+        detail: `${String(entry?.detail ?? '')}\n\nEngagé au sprint ${sprint.number}.`.trim(),
+        status: 'todo',
+        priority: 'haute',
+        assigneeId: owner?.id,
+        assigneeName: owner?.role,
+        source: meeting.ventureName,
+        createdById: meeting.organiserId,
+        createdByName: meeting.organiserName,
+        labels: ['sprint']
+      }).id;
+
+    if (existing && owner) updateTask(existing.id, { assigneeId: owner.id, assigneeName: owner.role });
+    const engaged = commit(sprintById(sprint.id) ?? sprint, taskId);
+
+    outcomes.push({
+      kind: 'tache',
+      label: label.slice(0, 160),
+      detail: existing ? 'Reprise du backlog.' : 'Créée à la planification.',
+      ownerId: owner?.id,
+      ownerName: owner?.role,
+      applied: engaged || !!existing
+    });
+  }
+
+  for (const entry of (Array.isArray(parsed?.ecartes) ? parsed.ecartes : []).slice(0, 8)) {
+    const label = typeof entry === 'string' ? entry : String(entry?.intitule ?? '');
+    if (label.trim().length < 4) continue;
+    outcomes.push({
+      kind: 'decision',
+      label: `Hors sprint ${sprint.number} : ${label.slice(0, 130)}`,
+      detail: typeof entry === 'object' ? String(entry?.motif ?? '') : '',
+      applied: true
+    });
+  }
+
+  return outcomes;
+}
+
+/**
+ * La démo tranche.
+ *
+ * Ce qui est accepté est terminé ; ce qui est refusé repart au tableau avec le
+ * motif. Une démo où tout passe n'est pas une démo, c'est une présentation.
+ */
+function applyDemo(parsed: any, sprint: Sprint): Outcome[] {
+  const outcomes: Outcome[] = [];
+  const tasks = readTasks().filter((task) => sprint.committed.includes(task.id));
+
+  const match = (label: string) =>
+    tasks.find((task) => task.title.toLowerCase().includes(String(label).toLowerCase().slice(0, 28)));
+
+  for (const entry of (Array.isArray(parsed?.accepte) ? parsed.accepte : []).slice(0, 15)) {
+    const label = typeof entry === 'string' ? entry : String(entry?.intitule ?? '');
+    const task = match(label);
+    if (task) updateTask(task.id, { status: 'done' });
+    outcomes.push({
+      kind: 'livrable',
+      label: `Accepté : ${label.slice(0, 130)}`,
+      applied: !!task,
+      detail: task ? undefined : 'Aucun engagement du sprint ne correspond.'
+    });
+  }
+
+  for (const entry of (Array.isArray(parsed?.refuse) ? parsed.refuse : []).slice(0, 15)) {
+    const label = typeof entry === 'string' ? entry : String(entry?.intitule ?? '');
+    const motif = typeof entry === 'object' ? String(entry?.motif ?? '') : '';
+    const task = match(label);
+    if (task) {
+      updateTask(task.id, {
+        status: 'todo',
+        detail: `${task.detail ?? ''}\n\n⛔ Refusé en démo : ${motif}`.trim(),
+        labels: [...new Set([...(task.labels ?? []), 'refusé'])]
+      });
+    }
+    outcomes.push({
+      kind: 'decision',
+      label: `Refusé : ${label.slice(0, 120)}`,
+      detail: motif,
+      applied: !!task
+    });
+  }
+
+  return outcomes;
+}
+
+/**
+ * La rétro change la méthode.
+ *
+ * Ce qui a marché et ce qui n'a pas marché sont conservés sur le sprint — la
+ * planification suivante les relira. Les actions deviennent des tâches, et une
+ * règle de fonctionnement devient un processus écrit pour toute l'agence.
+ */
+function applyRetro(meeting: Meeting, parsed: any, sprint: Sprint, graph: GraphAgent[]): Outcome[] {
+  const outcomes: Outcome[] = [];
+  const list = (value: any): string[] =>
+    (Array.isArray(value) ? value : []).map((entry) => String(entry ?? '').trim()).filter((entry) => entry.length > 3);
+
+  const worked = list(parsed?.marche).slice(0, 8);
+  const failed = list(parsed?.pas_marche).slice(0, 8);
+  const actions = (Array.isArray(parsed?.actions) ? parsed.actions : []).slice(0, 6);
+
+  updateSprint(sprint.id, {
+    retro: {
+      worked,
+      failed,
+      actions: actions.map((entry: any) => String(entry?.intitule ?? entry ?? '')).filter(Boolean)
+    },
+    status: 'termine',
+    closedAt: Date.now()
+  });
+
+  for (const entry of actions) {
+    const label = String(entry?.intitule ?? entry ?? '').trim();
+    if (label.length < 4) continue;
+    const owner = graph.find((agent) => agent.id === entry?.responsable);
+
+    addTask({
+      title: label.slice(0, 140),
+      detail: `Action de la rétrospective du sprint ${sprint.number}.\n${String(entry?.detail ?? '')}`.trim(),
+      status: 'todo',
+      priority: 'moyenne',
+      assigneeId: owner?.id,
+      assigneeName: owner?.role,
+      source: meeting.ventureName,
+      createdById: meeting.organiserId,
+      createdByName: meeting.organiserName,
+      labels: ['rétro']
+    });
+    outcomes.push({
+      kind: 'tache',
+      label: label.slice(0, 160),
+      ownerId: owner?.id,
+      ownerName: owner?.role,
+      applied: true
+    });
+  }
+
+  // Une leçon qui ne devient pas une règle se réapprend au sprint suivant.
+  if (failed.length > 0) {
+    upsertDoc({
+      title: `Rétrospective — sprint ${sprint.number}`,
+      path: `Processus/Rétrospectives`,
+      authorId: meeting.organiserId,
+      authorName: meeting.organiserName,
+      body: [
+        `# Rétrospective du sprint ${sprint.number}`,
+        `> ${sprint.ventureName} · jours ${sprint.startDay} à ${sprint.endDay}`,
+        '',
+        '## Ce qui a marché',
+        ...worked.map((entry) => `- ${entry}`),
+        '',
+        '## Ce qui n’a pas marché',
+        ...failed.map((entry) => `- ${entry}`),
+        '',
+        '## Ce qu’on change',
+        ...outcomes.map((outcome) => `- ${outcome.label}`)
+      ].join('\n'),
+      tags: ['rétrospective']
+    });
+    outcomes.push({ kind: 'processus', label: `Rétrospective du sprint ${sprint.number} écrite`, applied: true });
+  }
+
+  return outcomes;
+}
+
+/* ------------------------------------------------------------------ */
 /* Demandes qui remontent au CEO                                       */
 /* ------------------------------------------------------------------ */
 
@@ -573,6 +808,9 @@ function speakPrompt(meeting: Meeting, transcript: Array<{ who: string; said: st
     '',
     `[SUJET] ${meeting.topic}`,
     '',
+    // La matière préparée avant la réunion : sans elle, on débat d'impressions.
+    meeting.brief ? `[MATIÈRE]\n${meeting.brief.slice(0, 4000)}` : '',
+    '',
     transcript.length > 0
       ? `[CE QUI A DÉJÀ ÉTÉ DIT]\n${transcript.map((line) => `${line.who} : ${line.said}`).join('\n\n')}`
       : '[TU OUVRES LA DISCUSSION]',
@@ -586,6 +824,7 @@ function speakPrompt(meeting: Meeting, transcript: Array<{ who: string; said: st
 }
 
 function reportPrompt(meeting: Meeting, transcript: Array<{ who: string; said: string }>): string {
+  if (meeting.template !== 'libre') return templatePrompt(meeting, transcript);
   return [
     `[RÉUNION] ${meeting.title}`,
     `[SUJET] ${meeting.topic}`,
@@ -606,6 +845,65 @@ function reportPrompt(meeting: Meeting, transcript: Array<{ who: string; said: s
     '',
     'Réponds UNIQUEMENT par un objet JSON, sans commentaire :',
     '{"decisions":"…","suites":[{"type":"tache","intitule":"…","detail":"…","responsable":"identifiant_agent","urgent":false}]}',
+    '',
+    `Identifiants disponibles : ${meeting.participantIds.join(', ')}.`
+  ].join('\n');
+}
+
+/**
+ * Ce qu'on demande en sortie d'un rituel de sprint.
+ *
+ * Le tour de table est le même ; c'est la conclusion qui diffère. Chaque
+ * modèle réclame la forme exacte qu'on saura appliquer — un texte libre serait
+ * agréable à lire et sans effet.
+ */
+function templatePrompt(meeting: Meeting, transcript: Array<{ who: string; said: string }>): string {
+  const head = [
+    `[RÉUNION] ${meeting.title}`,
+    meeting.brief ? `\n[MATIÈRE]\n${meeting.brief.slice(0, 6000)}` : '',
+    '',
+    '[TOUR DE TABLE]',
+    ...transcript.map((line) => `${line.who} : ${line.said}`),
+    ''
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  if (meeting.template === 'planning') {
+    return [
+      head,
+      "Tu clôtures la planification. Choisis ce que l'équipe s'engage à livrer sur ce sprint, et dis ce qui reste dehors.",
+      "Prends dans la feuille de route et le backlog ci-dessus : n'invente pas de travail que personne n'a demandé.",
+      "Un sprint où tout entre n'a rien arbitré. Engage ce qui tient dans la durée du sprint, et écarte le reste en le disant.",
+      "Reprends les intitulés du backlog **mot pour mot** quand tu les engages : c'est ce qui permet de les rattacher au lieu de les dupliquer.",
+      '',
+      'Réponds UNIQUEMENT par un objet JSON, sans commentaire :',
+      '{"objectif":"la promesse du sprint en une phrase","engagements":[{"intitule":"…","detail":"…","responsable":"identifiant_agent"}],"ecartes":[{"intitule":"…","motif":"…"}]}',
+      '',
+      `Identifiants disponibles : ${meeting.participantIds.join(', ')}.`
+    ].join('\n');
+  }
+
+  if (meeting.template === 'demo') {
+    return [
+      head,
+      "Tu clôtures la démo. Pour chaque engagement du sprint : accepté, ou refusé avec un motif.",
+      "Ne te fonde que sur ce qui existe réellement, listé dans la matière ci-dessus. Un engagement sans livrable est refusé — l'intention ne se démontre pas.",
+      'Une démo où tout passe n’est pas une démo. Si tout est effectivement livré, dis-le, mais vérifie d’abord.',
+      '',
+      'Réponds UNIQUEMENT par un objet JSON, sans commentaire :',
+      '{"decisions":"…","accepte":[{"intitule":"…"}],"refuse":[{"intitule":"…","motif":"…"}]}'
+    ].join('\n');
+  }
+
+  return [
+    head,
+    "Tu clôtures la rétrospective. Cherche la cause, pas le coupable : ce sont des faits, pas des jugements.",
+    "Trois listes — ce qui a marché, ce qui n'a pas marché, et ce qu'on change concrètement au prochain sprint.",
+    "Une action de rétro doit être faisable par quelqu'un de nommé, pas une bonne résolution collective.",
+    '',
+    'Réponds UNIQUEMENT par un objet JSON, sans commentaire :',
+    '{"marche":["…"],"pas_marche":["…"],"actions":[{"intitule":"…","detail":"…","responsable":"identifiant_agent"}]}',
     '',
     `Identifiants disponibles : ${meeting.participantIds.join(', ')}.`
   ].join('\n');
