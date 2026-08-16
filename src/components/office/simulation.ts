@@ -873,6 +873,50 @@ export class OfficeSim {
   /* ── Bulles & journal ────────────────────────────────────── */
 
   /** Fait parler un agent depuis l'extérieur (conversation avec l'opérateur). */
+  /**
+   * Convoque des agents nommés en salle de réunion.
+   *
+   * Le bureau savait déjà improviser des réunions au hasard. Ici, ce sont des
+   * personnes précises, appelées par l'agenda : la réunion qui se tient
+   * vraiment doit se voir, sinon le bureau n'est qu'une décoration.
+   *
+   * Renvoie le nombre d'agents effectivement partis.
+   */
+  summon(agentIds: string[], label: string, durationSec = 90): number {
+    const groups = new Map<string, Spot[]>();
+    for (const spot of this.spots) {
+      if (spot.kind !== 'meeting' || this.reserved.has(spot.id)) continue;
+      const seats = groups.get(spot.group) ?? [];
+      seats.push(spot);
+      groups.set(spot.group, seats);
+    }
+
+    const actors = agentIds
+      .map((id) => this.byId.get(id))
+      .filter((actor): actor is Actor => !!actor && !actor.partnerId && !actor.ritual);
+    if (actors.length < 2) return 0;
+
+    // Une salle où tout le monde tient : on ne coupe pas une réunion en deux.
+    const room = [...groups.values()].find((seats) => seats.length >= actors.length);
+    if (!room) return 0;
+
+    const joined = actors.filter((actor, index) => {
+      actor.ritual = label;
+      actor.ritualDuration = durationSec;
+      const ok = this.walkTo(actor, room[index], 'meeting');
+      if (!ok) actor.ritual = null;
+      return ok;
+    });
+
+    if (joined.length < 2) {
+      for (const actor of joined) actor.ritual = null;
+      return 0;
+    }
+
+    this.log(`${joined.map((actor) => actor.profile.short).join(', ')} entrent en réunion — ${label}`, 'real');
+    return joined.length;
+  }
+
   speak(agentId: string, text: string, duration = 8): boolean {
     const actor = this.byId.get(agentId);
     if (!actor) return false;

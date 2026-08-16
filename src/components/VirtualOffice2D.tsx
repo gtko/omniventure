@@ -9,6 +9,7 @@ import {
   type HarnessStartDetail
 } from '../lib/harness-client';
 import { AGENT_ACTIVITY_EVENT, type AgentActivity } from '../lib/agent-activity';
+import { MEETING_LIVE_EVENT } from '../lib/agenda';
 import { GRAPH_UPDATED_EVENT } from '../lib/hiring';
 import { harnessProfile, loadGraphProfiles } from './office/agents';
 import { drawHarnessBadge, harnessBrand } from './office/harnessMarks';
@@ -437,6 +438,19 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
     window.addEventListener(AGENT_ACTIVITY_EVENT, onActivity);
     return () => window.removeEventListener(AGENT_ACTIVITY_EVENT, onActivity);
+  }, []);
+
+  /* ── Agenda : une réunion qui se tient doit se voir dans le bureau ── */
+  useEffect(() => {
+    const onMeeting = (event: Event) => {
+      const live = (event as CustomEvent<{ room: string; ids: string[] } | null>).detail;
+      const sim = simRef.current;
+      if (!sim || !live) return;
+      sim.summon(live.ids, live.room);
+    };
+
+    window.addEventListener(MEETING_LIVE_EVENT, onMeeting);
+    return () => window.removeEventListener(MEETING_LIVE_EVENT, onMeeting);
   }, []);
 
   /* ── Recrutement : une embauche fait arriver quelqu'un au bureau ── */

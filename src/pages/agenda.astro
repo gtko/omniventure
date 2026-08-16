@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { AgendaStudio } from '../components/AgendaStudio';
+---
+
+<Layout
+  title="Agenda — Réunions et décisions de l'agence"
+  subtitle="Une heure chez vous, une journée ici"
+  icon="📅"
+  currentPath="/agenda"
+>
+  <AgendaStudio client:load />
+</Layout>
