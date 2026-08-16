@@ -166,6 +166,88 @@ export function buildAgentTools(
   }));
 }
 
+/**
+ * Outil de bord : appeler une API tierce en s'authentifiant depuis le coffre.
+ *
+ * Il ne dépend pas du pont local — il tourne dans le Worker, donc il fonctionne
+ * aussi une fois déployé. C'est le seul outil qui touche aux secrets, et il ne
+ * les montre jamais : l'agent écrit {{secret:NOM}}, la substitution a lieu
+ * côté serveur.
+ */
+export function apiCallTool(agent: { id: string; name: string }): AgentTool {
+  return {
+    name: 'api_call',
+    description:
+      "Appelle une API tierce. Pour t'authentifier, écris {{secret:NOM}} dans l'en-tête ou le corps : la valeur sera substituée côté serveur et ne t'est jamais montrée.",
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL absolue' },
+        method: { type: 'string', description: 'GET, POST…' },
+        headers: { type: 'object', description: 'En-têtes, marqueurs {{secret:NOM}} acceptés' },
+        body: { type: 'string', description: 'Corps de la requête' }
+      },
+      required: ['url']
+    },
+    async execute(args: any, ctx) {
+      const traceId = `act-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const host = (() => {
+        try {
+          return new URL(String(args.url)).host;
+        } catch {
+          return String(args.url).slice(0, 40);
+        }
+      })();
+      const label = `🔗 appelle ${host}`;
+      const started = Date.now();
+
+      pushActivity({
+        id: traceId,
+        agentId: agent.id,
+        agentName: agent.name,
+        tool: 'api_call',
+        label,
+        detail: `${args.method ?? 'GET'} ${host}`,
+        status: 'running'
+      });
+
+      try {
+        const res = await fetch('/api/agents/http', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...args, agentId: agent.id }),
+          signal: ctx.signal
+        });
+        const json = (await res.json()) as any;
+        pushActivity({
+          id: traceId,
+          agentId: agent.id,
+          agentName: agent.name,
+          tool: 'api_call',
+          label: json.error ? `⚠️ ${label}` : label,
+          detail: json.error ?? `HTTP ${json.status}${json.secretsUsed?.length ? ` · clés : ${json.secretsUsed.join(', ')}` : ''}`,
+          status: json.error ? 'error' : 'done',
+          ms: Date.now() - started
+        });
+        return json;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Appel impossible';
+        pushActivity({
+          id: traceId,
+          agentId: agent.id,
+          agentName: agent.name,
+          tool: 'api_call',
+          label: `⚠️ ${label}`,
+          detail: message,
+          status: 'error',
+          ms: Date.now() - started
+        });
+        return { error: message };
+      }
+    }
+  };
+}
+
 /** Résumé lisible d'un résultat, pour la fiche de l'agent. */
 function summarize(tool: string, result: any): string {
   if (!result) return '—';

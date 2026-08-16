@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AGENT_ACTIVITY_EVENT, readActivities, type AgentActivity } from '../lib/agent-activity';
 import { runAgent, type AgentStep } from '../lib/agent-sdk';
-import { buildAgentTools, fetchBridgeTools, type BridgeTool } from '../lib/agent-tools';
+import { apiCallTool, buildAgentTools, fetchBridgeTools, type BridgeTool } from '../lib/agent-tools';
 import { readCulture, cultureBlock } from '../lib/culture';
 import { AUTONOMY_LABEL, type Autonomy } from '../lib/harness-client';
 import { readGraph, type GraphAgent } from '../lib/hiring';
@@ -26,6 +26,8 @@ export const AgentRunConsole: React.FC = () => {
   const [answer, setAnswer] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Noms des secrets disponibles : l'agent doit savoir qu'ils existent. */
+  const [secretNames, setSecretNames] = useState<Array<{ name: string; description: string }>>([]);
 
   const agent = agents.find((entry) => entry.id === agentId);
 
@@ -38,6 +40,12 @@ export const AgentRunConsole: React.FC = () => {
     setAgents(graph);
     if (graph.length > 0) setAgentId((current) => current || graph[0].id);
     void loadCatalogue(autonomy);
+
+    // Catalogue du coffre : les noms, jamais les valeurs.
+    void fetch('/api/vault')
+      .then((res) => res.json())
+      .then((json: any) => setSecretNames((json.secrets ?? []).map((s: any) => ({ name: s.name, description: s.description }))))
+      .catch(() => setSecretNames([]));
 
     const sync = () => setActivities(readActivities(undefined, 30));
     sync();
@@ -75,12 +83,29 @@ export const AgentRunConsole: React.FC = () => {
           id: agent.id,
           role: agent.role,
           model: agent.modelId ?? 'google/gemini-2.5-flash',
-          // La culture précède la persona, comme partout ailleurs.
-          ame: `${cultureBlock(readCulture())}\n\n${agent.ameMd ?? ''}`,
+          // Culture, puis persona, puis le catalogue du coffre : l'agent sait
+          // en permanence quelles clés existent, sans jamais en voir une seule.
+          ame: [
+            cultureBlock(readCulture()),
+            agent.ameMd ?? '',
+            secretNames.length > 0
+              ? [
+                  '[COFFRE DE L’AGENCE — secrets disponibles]',
+                  "N'écris jamais une valeur de secret. Utilise {{secret:NOM}} dans api_call : la substitution a lieu côté serveur, hors de ta vue.",
+                  ...secretNames.map((entry) => `- {{secret:${entry.name}}} — ${entry.description || 'sans description'}`)
+                ].join('\n')
+              : ''
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
           job: agent.jobMd,
           temperature: agent.temperature,
           maxSteps: 12,
-          tools: buildAgentTools(catalogue, { id: agent.id, name: agent.role }, autonomy)
+          tools: [
+            ...buildAgentTools(catalogue, { id: agent.id, name: agent.role }, autonomy),
+            // Disponible même sans le pont : il tourne dans le Worker.
+            apiCallTool({ id: agent.id, name: agent.role })
+          ]
         },
         mission.trim(),
         {

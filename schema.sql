@@ -173,3 +173,18 @@ CREATE TABLE IF NOT EXISTS office_layout (
     patch_count INTEGER DEFAULT 0,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Coffre-fort : les valeurs sont chiffrées (AES-GCM) avant d'arriver ici.
+-- La clé maîtresse vit dans l'environnement (VAULT_MASTER_KEY) ou, à défaut,
+-- dans KV — jamais dans cette table.
+CREATE TABLE IF NOT EXISTS vault_secrets (
+    name TEXT PRIMARY KEY,
+    description TEXT,
+    category TEXT,
+    value TEXT NOT NULL,
+    created_at INTEGER,
+    updated_at INTEGER,
+    last_used_at INTEGER,
+    last_used_by TEXT,
+    rotation_days INTEGER DEFAULT 0
+);

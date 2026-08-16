@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { VaultStudio } from '../components/VaultStudio';
+---
+
+<Layout
+  title="Coffre-fort — Clés et secrets partagés"
+  subtitle="Vous les voyez, les agents les utilisent sans les voir"
+  icon="🔐"
+  currentPath="/vault"
+>
+  <VaultStudio client:load />
+</Layout>
