@@ -12,8 +12,6 @@ import {
   type StageId
 } from '../lib/lifecycle';
 import { STACKS, type StackId } from '../lib/stacks';
-import { previewReset, resetVenture, type ResetCount } from '../lib/venture-reset';
-import { Portal } from './Portal';
 
 interface Props {
   venture: { id: string; name: string; slug: string; type?: string };
@@ -22,7 +20,7 @@ interface Props {
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 
 /**
- * Où en est le produit, sur quoi il tourne, et le bouton qui remet tout à zéro.
+ * Où en est le produit, et sur quoi il tourne.
  *
  * L'étape n'est pas décorative : elle est injectée dans chaque consigne donnée
  * aux agents, avec ce qu'il faut faire **et ce qu'il faut refuser de faire**.
@@ -30,11 +28,6 @@ const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
  */
 export const LifecyclePanel: React.FC<Props> = ({ venture }) => {
   const [state, setState] = useState<LifecycleState>(() => readLifecycle(venture.id, venture.type));
-  const [confirming, setConfirming] = useState(false);
-  const [counts, setCounts] = useState<ResetCount | null>(null);
-  const [keepDossier, setKeepDossier] = useState(true);
-  const [keepRoadmap, setKeepRoadmap] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(() => setState(readLifecycle(venture.id, venture.type)), [venture.id, venture.type]);
 
@@ -49,29 +42,8 @@ export const LifecyclePanel: React.FC<Props> = ({ venture }) => {
   const following = nextStep(state);
   const stack = STACKS[state.stack] ?? STACKS.saas;
 
-  const openReset = () => {
-    setCounts(previewReset(venture.name));
-    setConfirming(true);
-  };
-
-  const confirmReset = () => {
-    const removed = resetVenture({ id: venture.id, name: venture.name }, { keepDossier, keepRoadmap });
-    setConfirming(false);
-    setNotice(
-      `Projet remis au premier jour : ${removed.tasks} tâche(s), ${removed.artifacts} livrable(s), ${removed.meetings} réunion(s) et ${removed.sprints} sprint(s) supprimés.`
-    );
-    window.setTimeout(() => setNotice(null), 6000);
-    refresh();
-  };
-
   return (
     <div className={`${CARD} p-5`}>
-      {notice && (
-        <div className="fixed bottom-5 right-5 z-50 rounded-lg bg-slate-900 px-4 py-3 text-xs text-white shadow-lg">
-          {notice}
-        </div>
-      )}
-
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900">Étape du produit</h2>
@@ -80,12 +52,6 @@ export const LifecyclePanel: React.FC<Props> = ({ venture }) => {
             qu'il faut refuser de faire maintenant. Changer d'étape change réellement le travail produit.
           </p>
         </div>
-        <button
-          onClick={openReset}
-          className="rounded-lg border border-rose-200 px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
-        >
-          ↺ Remettre au premier jour
-        </button>
       </div>
 
       {/* La progression */}
@@ -213,76 +179,6 @@ export const LifecyclePanel: React.FC<Props> = ({ venture }) => {
         </p>
       </div>
 
-      {/* Confirmation de la remise à zéro */}
-      {confirming && counts && (
-        <Portal>
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-            <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
-              <h2 className="text-lg font-bold text-slate-900">Remettre « {venture.name} » au premier jour</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Le produit lui-même est conservé — son nom, son domaine, ses tarifs. C'est son travail qui repart de
-                zéro. L'opération ne se rattrape pas.
-              </p>
-
-              <ul className="mt-3 space-y-1 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-700">
-                {(
-                  [
-                    ['tâches', counts.tasks],
-                    ['livrables', counts.artifacts],
-                    ['documents de chantier', counts.chantierDocs],
-                    ['réunions', counts.meetings],
-                    ['sprints', counts.sprints],
-                    ['écritures au registre', counts.ledger]
-                  ] as const
-                ).map(([label, value]) => (
-                  <li key={label} className="flex justify-between">
-                    <span>{label}</span>
-                    <span className="font-mono font-semibold">{value}</span>
-                  </li>
-                ))}
-                <li className="flex justify-between border-t border-slate-200 pt-1">
-                  <span>feuille de route</span>
-                  <span className="font-mono font-semibold">
-                    {keepRoadmap ? `${counts.roadmap} conservés` : counts.roadmap}
-                  </span>
-                </li>
-                <li className="flex justify-between">
-                  <span>dossier de lancement</span>
-                  <span className="font-mono font-semibold">
-                    {keepDossier ? `${counts.dossierDocs} conservé(s)` : counts.dossierDocs}
-                  </span>
-                </li>
-              </ul>
-
-              <div className="mt-3 space-y-1.5">
-                <label className="flex items-center gap-2 text-[11px] text-slate-700">
-                  <input type="checkbox" checked={keepDossier} onChange={(event) => setKeepDossier(event.target.checked)} />
-                  Garder le dossier de lancement — c'est l'instruction d'origine, pas du travail d'exécution.
-                </label>
-                <label className="flex items-center gap-2 text-[11px] text-slate-700">
-                  <input type="checkbox" checked={keepRoadmap} onChange={(event) => setKeepRoadmap(event.target.checked)} />
-                  Garder la feuille de route — les arbitrages déjà rendus restent valables.
-                </label>
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirming(false)}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  onClick={confirmReset}
-                  className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700"
-                >
-                  Effacer et repartir de zéro
-                </button>
-              </div>
-            </div>
-          </div>
-        </Portal>
-      )}
     </div>
   );
 };

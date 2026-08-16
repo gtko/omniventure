@@ -45,7 +45,7 @@ export function scaffold(root, { name = 'Produit', stack = 'saas' } = {}) {
   }
 
   const slug = packageName(name);
-  const files = stack === 'mobile' ? mobileFiles(name, slug) : webFiles(name, slug, stack);
+  const files = stack === 'mobile' ? mobileFiles(name, slug) : webFiles(name, slug);
 
   for (const [path, content] of Object.entries(files)) write(root, path, content);
   return { created: true, files: Object.keys(files).length, stack };
@@ -55,7 +55,7 @@ export function scaffold(root, { name = 'Produit', stack = 'saas' } = {}) {
 /* Application web : SaaS, e-commerce, contenu                         */
 /* ------------------------------------------------------------------ */
 
-function webFiles(name, slug, stack) {
+function webFiles(name, slug) {
   return {
     'package.json': `{
   "name": "${slug}",

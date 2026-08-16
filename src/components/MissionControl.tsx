@@ -1,264 +1,308 @@
-import React, { useState, useEffect } from 'react';
-import { getStoredVentures, saveStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
+import React, { useCallback, useEffect, useState } from 'react';
+import { getActiveProjectId, getStoredVentures, saveStoredVentures, setActiveProjectId } from '../lib/store';
+import { readLifecycle, stageById } from '../lib/lifecycle';
 import type { Venture } from '../types';
-import { VentureFactoryModal } from './VentureFactoryModal';
 import { LifecyclePanel } from './LifecyclePanel';
-import { VentureLedger } from './VentureLedger';
 import { ReleasesPanel } from './ReleasesPanel';
 import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
+import { VentureFactoryModal } from './VentureFactoryModal';
+import { VentureLedger } from './VentureLedger';
+import { VentureOverview } from './VentureOverview';
+import { VentureReset } from './VentureReset';
 import { WorksitePanel } from './WorksitePanel';
 
+const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
+const FIELD =
+  'w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none';
+
+type View = 'apercu' | 'direction' | 'chantier' | 'livrables' | 'reglages';
+
+const VIEWS: Array<{ id: View; label: string; icon: string; hint: string }> = [
+  { id: 'apercu', label: 'Aperçu', icon: '👁️', hint: 'Où en est le produit, en cinq secondes.' },
+  { id: 'direction', label: 'Direction', icon: '🧭', hint: "L'étape de vie et la feuille de route." },
+  { id: 'chantier', label: 'Chantier', icon: '🔨', hint: 'La chaîne de valeur et ce qu\'elle exécute.' },
+  { id: 'livrables', label: 'Livrables', icon: '📦', hint: 'Ce qui a été produit, et ce qui est sorti.' },
+  { id: 'reglages', label: 'Réglages', icon: '⚙️', hint: 'Paramètres, dépense, remise à zéro.' }
+];
+
+const isView = (value: string | null): value is View => VIEWS.some((view) => view.id === value);
+
+/**
+ * La page d'un produit.
+ *
+ * Elle empilait sept panneaux à la suite : pour savoir où on en était, il
+ * fallait tout parcourir, et chaque panneau chargeait ses données même quand
+ * personne ne le regardait.
+ *
+ * Cinq vues maintenant, et une seule montée à la fois. La vue retenue vit dans
+ * l'adresse — un rechargement ou un lien partagé retombe au bon endroit, ce
+ * qu'un simple état de composant n'aurait pas permis.
+ */
 export const MissionControl: React.FC = () => {
   const [ventures, setVentures] = useState<Venture[]>([]);
-  const [activeId, setActiveId] = useState<string>('');
-  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [activeId, setActiveId] = useState('');
+  const [view, setView] = useState<View>('apercu');
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     const list = getStoredVentures();
     setVentures(list);
-    const active = getActiveProjectId();
-    const currentActive = active || list[0]?.id || '';
-    setActiveId(currentActive);
-  };
+    setActiveId(getActiveProjectId() || list[0]?.id || '');
+  }, []);
 
   useEffect(() => {
     loadData();
 
-    const handleVenturesUpdated = () => loadData();
-    const handleActiveChanged = (e: any) => {
-      if (e.detail?.id) setActiveId(e.detail.id);
+    const wanted = new URLSearchParams(window.location.search).get('vue');
+    if (isView(wanted)) setView(wanted);
+
+    const onVentures = () => loadData();
+    const onActive = (event: any) => {
+      if (event.detail?.id) setActiveId(event.detail.id);
+    };
+    // Le bouton « précédent » du navigateur doit ramener à la vue précédente.
+    const onPop = () => {
+      const current = new URLSearchParams(window.location.search).get('vue');
+      setView(isView(current) ? current : 'apercu');
     };
 
-    window.addEventListener('ventures-updated', handleVenturesUpdated);
-    window.addEventListener('active-project-changed', handleActiveChanged);
-
+    window.addEventListener('ventures-updated', onVentures);
+    window.addEventListener('active-project-changed', onActive);
+    window.addEventListener('popstate', onPop);
     return () => {
-      window.removeEventListener('ventures-updated', handleVenturesUpdated);
-      window.removeEventListener('active-project-changed', handleActiveChanged);
+      window.removeEventListener('ventures-updated', onVentures);
+      window.removeEventListener('active-project-changed', onActive);
+      window.removeEventListener('popstate', onPop);
     };
+  }, [loadData]);
+
+  const go = useCallback((next: string) => {
+    if (!isView(next)) return;
+    setView(next);
+    const url = new URL(window.location.href);
+    next === 'apercu' ? url.searchParams.delete('vue') : url.searchParams.set('vue', next);
+    window.history.pushState({}, '', url);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const activeVenture = ventures.find(v => v.id === activeId) || ventures[0];
+  const activeVenture = ventures.find((entry) => entry.id === activeId) ?? ventures[0];
 
-  const handleUpdateActiveVenture = (updatedFields: Partial<Venture>) => {
+  const update = (fields: Partial<Venture>) => {
     if (!activeVenture) return;
-    const updatedList = ventures.map(v => v.id === activeVenture.id ? { ...v, ...updatedFields, updatedAt: new Date().toISOString() } : v);
-    setVentures(updatedList);
-    saveStoredVentures(updatedList);
+    const updated = ventures.map((entry) =>
+      entry.id === activeVenture.id ? { ...entry, ...fields, updatedAt: new Date().toISOString() } : entry
+    );
+    setVentures(updated);
+    saveStoredVentures(updated);
     setNotification('Modifications enregistrées.');
-    setTimeout(() => setNotification(null), 3000);
+    window.setTimeout(() => setNotification(null), 3000);
   };
 
   if (!activeVenture) {
     return (
-      <div className="bg-white p-12 rounded-xl border border-slate-200 text-center space-y-4">
-        <h2 className="text-lg font-bold text-slate-900">Aucun projet configuré</h2>
-        <p className="text-sm text-slate-500 max-w-md mx-auto">
-          Créez votre premier Micro-SaaS, Boutique E-commerce, Site d'Affiliation ou Livre KDP pour commencer.
+      <div className={`${CARD} space-y-4 p-12 text-center`}>
+        <h2 className="text-lg font-bold text-slate-900">Aucun projet</h2>
+        <p className="mx-auto max-w-md text-sm text-slate-500">
+          Écrivez ce que vous voulez lancer : l'agence instruit le dossier, lit les concurrents, puis chaque métier
+          prend sa part.
         </p>
         <button
           onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-lg shadow-sm"
+          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"
         >
           + Créer mon premier projet
         </button>
         <VentureFactoryModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
-          onCreateVenture={(v) => {
-            const list = [v];
+          onCreateVenture={(created) => {
+            const list = [created];
             setVentures(list);
             saveStoredVentures(list);
-            setActiveId(v.id);
-            setActiveProjectId(v.id);
+            setActiveId(created.id);
+            setActiveProjectId(created.id);
           }}
         />
       </div>
     );
   }
 
+  const identity = {
+    id: activeVenture.id,
+    name: activeVenture.name,
+    slug: activeVenture.slug || activeVenture.id,
+    type: activeVenture.type
+  };
+  const stage = stageById(readLifecycle(activeVenture.id, activeVenture.type).stage);
+
   return (
-    <div className="space-y-6">
-      {/* Toast Notification */}
+    <div className="space-y-5">
       {notification && (
-        <div className="fixed bottom-5 right-5 z-50 px-4 py-3 bg-slate-900 text-white rounded-lg shadow-lg text-xs flex items-center gap-2">
-          <span>✓</span>
-          <span>{notification}</span>
+        <div className="fixed bottom-5 right-5 z-50 rounded-lg bg-slate-900 px-4 py-3 text-xs text-white shadow-lg">
+          ✓ {notification}
         </div>
       )}
 
-      {/* Active Project Header Card */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-slate-900">{activeVenture.name}</h1>
-              <span className="px-2.5 py-0.5 rounded text-xs font-semibold uppercase bg-indigo-50 text-indigo-700">
-                {activeVenture.type}
-              </span>
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                activeVenture.status === 'live' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                activeVenture.status === 'canary' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                'bg-slate-100 text-slate-700'
-              }`}>
-                {activeVenture.status === 'canary' ? `Canary (${activeVenture.canaryTrafficPct}% trafic)` : activeVenture.status}
-              </span>
-            </div>
-            <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
-              <span><strong>Niche :</strong> {activeVenture.niche}</span>
-              <span>•</span>
-              <a href={`https://${activeVenture.domain}`} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-mono">
-                {activeVenture.domain}
-              </a>
-            </div>
-          </div>
-
+      {/* L'identité du produit reste visible : c'est le contexte de toute vue. */}
+      <header className={`${CARD} p-5`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold text-slate-900">{activeVenture.name}</h1>
+          <span className="rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-indigo-700">
+            {activeVenture.type}
+          </span>
+          <span
+            className="rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+            title={stage.question}
+            style={{ backgroundColor: '#f1f5f9', color: '#334155' }}
+          >
+            {stage.icon} {stage.label}
+          </span>
+          <a
+            href={`https://${activeVenture.domain}`}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto font-mono text-[11px] text-indigo-600 hover:underline"
+          >
+            {activeVenture.domain}
+          </a>
         </div>
-      </div>
+        <p className="mt-1 text-xs text-slate-500">{activeVenture.niche}</p>
 
-      {/* Où en est le produit : commande ce qui vaut la peine d'être fait */}
-      <LifecyclePanel
-        venture={{
-          id: activeVenture.id,
-          name: activeVenture.name,
-          slug: activeVenture.slug || activeVenture.id,
-          type: activeVenture.type
-        }}
-      />
+        <nav className="mt-4 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
+          {VIEWS.map((entry) => (
+            <button
+              key={entry.id}
+              onClick={() => go(entry.id)}
+              title={entry.hint}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                view === entry.id
+                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                  : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {entry.icon} {entry.label}
+            </button>
+          ))}
+        </nav>
+      </header>
 
-      {/* La direction du produit : ce qu'on fait, et surtout ce qu'on ne fait pas */}
-      <RoadmapPanel
-        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
-      />
+      {view === 'apercu' && <VentureOverview venture={identity} onGo={go} />}
 
-      {/* Ce qui fait avancer le projet : sans ça, le dossier reste lettre morte */}
-      <WorksitePanel
-        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
-      />
+      {view === 'direction' && (
+        <>
+          <LifecyclePanel venture={identity} />
+          <RoadmapPanel venture={identity} />
+        </>
+      )}
 
-      {/* Ce qui est sorti, et sur quoi ça repose */}
-      <ReleasesPanel
-        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
-      />
+      {view === 'chantier' && <WorksitePanel venture={identity} />}
 
-      {/* Ce que le projet a produit : rassemblé sous le produit, pas éparpillé */}
-      <VentureDeliverables
-        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
-      />
+      {view === 'livrables' && (
+        <>
+          <ReleasesPanel venture={identity} />
+          <VentureDeliverables venture={identity} />
+        </>
+      )}
 
-      {/* Project Configuration Form & Telemetry */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Left 2 Cols: Real Settings for Active Project */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-5">
-          <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
-            <h2 className="font-bold text-slate-900 text-sm">Paramètres & Modèle Économique</h2>
-            <span className="text-xs text-slate-400 font-mono">Cloudflare Pages / Workers SSR</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Nom du Business</label>
-              <input
-                type="text"
-                value={activeVenture.name}
-                onChange={e => handleUpdateActiveVenture({ name: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
-              />
+      {view === 'reglages' && (
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className={`${CARD} space-y-5 p-6 lg:col-span-2`}>
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h2 className="text-sm font-bold text-slate-900">Paramètres</h2>
+              <span className="font-mono text-[11px] text-slate-400">Cloudflare Workers · D1 · R2</span>
             </div>
 
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Domaine Personnalisé / Sous-domaine</label>
-              <input
-                type="text"
-                value={activeVenture.domain}
-                onChange={e => handleUpdateActiveVenture({ domain: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="text-xs font-semibold text-slate-600">
+                Nom du produit
+                <input value={activeVenture.name} onChange={(e) => update({ name: e.target.value })} className={`mt-1 ${FIELD}`} />
+              </label>
+              <label className="text-xs font-semibold text-slate-600">
+                Domaine
+                <input
+                  value={activeVenture.domain}
+                  onChange={(e) => update({ domain: e.target.value })}
+                  className={`mt-1 ${FIELD} font-mono`}
+                />
+              </label>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-xs text-slate-600 font-semibold mb-1">Niche & Proposition de Valeur</label>
-            <input
-              type="text"
-              value={activeVenture.niche}
-              onChange={e => handleUpdateActiveVenture({ niche: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 text-xs focus:bg-white focus:outline-none focus:border-indigo-600"
-            />
-          </div>
+            <label className="block text-xs font-semibold text-slate-600">
+              Niche et proposition de valeur
+              <input value={activeVenture.niche} onChange={(e) => update({ niche: e.target.value })} className={`mt-1 ${FIELD}`} />
+            </label>
 
-          {/* Pricing Settings */}
-          {activeVenture.type === 'saas' && (
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-              <span className="text-xs font-bold text-slate-800 block">Tarification Stripe (Trial & Rebill)</span>
-              
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div>
-                  <span className="text-slate-500 block mb-1">Prix d'Essai ($)</span>
-                  <input
-                    type="number"
-                    step="0.10"
-                    value={activeVenture.priceTrialCents / 100}
-                    onChange={e => handleUpdateActiveVenture({ priceTrialCents: Math.round(parseFloat(e.target.value || '0') * 100) })}
-                    className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                  />
-                </div>
-                <div>
-                  <span className="text-slate-500 block mb-1">Durée d'Essai (Heures)</span>
-                  <select
-                    value={activeVenture.trialDurationHours}
-                    onChange={e => handleUpdateActiveVenture({ trialDurationHours: parseInt(e.target.value) })}
-                    className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                  >
-                    <option value={24}>24 Heures</option>
-                    <option value={48}>48 Heures</option>
-                    <option value={72}>72 Heures</option>
-                  </select>
-                </div>
-                <div>
-                  <span className="text-slate-500 block mb-1">Abonnement Mensuel ($)</span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={activeVenture.priceRecurringCents / 100}
-                    onChange={e => handleUpdateActiveVenture({ priceRecurringCents: Math.round(parseFloat(e.target.value || '0') * 100) })}
-                    className="w-full px-2.5 py-1.5 rounded border border-slate-300 bg-white"
-                  />
+            {activeVenture.type === 'saas' && (
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-bold text-slate-800">Tarification</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="text-[11px] text-slate-500">
+                    Essai (€)
+                    <input
+                      type="number"
+                      step="0.10"
+                      value={activeVenture.priceTrialCents / 100}
+                      onChange={(e) => update({ priceTrialCents: Math.round(parseFloat(e.target.value || '0') * 100) })}
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
+                    />
+                  </label>
+                  <label className="text-[11px] text-slate-500">
+                    Durée d'essai
+                    <select
+                      value={activeVenture.trialDurationHours}
+                      onChange={(e) => update({ trialDurationHours: parseInt(e.target.value, 10) })}
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
+                    >
+                      {[24, 48, 72].map((hours) => (
+                        <option key={hours} value={hours}>
+                          {hours} heures
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-slate-500">
+                    Abonnement (€/mois)
+                    <input
+                      type="number"
+                      step="1"
+                      value={activeVenture.priceRecurringCents / 100}
+                      onChange={(e) => update({ priceRecurringCents: Math.round(parseFloat(e.target.value || '0') * 100) })}
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
+                    />
+                  </label>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Stripe Account Binding */}
-          <div>
-            <label className="block text-xs text-slate-600 font-semibold mb-1">ID Compte Stripe (Optionnel)</label>
-            <input
-              type="text"
-              placeholder="acct_1NvX... (Laissez vide pour utiliser le compte par défaut)"
-              value={activeVenture.stripeAccountId || ''}
-              onChange={e => handleUpdateActiveVenture({ stripeAccountId: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 text-xs font-mono focus:bg-white focus:outline-none focus:border-indigo-600"
-            />
+            <label className="block text-xs font-semibold text-slate-600">
+              Compte Stripe (facultatif)
+              <input
+                value={activeVenture.stripeAccountId || ''}
+                onChange={(e) => update({ stripeAccountId: e.target.value })}
+                placeholder="acct_1NvX… — vide pour le compte par défaut"
+                className={`mt-1 ${FIELD} font-mono`}
+              />
+            </label>
           </div>
 
+          <div className="space-y-5">
+            <VentureLedger ventureName={activeVenture.name} />
+            <VentureReset venture={{ id: activeVenture.id, name: activeVenture.name }} />
+          </div>
         </div>
-
-        {/* Ce que le projet a réellement consommé, pas une tâche fabriquée */}
-        <VentureLedger ventureName={activeVenture.name} />
-      </div>
+      )}
 
       <VentureFactoryModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onCreateVenture={(v) => {
-          const list = [v, ...ventures];
+        onCreateVenture={(created) => {
+          const list = [created, ...ventures];
           setVentures(list);
           saveStoredVentures(list);
-          setActiveId(v.id);
-          setActiveProjectId(v.id);
+          setActiveId(created.id);
+          setActiveProjectId(created.id);
         }}
       />
     </div>
