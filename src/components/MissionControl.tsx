@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getStoredVentures, saveStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
 import type { Venture, AgentTask } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
+import { VentureDeliverables } from './VentureDeliverables';
 import { WorksitePanel } from './WorksitePanel';
 
 export const MissionControl: React.FC = () => {
@@ -162,6 +163,11 @@ export const MissionControl: React.FC = () => {
 
       {/* Ce qui fait avancer le projet : sans ça, le dossier reste lettre morte */}
       <WorksitePanel
+        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
+      />
+
+      {/* Ce que le projet a produit : rassemblé sous le produit, pas éparpillé */}
+      <VentureDeliverables
         venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
       />
 

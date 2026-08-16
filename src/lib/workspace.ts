@@ -41,6 +41,9 @@ export interface Task {
   assigneeName?: string;
   /** D'où vient la tâche : projet, recrutement, harnais, atelier… */
   source?: string;
+  /** Qui l'a mise au tableau — distinct de qui doit la faire. */
+  createdById?: string;
+  createdByName?: string;
   /** Étape de la chaîne de valeur. Absent = tâche hors chaîne. */
   phase?: PhaseId;
   /** Cycle d'amélioration qui l'a produite : 1 pour la première traversée. */
@@ -106,6 +109,10 @@ export interface DesignSystem {
   /** Notes du designer : ordre de composition, règles mobile-first. */
   notes: string;
   modelUsed?: string;
+  /** Qui l'a produit, et pour quel produit. */
+  authorId?: string;
+  authorName?: string;
+  project?: string;
 }
 
 /* ------------------------------------------------------------------ */

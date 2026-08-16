@@ -12,6 +12,7 @@
 
 import { pushActivity } from './agent-activity';
 import type { AgentTool } from './agent-sdk';
+import { addArtifact } from './artifacts';
 import { getRunnerToken, RUNNER_URL, type Autonomy } from './harness-client';
 
 /** Où les outils s'exécutent réellement. */
@@ -162,12 +163,20 @@ export async function fetchBridgeTools(autonomy: Autonomy = 'read'): Promise<Bri
  * Transforme le catalogue en outils exécutables par le SDK.
  * `agent` sert uniquement à attribuer la trace au bon personnage du bureau.
  */
+/** Rattachement d'un fichier écrit à un produit : sans lui, rien à inscrire. */
+export interface ProductionBinding {
+  ventureName: string;
+  phase?: string;
+  taskId?: string;
+}
+
 export function buildAgentTools(
   catalogue: BridgeTool[],
   agent: { id: string; name: string },
   autonomy: Autonomy = 'read',
   provider: ToolProvider = 'local',
-  workspace = 'agence'
+  workspace = 'agence',
+  binding?: ProductionBinding
 ): AgentTool[] {
   const token = getRunnerToken();
 
@@ -244,7 +253,9 @@ export function buildAgentTools(
             : await fetch(`${RUNNER_URL}/tools/call`, {
                 method: 'POST',
                 headers: headers(),
-                body: JSON.stringify({ tool: tool.name, args: payload, autonomy }),
+                // L'espace voyage aussi en local : le pont ouvre un dépôt par
+                // projet, hors de celui de l'agence.
+                body: JSON.stringify({ tool: tool.name, args: payload, autonomy, workspace }),
                 signal: ctx.signal
               });
         const json = (await res.json()) as { result?: any; error?: string; ms?: number };
@@ -260,6 +271,23 @@ export function buildAgentTools(
           tool.name.startsWith('browser_') && typeof json.result?.path === 'string'
             ? `${RUNNER_URL}/tools/file?path=${encodeURIComponent(json.result.path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
             : undefined;
+
+        // Un fichier écrit dans le dépôt d'un produit EST un livrable : il
+        // entre au registre des artefacts, sans quoi il n'existe que pour le
+        // système de fichiers.
+        if (binding && tool.name === 'fs_write' && json.result?.written) {
+          addArtifact({
+            kind: 'code',
+            title: String(json.result.path ?? (args as any).path ?? 'fichier'),
+            summary: `${json.result.bytes ?? 0} octets`,
+            agentId: agent.id,
+            agentName: agent.name,
+            ventureName: binding.ventureName,
+            phase: binding.phase,
+            taskId: binding.taskId,
+            location: { files: [String(json.result.path ?? (args as any).path ?? '')] }
+          });
+        }
 
         pushActivity({
           id: traceId,

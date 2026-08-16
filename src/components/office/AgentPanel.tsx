@@ -1,6 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AGENT_ACTIVITY_EVENT, lastScreen, readActivities, type AgentActivity } from '../../lib/agent-activity';
+import {
+  entriesOf,
+  LEDGER_EVENT,
+  record,
+  LEDGER_KIND_LABEL,
+  primeLedger,
+  statsOf,
+  type AgentStats,
+  type LedgerEntry
+} from '../../lib/agent-ledger';
 import { getRunLog, onRunLogChange, type HarnessRunLog } from '../../lib/harness-log';
+import { formatUsd } from '../../lib/model-pricing';
+import { readTasks, type Task } from '../../lib/workspace';
 
 /** Vue « temps réel » d'un agent, recalculée par le composant parent. */
 export interface AgentView {
@@ -93,7 +105,7 @@ function readStoredAgent(id: string): StoredAgent | null {
 }
 
 export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak }) => {
-  const [tab, setTab] = useState<'etat' | 'parler' | 'reglages'>('etat');
+  const [tab, setTab] = useState<'etat' | 'dossier' | 'parler' | 'reglages'>('etat');
   const [threads, setThreads] = useState<Record<string, Message[]>>({});
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -123,6 +135,23 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
     sync();
     window.addEventListener(AGENT_ACTIVITY_EVENT, sync);
     return () => window.removeEventListener(AGENT_ACTIVITY_EVENT, sync);
+  }, [agent.id]);
+
+  /** Son registre : tout ce qu'il a fait, ce que ça a coûté, ce qu'il a livré. */
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [stats, setStats] = useState<AgentStats | null>(null);
+  const [assigned, setAssigned] = useState<Task[]>([]);
+
+  useEffect(() => {
+    primeLedger();
+    const sync = () => {
+      setLedger(entriesOf(agent.id));
+      setStats(statsOf(agent.id));
+      setAssigned(readTasks().filter((task) => task.assigneeId === agent.id));
+    };
+    sync();
+    window.addEventListener(LEDGER_EVENT, sync);
+    return () => window.removeEventListener(LEDGER_EVENT, sync);
   }, [agent.id]);
 
   useEffect(() => {
@@ -190,6 +219,19 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
           }
         ]
       }));
+
+      // Une conversation coûte comme le reste : elle entre au registre.
+      record({
+        agentId: agent.id,
+        agentName: agent.short,
+        kind: 'conversation',
+        label: text.slice(0, 90),
+        model: json.modelUsed ?? stored?.modelId ?? agent.modelId,
+        tokensIn: json.tokensInput ?? 0,
+        tokensOut: json.tokensOutput ?? 0,
+        ms: 0,
+        ok: true
+      });
       onSpeak(json.reply.length > 90 ? `${json.reply.slice(0, 88)}…` : json.reply);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Échec de la requête');
@@ -258,7 +300,8 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
         {(
           [
             ['etat', 'État'],
-            ['parler', runId ? 'Journal du run' : "Parler à l'agent"],
+            ['dossier', stats && stats.runs > 0 ? `Dossier · ${stats.runs}` : 'Dossier'],
+            ['parler', runId ? 'Journal' : 'Parler'],
             ['reglages', 'Réglages']
           ] as const
         ).map(([id, label]) => (
@@ -353,6 +396,135 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
           >
             🎥 Suivre cet agent avec la caméra
           </button>
+        </div>
+      )}
+
+      {/* ── Dossier : ce qu'il a fait, produit, et coûté ── */}
+      {tab === 'dossier' && (
+        <div className="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
+          {!stats || stats.runs === 0 ? (
+            <p className="rounded-xl border border-white/10 bg-white/[0.07] p-3 leading-relaxed text-slate-400">
+              Aucun travail enregistré pour {agent.short}. Le registre se remplit dès qu'il prend une tâche du
+              chantier, une mission autonome ou une passation — la vie du bureau, elle, est simulée et ne coûte rien.
+            </p>
+          ) : (
+            <>
+              {/* Comptes */}
+              <div className="grid grid-cols-2 gap-2">
+                <Info label="Coût total" value={formatUsd(stats.costUsd)} mono />
+                <Info label="Travaux" value={`${stats.runs} · ${stats.failed} en échec`} />
+                <Info
+                  label="Jetons"
+                  value={`${compact(stats.tokensIn)} → ${compact(stats.tokensOut)}`}
+                  mono
+                />
+                <Info label="Durée moyenne" value={`${(stats.msAverage / 1000).toFixed(1)} s`} mono />
+              </div>
+
+              {stats.unpriced > 0 && (
+                <p className="rounded-lg bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-200">
+                  {stats.unpriced} travaux sur {stats.runs} n'ont pas de tarif connu pour leur modèle : ils ne sont
+                  pas comptés dans le total.
+                </p>
+              )}
+
+              {/* Modèles employés */}
+              {stats.models.length > 0 && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Modèles employés</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {stats.models.map((entry) => (
+                      <li key={entry.model} className="flex items-baseline gap-2 text-[11px]">
+                        <span className="min-w-0 flex-1 truncate font-mono text-slate-300">{entry.model || '—'}</span>
+                        <span className="text-slate-500">{entry.runs}×</span>
+                        <span className="font-mono text-slate-400">{formatUsd(entry.costUsd)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Ce qu'il a livré */}
+              {stats.deliverables.length > 0 && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                    Ce qu'il a livré · {stats.deliverables.length}
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {stats.deliverables
+                      .slice(0, 20)
+                      .reverse()
+                      .map((deliverable, index) => (
+                        <li key={`${deliverable.id}-${index}`} className="text-[11px]">
+                          <a
+                            href={`/studio?doc=${encodeURIComponent(deliverable.id)}`}
+                            className="block truncate text-slate-200 hover:text-indigo-300 hover:underline"
+                            title={deliverable.path}
+                          >
+                            📄 {deliverable.label}
+                          </a>
+                          {deliverable.path && (
+                            <span className="block truncate font-mono text-[9.5px] text-slate-500">
+                              {deliverable.path}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Ce qu'il a sur les bras */}
+              {assigned.length > 0 && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Tâches à son nom</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {assigned.slice(0, 12).map((task) => (
+                      <li key={task.id} className="flex items-baseline gap-2 text-[11px]">
+                        <span
+                          className={
+                            task.status === 'done' || task.status === 'review'
+                              ? 'text-emerald-300'
+                              : task.status === 'doing'
+                                ? 'text-indigo-300'
+                                : 'text-slate-500'
+                          }
+                        >
+                          {task.status === 'done' ? '✓' : task.status === 'review' ? '◎' : task.status === 'doing' ? '●' : '○'}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-slate-300">{task.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Historique complet */}
+              <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
+                <p className="text-[10px] uppercase tracking-wide text-slate-400">Historique · {ledger.length}</p>
+                <ul className="mt-1.5 space-y-2">
+                  {ledger.map((entry) => (
+                    <li key={entry.id} className="border-b border-white/5 pb-1.5 last:border-0 last:pb-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className={entry.ok ? 'text-emerald-300' : 'text-amber-300'}>{entry.ok ? '✓' : '⚠'}</span>
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-slate-200">{entry.label}</span>
+                        <span className="font-mono text-[10px] text-slate-400">{formatUsd(entry.costUsd)}</span>
+                      </div>
+                      <div className="ml-5 flex flex-wrap items-baseline gap-x-2 font-mono text-[9.5px] text-slate-500">
+                        <span>{new Date(entry.at).toLocaleString('fr-FR')}</span>
+                        <span>· {LEDGER_KIND_LABEL[entry.kind] ?? entry.kind}</span>
+                        {entry.phase && <span>· {entry.phase}</span>}
+                        {entry.ventureName && <span>· {entry.ventureName}</span>}
+                        <span>· {entry.tokensIn}+{entry.tokensOut} jetons</span>
+                        <span>· {(entry.ms / 1000).toFixed(1)} s</span>
+                      </div>
+                      {entry.error && <p className="ml-5 text-[10px] text-amber-200/80">{entry.error}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -517,6 +689,10 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
     </aside>
   );
 };
+
+/** 12 400 plutôt que 12400 : les grands nombres doivent rester lisibles. */
+const compact = (value: number): string =>
+  value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)} M` : value >= 1000 ? `${(value / 1000).toFixed(1)} k` : String(value);
 
 const Info: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label, value, mono }) => (
   <div className="rounded-xl border border-white/10 bg-white/[0.07] px-3 py-2">

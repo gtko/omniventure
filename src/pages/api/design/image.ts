@@ -27,6 +27,10 @@ export interface GeneratedAsset {
   prompt: string;
   kind: string;
   createdAt: number;
+  /** Rattachement : quel produit, et quel agent l'a demandé. */
+  project?: string;
+  agentId?: string;
+  agentName?: string;
 }
 
 /** Consignes de cadrage par type de visuel — un logo ne se prompt pas comme une maquette. */
@@ -90,6 +94,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     culture?: CulturePillar[];
     persona?: string;
     job?: string;
+    agentId?: string;
+    agentName?: string;
   };
 
   const brief = body.prompt?.trim() ?? '';
@@ -165,6 +171,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
               model: completion.model || model,
               kind,
               project: (body.project ?? '').slice(0, 80),
+              // Qui l'a produit : sans ça, un visuel dans le bucket est
+              // orphelin et l'atelier ne peut rien attribuer.
+              agentId: (body.agentId ?? 'graphic_agent').slice(0, 60),
+              agentName: (body.agentName ?? 'Graphiste').slice(0, 80),
               createdAt: String(Date.now())
             }
           });
@@ -179,6 +189,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
           model: completion.model || model,
           prompt: brief,
           kind,
+          project: body.project ?? '',
+          agentId: body.agentId ?? 'graphic_agent',
+          agentName: body.agentName ?? 'Graphiste',
           createdAt: Date.now()
         });
       }

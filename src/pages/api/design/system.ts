@@ -53,6 +53,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     project?: string;
     persona?: string;
     job?: string;
+    agentId?: string;
+    agentName?: string;
     model?: string;
     temperature?: number;
     openRouterKey?: string;
@@ -149,7 +151,11 @@ ${SHAPE}
         tokens,
         components,
         notes: String(parsed?.notes ?? '').slice(0, 1200),
-        modelUsed
+        modelUsed,
+        // Attribution : un système sans auteur ne se relit pas.
+        authorId: body.agentId ?? 'design_system_agent',
+        authorName: body.agentName ?? 'Design System',
+        project: body.project ?? ''
       },
       attempts
     });

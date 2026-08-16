@@ -77,6 +77,8 @@ export const DesignSystemStudio: React.FC<{
             .filter(Boolean),
           persona: designer?.ameMd,
           job: designer?.jobMd,
+          agentId: 'design_system_agent',
+          agentName: designer?.role ?? 'Design System',
           model: designer?.modelId,
           temperature: designer?.temperature,
           culture: readCulture(),

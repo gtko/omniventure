@@ -122,6 +122,8 @@ function spreadToWorkspaces(dossier: Dossier): void {
       source: dossier.name,
       phase: 'discovery',
       cycle: 1,
+      createdById: 'master',
+      createdByName: 'Victoria (CEO)',
       detail: `MVP de ${dossier.name}`
     });
   }
@@ -138,6 +140,8 @@ function spreadToWorkspaces(dossier: Dossier): void {
       source: dossier.name,
       phase: 'measure',
       cycle: 1,
+      createdById: 'master',
+      createdByName: 'Victoria (CEO)',
       labels: ['acquisition']
     });
   }

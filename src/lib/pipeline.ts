@@ -15,6 +15,8 @@
  *      └──────────────── boucle d'amélioration ──────────────┘
  */
 
+import type { ArtifactKind } from './artifacts';
+
 export type PhaseId = 'vision' | 'discovery' | 'design' | 'build' | 'deploy' | 'measure';
 
 export interface Phase {
@@ -25,6 +27,14 @@ export interface Phase {
   owners: string[];
   /** Ce que l'étape suivante attend : dit à l'agent qui exécute la tâche. */
   deliverable: string;
+  /**
+   * Ce que l'étape doit **fabriquer**, pas décrire.
+   *
+   * Un compte rendu bien tourné n'est pas un livrable : la chaîne vérifie
+   * qu'un artefact de l'une de ces natures existe réellement avant de
+   * considérer la tâche comme faite.
+   */
+  produces: ArtifactKind[];
   /** Étape suivante, ou null si la boucle décide de la suite. */
   next: PhaseId | null;
   /**
@@ -41,6 +51,7 @@ export const PHASES: Phase[] = [
     label: 'Vision',
     icon: '🧭',
     owners: ['cpo_agent', 'cto_agent', 'master', 'planner'],
+    produces: ['memo'] as ArtifactKind[],
     deliverable:
       'la directive produit : la cible, le problème résolu mieux que les concurrents, trois résultats visés avec leur mesure, et ce qui est explicitement hors périmètre. Puis le cadre technique : pile retenue, contraintes non négociables, dette acceptée.',
     next: 'discovery',
@@ -52,6 +63,7 @@ export const PHASES: Phase[] = [
     label: 'Discovery',
     icon: '🔍',
     owners: ['pm_agent', 'market_agent', 'planner'],
+    produces: ['spec'] as ArtifactKind[],
     deliverable:
       "la spécification : problème utilisateur, parcours attendu écran par écran, critères d'acceptation vérifiables, hors périmètre de l'itération. Nomme les écrans dont le design aura besoin.",
     next: 'design',
@@ -63,6 +75,7 @@ export const PHASES: Phase[] = [
     label: 'Design',
     icon: '🎨',
     owners: ['design_lead', 'ui_designer', 'graphic_agent', 'design_system_agent'],
+    produces: ['maquette', 'design', 'visuel'] as ArtifactKind[],
     deliverable:
       "la maquette décrite précisément : structure de l'écran, hiérarchie, états (vide, chargement, erreur), composants réutilisés du design system, et les visuels nécessaires. Assez précis pour qu'un développeur construise sans deviner.",
     next: 'build',
@@ -74,6 +87,7 @@ export const PHASES: Phase[] = [
     label: 'Développement',
     icon: '⚙️',
     owners: ['lead_dev', 'frontend_agent', 'worker_dev'],
+    produces: ['code'] as ArtifactKind[],
     deliverable:
       "le code de l'unité demandée, conforme aux critères d'acceptation, avec ce qu'il faut pour le vérifier.",
     next: 'deploy',
@@ -85,6 +99,7 @@ export const PHASES: Phase[] = [
     label: 'Mise en ligne',
     icon: '🚀',
     owners: ['devops_agent', 'lead_dev'],
+    produces: ['code', 'memo'] as ArtifactKind[],
     deliverable: "la mise en ligne effectuée ou décrite pas à pas, avec le contrôle d'après bascule et la procédure de retour arrière.",
     next: 'measure',
     handoff:
@@ -95,6 +110,7 @@ export const PHASES: Phase[] = [
     label: 'Mesure & QA',
     icon: '📊',
     owners: ['qa_agent', 'cro_agent', 'data_agent', 'sentiment_agent'],
+    produces: ['mesure', 'article'] as ArtifactKind[],
     deliverable:
       "le constat mesuré : ce qui marche, ce qui ne marche pas, l'écart chiffré avec le résultat visé, et la friction la plus coûteuse. Pas d'avis sans chiffre ou sans observation.",
     // Fin de chaîne : c'est la boucle qui décide de rouvrir ou de s'arrêter.

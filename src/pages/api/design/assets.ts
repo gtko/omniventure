@@ -27,6 +27,8 @@ export const GET: APIRoute = async ({ locals }) => {
         model: meta.model ?? '',
         kind: meta.kind ?? 'illustration',
         project: meta.project ?? '',
+        agentId: meta.agentId ?? '',
+        agentName: meta.agentName ?? '',
         createdAt: Number(meta.createdAt ?? new Date(object.uploaded).getTime())
       };
     })

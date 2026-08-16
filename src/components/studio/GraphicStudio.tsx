@@ -126,6 +126,8 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
             .map((color) => (color.startsWith('#') ? color : `#${color}`)),
           persona: graphic?.ameMd,
           job: graphic?.jobMd,
+          agentId: 'graphic_agent',
+          agentName: graphic?.role ?? 'Graphiste',
           culture: readCulture(),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })

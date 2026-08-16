@@ -76,6 +76,9 @@ export function agentPayload(kind: CallKind): Record<string, unknown> {
   const call = agentCall(kind);
   return {
     agentId: call.agentId,
+    // Le nom voyage avec l'identifiant : ce qui est produit doit pouvoir
+    // s'attribuer sans relire le graphe.
+    agentName: call.agentRole,
     model: call.model,
     persona: call.persona,
     job: call.job,

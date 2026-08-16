@@ -21,8 +21,11 @@
  */
 
 import { saveRealAgentLog } from './agent-bus';
+import { primeLedger, record } from './agent-ledger';
 import { runAgent, type AgentStep } from './agent-sdk';
 import { apiCallTool, buildAgentTools, fetchTools, type ToolProvider } from './agent-tools';
+import { ARTIFACT_KINDS, readArtifacts, type Artifact } from './artifacts';
+import { productionTools } from './production-tools';
 import { cultureBlock, readCulture } from './culture';
 import { type Autonomy } from './harness-client';
 import { readGraph, type GraphAgent } from './hiring';
@@ -211,6 +214,9 @@ export function startWorksite(
     return;
   }
 
+  // Les tarifs des modèles, une fois : sans eux, tous les coûts seraient nuls.
+  primeLedger();
+
   const previous = readWorksite();
   // Reprendre un projet là où il en était, sauf demande explicite de reprise
   // au début — sinon on refait la vision d'un produit déjà mesuré.
@@ -353,6 +359,8 @@ async function openPhase(phase: Phase, context: Context, state: WorksiteState): 
     source: context.venture.name,
     phase: 'vision',
     cycle: state.cycle,
+    createdById: 'master',
+    createdByName: 'Direction',
     labels: ['chaîne']
   });
   return true;
@@ -403,6 +411,7 @@ async function advance(phase: Phase, context: Context): Promise<boolean> {
   });
 
   let created = 0;
+  const startedAt = Date.now();
   try {
     const result = await runAgent(
       {
@@ -435,13 +444,44 @@ async function advance(phase: Phase, context: Context): Promise<boolean> {
         source: context.venture.name,
         phase: targetId ?? 'discovery',
         cycle: targetId ? state.cycle : state.cycle + 1,
+        createdById: lead.id,
+        createdByName: lead.role,
         labels: ['chaîne']
       });
       created += 1;
     }
+
+    record({
+      agentId: lead.id,
+      agentName: lead.role,
+      kind: 'passation',
+      label: `${phase.label} → ${target?.label ?? 'cycle suivant'} — ${created} tâche(s)`,
+      model: result.modelUsed ?? lead.modelId ?? '',
+      tokensIn: result.tokensInput,
+      tokensOut: result.tokensOutput,
+      ms: Date.now() - startedAt,
+      ok: true,
+      ventureName: context.venture.name,
+      phase: phase.id
+    });
   } catch (error) {
     // Une passation ratée ne doit pas tuer le chantier : on le dit et on avance.
-    patch({ error: `Passation ${phase.label} : ${error instanceof Error ? error.message : 'échec'}` });
+    const message = error instanceof Error ? error.message : 'échec';
+    record({
+      agentId: lead.id,
+      agentName: lead.role,
+      kind: 'passation',
+      label: `${phase.label} → ${target?.label ?? 'cycle suivant'}`,
+      model: lead.modelId ?? '',
+      tokensIn: 0,
+      tokensOut: 0,
+      ms: Date.now() - startedAt,
+      ok: false,
+      error: message,
+      ventureName: context.venture.name,
+      phase: phase.id
+    });
+    patch({ error: `Passation ${phase.label} : ${message}` });
   }
 
   if (!targetId) return closeCycle(context, `${created} amélioration(s) retenue(s)`);
@@ -524,6 +564,7 @@ async function execute(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (!readWorksite().running && attempt > 1) return { ok: false, report: 'Chantier arrêté en cours de reprise.' };
     patch({ attempt, currentStep: attempt === 1 ? `${phase.label} — au travail` : `reprise ${attempt}/${MAX_ATTEMPTS}` });
+    const startedAt = Date.now();
 
     try {
       const result = await runAgent(
@@ -541,7 +582,21 @@ async function execute(
               { id: agent.id, name: agent.role },
               state.autonomy,
               state.provider,
-              context.venture.slug
+              context.venture.slug,
+              { ventureName: context.venture.name, phase: phase.id, taskId: task.id }
+            ),
+            // Ce qui fabrique vraiment : images, design system, maquettes,
+            // écrits typés. Sans eux, l'agent ne peut que décrire son travail.
+            ...productionTools(
+              {
+                agent: { id: agent.id, name: agent.role },
+                ventureName: context.venture.name,
+                ventureSlug: context.venture.slug,
+                phase: phase.id,
+                taskId: task.id,
+                model: agent.modelId
+              },
+              phase.produces
             ),
             apiCallTool({ id: agent.id, name: agent.role })
           ]
@@ -558,9 +613,40 @@ async function execute(
       const report = (result.text ?? '').trim();
       if (report.length < 20) throw new Error('Compte rendu vide : rien de livrable.');
 
-      archive(task, agent, phase, context, report);
+      /**
+       * Un compte rendu n'est pas un livrable.
+       *
+       * On regarde ce qui a réellement été fabriqué pendant cette tâche. Si
+       * rien n'existe — pas de fichier, pas d'image, pas d'écrit publié — le
+       * travail n'est pas fait, même si le texte est convaincant.
+       */
+      const produced = readArtifacts().filter((entry) => entry.taskId === task.id && entry.at >= startedAt);
+      if (produced.length === 0) {
+        throw new Error(
+          `Aucun livrable produit : il fallait ${phase.produces
+            .map((kind) => ARTIFACT_KINDS[kind].label.toLowerCase())
+            .join(' ou ')}, pas seulement une description. Sers-toi des outils de production.`
+        );
+      }
+
+      const doc = archive(task, agent, phase, context, report, produced);
       updateTask(task.id, { status: 'review' });
       patch({ currentStep: `${phase.label} — livré, en revue` });
+
+      record({
+        agentId: agent.id,
+        agentName: agent.role,
+        kind: 'tache',
+        label: task.title,
+        model: result.modelUsed ?? agent.modelId ?? '',
+        tokensIn: result.tokensInput,
+        tokensOut: result.tokensOutput,
+        ms: Date.now() - startedAt,
+        ok: true,
+        ventureName: context.venture.name,
+        phase: phase.id,
+        deliverable: { kind: 'doc', id: doc.id, label: doc.title, path: doc.path }
+      });
 
       saveRealAgentLog({
         fromAgentId: agent.id,
@@ -599,6 +685,21 @@ async function execute(
           modelUsed: agent.modelId ?? ''
         });
 
+        record({
+          agentId: agent.id,
+          agentName: agent.role,
+          kind: 'tache',
+          label: task.title,
+          model: agent.modelId ?? '',
+          tokensIn: 0,
+          tokensOut: 0,
+          ms: Date.now() - startedAt,
+          ok: false,
+          error: message,
+          ventureName: context.venture.name,
+          phase: phase.id
+        });
+
         return { ok: false, report: message };
       }
       await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
@@ -617,7 +718,7 @@ function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy)
       ? "Tu n'as aucun outil disponible : produis le livrable entièrement dans ta réponse."
       : autonomy === 'read'
         ? 'Tu peux lire le dépôt et le web, mais pas écrire de fichier. Produis le livrable dans ta réponse, appuyé sur ce que tu as réellement lu.'
-        : `Tu peux écrire des fichiers. Tout ce qui concerne ce produit va dans « ventures/${context.venture.slug}/ » — jamais ailleurs dans le dépôt de l'agence.`;
+        : `Tu peux écrire des fichiers. Tu travailles dans le dépôt de « ${context.venture.name} », qui n'appartient qu'à ce produit : écris à sa racine, comme dans n'importe quel projet. Le dépôt de l'agence est ailleurs et ne te concerne pas.`;
 
   return [
     `[PROJET] ${context.venture.name}`,
@@ -629,6 +730,11 @@ function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy)
     task.detail ? `[CONTEXTE] ${task.detail}` : '',
     '',
     moyens,
+    '',
+    // Le point qui change tout : ce qui doit exister à la fin, et par quel moyen.
+    `[LIVRABLE ATTENDU] ${phase.produces.map((kind) => ARTIFACT_KINDS[kind].expectation).join(', ou ')}.`,
+    "Ta réponse écrite n'est PAS le livrable : c'est une note qui l'accompagne. Le livrable doit exister — un fichier dans le dépôt, une image, une maquette ouvrable, un écrit publié.",
+    'Sers-toi de tes outils de production pour le fabriquer. Une tâche qui ne produit rien est comptée comme échouée.',
     '',
     'Fais le travail, ne le décris pas. Pas de plan d’action, pas de « je vais » : le résultat.',
     'Termine par trois lignes : ce que tu as produit, où il se trouve, ce qui reste à faire.'
@@ -643,13 +749,31 @@ function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy)
  * Il est classé sous son étape : c'est ce que lira l'étape suivante lors de la
  * passation. Un compte rendu qui reste dans une conversation est perdu.
  */
-function archive(task: Task, agent: GraphAgent, phase: Phase, context: Context, report: string): void {
-  upsertDoc({
+function archive(
+  task: Task,
+  agent: GraphAgent,
+  phase: Phase,
+  context: Context,
+  report: string,
+  produced: Artifact[]
+) {
+  const doc = upsertDoc({
     title: task.title,
     path: `Chantier/${context.venture.name}/${phase.id}`,
     authorId: agent.id,
     authorName: agent.role,
-    body: [`# ${task.title}`, `> ${phase.icon} ${phase.label} — livré par ${agent.role}`, '', report].join('\n')
+    // Cette note accompagne les livrables, elle ne les remplace pas : la liste
+    // ci-dessous pointe vers ce qui existe réellement.
+    body: [
+      `# ${task.title}`,
+      `> ${phase.icon} ${phase.label} — livré par ${agent.role}`,
+      '',
+      '## Livrables',
+      ...produced.map((entry) => `- ${ARTIFACT_KINDS[entry.kind].icon} **${entry.title}** — ${entry.summary}`),
+      '',
+      '## Note du contributeur',
+      report
+    ].join('\n')
   });
 
   postMessage({
@@ -664,24 +788,31 @@ function archive(task: Task, agent: GraphAgent, phase: Phase, context: Context, 
   // Mais une suite qui engendre une suite ne s'arrête jamais : une seule
   // génération, et jamais deux fois le même intitulé.
   const reste = report.match(/reste (?:à faire|a faire)\s*:?\s*(.+)/i)?.[1]?.trim();
-  if (!reste || reste.length <= 8 || /rien|aucun|néant|neant/i.test(reste)) return;
-  if ((task.labels ?? []).includes('suite')) return;
+  const suite = reste && reste.length > 8 && !/rien|aucun|néant|neant/i.test(reste);
+  const title = suite ? reste.slice(0, 120) : '';
+  const known =
+    !suite ||
+    (task.labels ?? []).includes('suite') ||
+    tasksOf(context.venture.name).some((entry) => entry.title.toLowerCase() === title.toLowerCase());
 
-  const title = reste.slice(0, 120);
-  if (tasksOf(context.venture.name).some((entry) => entry.title.toLowerCase() === title.toLowerCase())) return;
+  if (!known) {
+    addTask({
+      title,
+      status: 'todo',
+      priority: 'moyenne',
+      assigneeId: agent.id,
+      assigneeName: agent.role,
+      source: context.venture.name,
+      phase: phase.id,
+      cycle: readWorksite().cycle,
+      createdById: agent.id,
+      createdByName: agent.role,
+      labels: ['suite'],
+      detail: `Suite de « ${task.title} »`
+    });
+  }
 
-  addTask({
-    title,
-    status: 'todo',
-    priority: 'moyenne',
-    assigneeId: agent.id,
-    assigneeName: agent.role,
-    source: context.venture.name,
-    phase: phase.id,
-    cycle: readWorksite().cycle,
-    labels: ['suite'],
-    detail: `Suite de « ${task.title} »`
-  });
+  return doc;
 }
 
 /**

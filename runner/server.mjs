@@ -18,6 +18,7 @@ import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { buildTools, describeTools, quoteWindowsArg, toolsForLevel } from './tools.mjs';
+import { AGENCY, listWorkspaces, rootFor } from './workspaces.mjs';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,28 @@ function spawnHarness(bin, args, options = {}) {
 
 /** Boîte à outils des agents, construite une fois pour ce projet. */
 const TOOLS = buildTools(PROJECT_ROOT);
+
+/**
+ * Une boîte à outils par espace de travail.
+ *
+ * Les outils se referment sur leur racine : un jeu par projet garantit qu'un
+ * agent qui travaille sur « pricewatch » ne peut pas écrire dans le dépôt de
+ * l'agence, même par erreur de chemin. Le jeu est mis en cache, sa
+ * construction n'a pas à se répéter à chaque appel.
+ */
+const TOOLBOXES = new Map([[AGENCY, TOOLS]]);
+
+function toolboxFor(workspace) {
+  const slug = workspace || AGENCY;
+  const cached = TOOLBOXES.get(slug);
+  if (cached) return cached;
+
+  const root = rootFor(slug, PROJECT_ROOT);
+  const built = buildTools(root);
+  TOOLBOXES.set(slug, built);
+  console.log(`📁 Espace « ${slug} » → ${root}`);
+  return built;
+}
 
 /** Les processus en cours, indexés par identifiant de run. */
 const runs = new Map();
@@ -279,13 +302,20 @@ const server = createServer(async (req, res) => {
     }
 
     // Exécution d'un outil. Le niveau demandé est vérifié ici, pas côté client.
+    if (req.method === 'GET' && url.pathname === '/workspaces') {
+      return sendJson(res, 200, { workspaces: listWorkspaces(PROJECT_ROOT) });
+    }
+
     if (req.method === 'POST' && url.pathname === '/tools/call') {
       const body = await readBody(req);
       const autonomy = body.autonomy ?? 'read';
-      const allowed = toolsForLevel(TOOLS, autonomy);
+      // Chaque projet travaille chez lui : le code d'un produit n'a rien à
+      // faire dans l'historique git de l'usine.
+      const toolbox = toolboxFor(body.workspace);
+      const allowed = toolsForLevel(toolbox, autonomy);
       const tool = allowed.find((entry) => entry.name === body.tool);
       if (!tool) {
-        const known = TOOLS.find((entry) => entry.name === body.tool);
+        const known = toolbox.find((entry) => entry.name === body.tool);
         return sendJson(res, 403, {
           error: known
             ? `L'outil « ${body.tool} » exige le niveau « ${known.level} », la demande est en « ${autonomy} ».`
@@ -295,7 +325,7 @@ const server = createServer(async (req, res) => {
       const started = Date.now();
       try {
         const result = await tool.run(body.args ?? {}, { autonomy, projectRoot: PROJECT_ROOT });
-        console.log(`🔧 ${tool.name} (${autonomy}) — ${Date.now() - started} ms`);
+        console.log(`🔧 ${tool.name} (${autonomy}) [${body.workspace || AGENCY}] — ${Date.now() - started} ms`);
         return sendJson(res, 200, { tool: tool.name, ms: Date.now() - started, result });
       } catch (error) {
         return sendJson(res, 200, {
