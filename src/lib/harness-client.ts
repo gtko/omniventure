@@ -173,6 +173,33 @@ export const AUTONOMY_LABEL: Record<Autonomy, { label: string; hint: string }> =
   full: { label: 'Autonomie complète', hint: 'modifie ET exécute des commandes (install, git, tests)' }
 };
 
+/**
+ * Le niveau d'autonomie choisi, retenu d'une visite à l'autre.
+ *
+ * Il était remis à « lecture seule » à chaque chargement, ce qui obligeait à le
+ * remonter avant chaque lancement — et une case qu'on reclique machinalement ne
+ * protège plus de rien, elle agace seulement.
+ *
+ * Le défaut est donc l'autonomie complète, ce qui n'est devenu raisonnable que
+ * depuis que chaque produit a son propre dépôt : un agent qui écrit ou lance
+ * une commande le fait chez lui, pas dans le dépôt de l'usine.
+ */
+const AUTONOMY_KEY = 'omniventure_autonomy';
+
+export function readAutonomy(fallback: Autonomy = 'full'): Autonomy {
+  if (typeof window === 'undefined') return fallback;
+  const stored = localStorage.getItem(AUTONOMY_KEY);
+  return stored === 'read' || stored === 'write' || stored === 'full' ? stored : fallback;
+}
+
+export function writeAutonomy(level: Autonomy): void {
+  try {
+    localStorage.setItem(AUTONOMY_KEY, level);
+  } catch {
+    /* stockage refusé : le choix vaut pour cette session */
+  }
+}
+
 export async function startRun(
   harnessId: string,
   prompt: string,

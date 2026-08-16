@@ -3,7 +3,7 @@ import { AGENT_ACTIVITY_EVENT, readActivities, type AgentActivity } from '../lib
 import { runAgent, type AgentStep } from '../lib/agent-sdk';
 import { apiCallTool, buildAgentTools, fetchTools, type BridgeTool, type ToolProvider } from '../lib/agent-tools';
 import { readCulture, cultureBlock } from '../lib/culture';
-import { AUTONOMY_LABEL, type Autonomy } from '../lib/harness-client';
+import { AUTONOMY_LABEL, readAutonomy, writeAutonomy, type Autonomy } from '../lib/harness-client';
 import { readGraph, type GraphAgent } from '../lib/hiring';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
@@ -18,7 +18,7 @@ const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 export const AgentRunConsole: React.FC = () => {
   const [agents, setAgents] = useState<GraphAgent[]>([]);
   const [agentId, setAgentId] = useState('');
-  const [autonomy, setAutonomy] = useState<Autonomy>('read');
+  const [autonomy, setAutonomy] = useState<Autonomy>(() => readAutonomy());
   /** Où les outils s'exécutent : votre machine, ou un conteneur dans le cloud. */
   const [provider, setProvider] = useState<ToolProvider>('local');
   const [mission, setMission] = useState('');
@@ -216,7 +216,10 @@ export const AgentRunConsole: React.FC = () => {
                 <button
                   key={level}
                   type="button"
-                  onClick={() => setAutonomy(level)}
+                  onClick={() => {
+                    setAutonomy(level);
+                    writeAutonomy(level);
+                  }}
                   title={AUTONOMY_LABEL[level].hint}
                   className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                     autonomy === level

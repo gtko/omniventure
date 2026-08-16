@@ -68,7 +68,7 @@ export const PHASES: Phase[] = [
       "la spécification : problème utilisateur, parcours attendu écran par écran, critères d'acceptation vérifiables, hors périmètre de l'itération. Nomme les écrans dont le design aura besoin.",
     next: 'design',
     handoff:
-      "Tu es Head of Design. À partir des spécifications ci-dessus, liste le travail de design : un élément par écran, composant ou visuel à produire. Ne liste que ce que les spécifications réclament vraiment."
+      "Tu es Head of Design. À partir des spécifications ci-dessus, liste le travail de design : un élément par écran, composant ou visuel à PRODUIRE — des images, pas des notes de cadrage. Si la marque n'a pas encore de logo, mets-le en premier. Ne liste que ce que les spécifications réclament vraiment."
   },
   {
     id: 'design',
@@ -77,7 +77,7 @@ export const PHASES: Phase[] = [
     owners: ['design_lead', 'ui_designer', 'graphic_agent', 'design_system_agent'],
     produces: ['maquette', 'design', 'visuel'] as ArtifactKind[],
     deliverable:
-      "la maquette décrite précisément : structure de l'écran, hiérarchie, états (vide, chargement, erreur), composants réutilisés du design system, et les visuels nécessaires. Assez précis pour qu'un développeur construise sans deviner.",
+      "des images, pas des descriptions : le logo de la marque, l'aspect de chaque écran demandé, et les illustrations nécessaires — générés avec produire_visuel. Plus le design system (tokens et composants) quand il n'existe pas encore. Une maquette qu'on ne peut pas regarder ne sert à personne.",
     next: 'build',
     handoff:
       "Tu es Head of Architecture. À partir des maquettes et des spécifications ci-dessus, découpe le développement : un élément par unité livrable et testable. Sépare le back du front quand ça a du sens."

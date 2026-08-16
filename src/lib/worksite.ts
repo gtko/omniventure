@@ -24,7 +24,7 @@ import { saveRealAgentLog } from './agent-bus';
 import { primeLedger, record } from './agent-ledger';
 import { runAgent, type AgentStep } from './agent-sdk';
 import { apiCallTool, buildAgentTools, fetchTools, type ToolProvider } from './agent-tools';
-import { ARTIFACT_KINDS, readArtifacts, type Artifact } from './artifacts';
+import { ARTIFACT_KINDS, readArtifacts, type Artifact, type ArtifactKind } from './artifacts';
 import { productionTools } from './production-tools';
 import { cultureBlock, readCulture } from './culture';
 import { type Autonomy } from './harness-client';
@@ -662,19 +662,29 @@ async function execute(
       if (report.length < 20) throw new Error('Compte rendu vide : rien de livrable.');
 
       /**
-       * Un compte rendu n'est pas un livrable.
+       * Un compte rendu n'est pas un livrable — et un document non plus, quand
+       * l'étape demande autre chose.
        *
-       * On regarde ce qui a réellement été fabriqué pendant cette tâche. Si
-       * rien n'existe — pas de fichier, pas d'image, pas d'écrit publié — le
-       * travail n'est pas fait, même si le texte est convaincant.
+       * Première version : on acceptait n'importe quel artefact produit. Le
+       * résultat était prévisible avec le recul — l'étape design rendait trois
+       * documents intitulés « Concevoir la page d'accueil » et repartait
+       * satisfaite. Publier un écrit est toujours plus rapide que produire une
+       * image ou une maquette, donc c'est ce que faisaient les agents.
+       *
+       * On exige maintenant un artefact **de la nature déclarée par l'étape**.
+       * Le reste — une note, une décision écrite — garde sa valeur, mais ne
+       * remplace pas le livrable.
        */
       const produced = readArtifacts().filter((entry) => entry.taskId === task.id && entry.at >= startedAt);
-      if (produced.length === 0) {
-        throw new Error(
-          `Aucun livrable produit : il fallait ${phase.produces
-            .map((kind) => ARTIFACT_KINDS[kind].label.toLowerCase())
-            .join(' ou ')}, pas seulement une description. Sers-toi des outils de production.`
-        );
+      const onTarget = produced.filter((entry) => phase.produces.includes(entry.kind));
+
+      if (onTarget.length === 0) {
+        const attendu = phase.produces.map((kind) => `${ARTIFACT_KINDS[kind].label.toLowerCase()} (${ARTIFACT_KINDS[kind].expectation})`);
+        const rendu =
+          produced.length > 0
+            ? ` Tu as produit : ${produced.map((entry) => ARTIFACT_KINDS[entry.kind].label.toLowerCase()).join(', ')} — ça ne remplace pas le livrable de cette étape.`
+            : '';
+        throw new Error(`Livrable manquant. Cette étape attend ${attendu.join(' ou ')}.${rendu}`);
       }
 
       const doc = archive(task, agent, phase, context, report, produced);
@@ -757,6 +767,28 @@ async function execute(
   return { ok: false, report: 'Trois tentatives sans résultat.' };
 }
 
+/**
+ * Quels outils produisent réellement chaque nature de livrable.
+ *
+ * Nommer l'outil dans la consigne évite le contresens le plus coûteux : un
+ * agent qui « conçoit » un logo en le décrivant, parce qu'il n'a pas fait le
+ * lien entre ce qu'on lui demande et ce qu'il a sous la main.
+ */
+function toolsFor(kinds: ArtifactKind[]): string[] {
+  const map: Partial<Record<ArtifactKind, string>> = {
+    visuel: 'produire_visuel',
+    design: 'produire_design_system',
+    maquette: 'produire_maquette',
+    code: 'fs_write',
+    spec: 'publier_ecrit (type « spec »)',
+    memo: 'publier_ecrit (type « memo »)',
+    article: 'publier_ecrit (type « article »)',
+    doc: 'publier_ecrit (type « doc »)',
+    mesure: 'interroger_mesure puis publier_ecrit'
+  };
+  return [...new Set(kinds.map((kind) => map[kind]).filter(Boolean) as string[])];
+}
+
 /** Ce qu'on demande à l'agent — précis sur le livrable, honnête sur ses moyens. */
 function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy): string {
   const amont = phaseIndex(phase.id) > 0 ? deliverablesOf(context.venture.name, PHASES[phaseIndex(phase.id) - 1].id) : '';
@@ -787,9 +819,13 @@ function mission(task: Task, phase: Phase, context: Context, autonomy: Autonomy)
     moyens,
     '',
     // Le point qui change tout : ce qui doit exister à la fin, et par quel moyen.
-    `[LIVRABLE ATTENDU] ${phase.produces.map((kind) => ARTIFACT_KINDS[kind].expectation).join(', ou ')}.`,
-    "Ta réponse écrite n'est PAS le livrable : c'est une note qui l'accompagne. Le livrable doit exister — un fichier dans le dépôt, une image, une maquette ouvrable, un écrit publié.",
-    'Sers-toi de tes outils de production pour le fabriquer. Une tâche qui ne produit rien est comptée comme échouée.',
+    `[LIVRABLE ATTENDU] ${phase.produces.map((kind) => `${ARTIFACT_KINDS[kind].icon} ${ARTIFACT_KINDS[kind].label} — ${ARTIFACT_KINDS[kind].expectation}`).join('\n                  ou ')}`,
+    '',
+    `Outils qui produisent ce livrable : ${toolsFor(phase.produces).join(', ')}.`,
+    "Ta réponse écrite n'est PAS le livrable, et publier un document ne le remplace pas non plus. Une tâche qui ne produit rien de la nature attendue est comptée comme échouée, même avec un compte rendu parfait.",
+    phase.produces.includes('visuel')
+      ? "Quand on te demande un logo, une illustration ou l'aspect d'un écran : génère l'image avec produire_visuel. La décrire ne sert à personne — le développeur qui reprend a besoin de la voir."
+      : '',
     '',
     'Fais le travail, ne le décris pas. Pas de plan d’action, pas de « je vais » : le résultat.',
     'Termine par trois lignes : ce que tu as produit, où il se trouve, ce qui reste à faire.'

@@ -78,6 +78,8 @@ function visualTool(context: ProductionContext): AgentTool {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: String(args.brief ?? ''),
+            // Le modele choisi dans l'atelier graphique, s'il y en a un.
+            model: localStorage.getItem('omniventure_image_model') || undefined,
             kind: String(args.kind ?? 'illustration'),
             count: Math.max(1, Math.min(3, Number(args.count) || 1)),
             palette: Array.isArray(args.palette) ? args.palette : [],
@@ -212,11 +214,13 @@ function designSystemReadTool(context: ProductionContext): AgentTool {
  * et une page de doc ne se lisent pas au même moment ni par les mêmes gens.
  * Les confondre, c'est ce qui rendait tous les livrables interchangeables.
  */
-function writingTool(context: ProductionContext): AgentTool {
+function writingTool(context: ProductionContext, isDeliverable: boolean): AgentTool {
   return {
     name: 'publier_ecrit',
     description:
-      "Publie un écrit fini et typé : mémo de décision, spécification, article de blog, page de documentation. Le contenu doit être complet et publiable tel quel — pas un plan, pas un résumé.",
+      (isDeliverable
+        ? "Publie un écrit fini et typé : mémo de décision, spécification, article de blog, page de documentation. Le contenu doit être complet et publiable tel quel — pas un plan, pas un résumé."
+        : "Publie une note qui ACCOMPAGNE ton livrable — une décision, un cadrage. Elle ne remplace pas le livrable attendu à cette étape : une tâche qui ne rend qu'un écrit sera comptée en échec."),
     parameters: {
       type: 'object',
       properties: {
@@ -455,7 +459,7 @@ export function productionTools(context: ProductionContext, kinds: ArtifactKind[
 
   // L'écrit typé est toujours disponible : toute étape peut avoir à poser une
   // décision par écrit, même quand son livrable principal est ailleurs.
-  tools.push(writingTool(context));
+  tools.push(writingTool(context, wants.has('memo') || wants.has('spec') || wants.has('article') || wants.has('doc')));
 
   // La mesure aussi : n'importe quelle étape gagne à vérifier un chiffre plutôt
   // qu'à raisonner sur ce qu'elle imagine du trafic.

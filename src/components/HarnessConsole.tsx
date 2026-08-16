@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AUTONOMY_LABEL,
+  readAutonomy,
+  writeAutonomy,
   cancelRun,
   checkRunner,
   getRunnerToken,
@@ -31,7 +33,7 @@ export const HarnessConsole: React.FC = () => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState('');
-  const [autonomy, setAutonomy] = useState<Autonomy>('write');
+  const [autonomy, setAutonomy] = useState<Autonomy>(() => readAutonomy());
   const [runs, setRuns] = useState<KnownRun[]>([]);
   const stopRef = useRef<(() => void) | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -225,7 +227,10 @@ node runner/server.mjs
             <button
               key={level}
               type="button"
-              onClick={() => setAutonomy(level)}
+              onClick={() => {
+                setAutonomy(level);
+                writeAutonomy(level);
+              }}
               title={AUTONOMY_LABEL[level].hint}
               className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                 autonomy === level

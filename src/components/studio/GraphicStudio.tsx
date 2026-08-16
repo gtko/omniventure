@@ -48,7 +48,11 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
   const [assets, setAssets] = useState<StoredAsset[]>([]);
   const [models, setModels] = useState<ImageModel[]>([]);
   // Le modèle vient de la fiche du graphiste ; le menu permet un écart ponctuel.
-  const [model, setModel] = useState(() => agentCall('image').model ?? 'google/gemini-2.5-flash-image');
+  // Le choix est partage avec les agents : ce qui est selectionne ici est le
+  // modele qu'ils emploieront pour produire logos et maquettes.
+  const [model, setModel] = useState(
+    () => localStorage.getItem('omniventure_image_model') ?? agentCall('image').model ?? 'openai/gpt-5.4-image-2'
+  );
   const [kind, setKind] = useState('logo');
   const [prompt, setPrompt] = useState('');
   const [project, setProject] = useState('');
@@ -221,7 +225,10 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
           Modèle de génération
           <select
             value={model}
-            onChange={(event) => setModel(event.target.value)}
+            onChange={(event) => {
+              setModel(event.target.value);
+              localStorage.setItem('omniventure_image_model', event.target.value);
+            }}
             className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal text-slate-800"
           >
             {models.length === 0 ? (

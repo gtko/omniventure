@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { fetchTools, type ToolProvider } from '../lib/agent-tools';
-import { AUTONOMY_LABEL, type Autonomy } from '../lib/harness-client';
+import { AUTONOMY_LABEL, readAutonomy, writeAutonomy, type Autonomy } from '../lib/harness-client';
 import { PHASES, phaseIndex, type PhaseId } from '../lib/pipeline';
 import { WORKSPACE_EVENT, type Task } from '../lib/workspace';
 import {
@@ -27,7 +27,7 @@ interface Props {
 export const WorksitePanel: React.FC<Props> = ({ venture }) => {
   const [state, setState] = useState<WorksiteState>(readWorksite());
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [autonomy, setAutonomy] = useState<Autonomy>('read');
+  const [autonomy, setAutonomy] = useState<Autonomy>(() => readAutonomy());
   const [provider, setProvider] = useState<ToolProvider>('local');
   const [cycles, setCycles] = useState(1);
   const [toolCount, setToolCount] = useState<number | null>(null);
@@ -203,7 +203,10 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
               type="button"
               disabled={active}
               title={AUTONOMY_LABEL[level].hint}
-              onClick={() => setAutonomy(level)}
+              onClick={() => {
+                setAutonomy(level);
+                writeAutonomy(level);
+              }}
               className={`rounded-lg border px-2 py-1 text-[11px] transition-colors disabled:opacity-50 ${
                 autonomy === level
                   ? level === 'full'

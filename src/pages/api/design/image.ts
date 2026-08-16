@@ -15,7 +15,15 @@ import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
 
-const DEFAULT_MODEL = 'google/gemini-2.5-flash-image';
+/**
+ * Modèle d'image par défaut.
+ *
+ * Relevé sur le catalogue OpenRouter, pas écrit de mémoire : les identifiants
+ * de modèles changent, et un identifiant périmé fait échouer toute génération
+ * avec un message qui n'aide pas. Le studio graphique laisse choisir autre
+ * chose — c'est le point de départ, pas une contrainte.
+ */
+const DEFAULT_MODEL = 'openai/gpt-5.4-image-2';
 const MAX_IMAGES = 4;
 
 export interface GeneratedAsset {
