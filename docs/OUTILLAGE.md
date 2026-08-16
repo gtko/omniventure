@@ -196,54 +196,65 @@ vérifié côté serveur — pas côté client.
 
 ## 12. Conteneurs cloud — coder sans machine locale
 
-### Ce qui existe réellement
+**Fait.** Wrangler est passé en 4.59.2 et le bac à sable est configuré.
 
-Vérifié sur le registre npm :
+### Ce qui a été mis en place
 
-- **`@cloudflare/sandbox`** (0.12.7) — « environnement isolé pour exécuter des
-  commandes ». C'est exactement l'usage visé : un conteneur piloté depuis un
-  Worker, avec exécution de commandes, système de fichiers et ports exposés.
-- **`@cloudflare/containers`** (0.3.7) — la brique de plus bas niveau,
-  conteneurs adossés à des Durable Objects.
+| Élément | Où |
+|---|---|
+| `@cloudflare/sandbox` 0.12.7 | dépendance du projet |
+| Classe `Sandbox` exportée | `worker/index.ts` |
+| Liaison `SANDBOX` + migration `v2` | `wrangler.jsonc` |
+| Image du conteneur | `Dockerfile` |
+| Exécution des outils dans le conteneur | `src/pages/api/sandbox/call.ts` |
+| Choix du lieu d'exécution | écran « Mission autonome » |
 
-### Le prérequis qui bloque aujourd'hui
+Les noms d'outils sont **identiques** entre le pont local et le conteneur :
+changer de lieu d'exécution ne change pas ce que l'agent sait faire, seulement
+où il le fait.
 
-**Ce dépôt utilise wrangler 3.114 ; les conteneurs exigent wrangler 4.**
-La commande `wrangler containers` n'existe pas en v3 (vérifié). La version
-actuelle de wrangler est la 4.123.
+### Un correctif nécessaire au passage
 
-La migration 3 → 4 touche la chaîne de déploiement : c'est une décision à
-prendre, pas un détail à glisser dans un commit.
+Le déploiement était **déjà cassé** avant les conteneurs : `wrangler.jsonc`
+déclarait deux Durable Objects (`VentureAutonomousAgent`, `OrchestratorAgent`)
+que la sortie d'Astro n'exportait pas. `wrangler deploy` refusait de publier.
+`worker/index.ts` réexporte désormais le gestionnaire d'Astro **et** les classes
+persistantes.
 
-### Ce que ça donnerait
+### Prérequis pour déployer
 
-```
-Navigateur → Worker → Durable Object (Sandbox) → conteneur
-                                                  ├── fichiers du dépôt
-                                                  ├── shell, git, npm
-                                                  └── navigateur sans interface
-```
+**Docker doit tourner sur la machine qui déploie.** C'est wrangler qui construit
+l'image du conteneur puis la pousse vers le registre Cloudflare ; sans Docker,
+`wrangler deploy` s'arrête avec :
 
-Les mêmes outils qu'aujourd'hui, avec un fournisseur d'exécution différent :
-`local` (le pont) ou `cloud` (le conteneur). L'interface des outils ne change
-pas — seul l'endroit où ils s'exécutent change.
+> The Docker CLI could not be launched.
 
-### Étapes
+Sur cette machine, Docker n'est pas installé — le reste du déploiement est
+validé (le Worker s'empaquette, les trois Durable Objects sont liés), seule la
+construction de l'image manque.
 
-1. Passer wrangler en 4.x et vérifier le déploiement existant.
-2. Ajouter `@cloudflare/sandbox`, déclarer le conteneur dans la configuration et
-   écrire son `Dockerfile`.
-3. Écrire le fournisseur `cloud` derrière la même interface que le pont local.
-4. Basculer le choix du fournisseur dans l'écran « Mission autonome ».
+### En développement local
 
-### Ce que ça change pour l'argent
+`"dev": { "enable_containers": false }` : sans cela, `astro dev` refuse de
+démarrer faute d'image construite. Passez à `true` quand vous voulez essayer le
+bac à sable en local, Docker démarré.
 
-Un conteneur se facture au temps d'exécution, contrairement au pont local qui
-est gratuit. Un agent qui travaille en continu dans un conteneur coûte donc
-davantage qu'un agent qui travaille sur votre machine — à arbitrer selon
-l'usage : le cloud pour ce qui doit tourner sans vous, le local pour le reste.
+### Différences avec le pont local
 
----
+| | Machine locale | Conteneur |
+|---|---|---|
+| Coût | gratuit | facturé au temps d'exécution |
+| Disponibilité | exige votre machine allumée | permanent |
+| Navigateur | ✅ Chrome | ❌ absent de l'image par défaut |
+| Dépôt | déjà là | cloné par l'outil `setup` |
+| Nombre d'outils | 10 | 6 |
+
+### Ce qui reste à faire
+
+1. Installer Docker Desktop et lancer `wrangler deploy` une première fois
+   (comptez 2 à 3 minutes de provisionnement après la première publication).
+2. Ajouter Chrome à l'image si les agents doivent naviguer depuis le cloud.
+3. Décider de la politique d'extinction : un conteneur inactif coûte encore.
 
 ## 13. Par où commencer
 

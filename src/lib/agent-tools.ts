@@ -14,6 +14,66 @@ import { pushActivity } from './agent-activity';
 import type { AgentTool } from './agent-sdk';
 import { getRunnerToken, RUNNER_URL, type Autonomy } from './harness-client';
 
+/** Où les outils s'exécutent réellement. */
+export type ToolProvider = 'local' | 'cloud';
+
+/**
+ * Catalogue du conteneur cloud.
+ *
+ * Il ne dépend d'aucun hôte allumé chez vous — mais il n'a pas de navigateur
+ * dans son image, d'où une liste plus courte que celle du pont local.
+ */
+const CLOUD_TOOLS: BridgeTool[] = [
+  {
+    name: 'fs_list',
+    level: 'read',
+    description: "Liste le contenu d'un dossier de l'espace de travail.",
+    parameters: { type: 'object', properties: { path: { type: 'string' } } }
+  },
+  {
+    name: 'fs_read',
+    level: 'read',
+    description: 'Lit un fichier texte.',
+    parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
+  },
+  {
+    name: 'fs_search',
+    level: 'read',
+    description: 'Cherche un motif dans les fichiers.',
+    parameters: {
+      type: 'object',
+      properties: { pattern: { type: 'string' }, extensions: { type: 'array', items: { type: 'string' } } },
+      required: ['pattern']
+    }
+  },
+  {
+    name: 'fs_write',
+    level: 'write',
+    description: 'Écrit un fichier.',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string' }, content: { type: 'string' } },
+      required: ['path', 'content']
+    }
+  },
+  {
+    name: 'git',
+    level: 'read',
+    description: 'Commande git. Les commandes qui écrivent exigent l’autonomie complète.',
+    parameters: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' } } }, required: ['args'] }
+  },
+  {
+    name: 'shell',
+    level: 'full',
+    description: 'Exécute une commande dans le conteneur (npm, node, tests…).',
+    parameters: {
+      type: 'object',
+      properties: { bin: { type: 'string' }, args: { type: 'array', items: { type: 'string' } } },
+      required: ['bin']
+    }
+  }
+];
+
 export interface BridgeTool {
   name: string;
   description: string;
@@ -64,6 +124,20 @@ function headers(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 
+const LEVEL_RANK: Record<string, number> = { read: 0, write: 1, full: 2 };
+
+/**
+ * Catalogue disponible pour un fournisseur donné.
+ * En cloud il est connu d'avance ; en local il est lu depuis le pont, donc un
+ * outil ajouté au pont apparaît sans toucher à ce fichier.
+ */
+export async function fetchTools(provider: ToolProvider, autonomy: Autonomy = 'read'): Promise<BridgeTool[]> {
+  if (provider === 'cloud') {
+    return CLOUD_TOOLS.filter((tool) => (LEVEL_RANK[tool.level] ?? 0) <= (LEVEL_RANK[autonomy] ?? 0));
+  }
+  return fetchBridgeTools(autonomy);
+}
+
 /** Catalogue du pont, filtré par niveau d'autonomie. Vide si le pont est éteint. */
 export async function fetchBridgeTools(autonomy: Autonomy = 'read'): Promise<BridgeTool[]> {
   try {
@@ -83,7 +157,9 @@ export async function fetchBridgeTools(autonomy: Autonomy = 'read'): Promise<Bri
 export function buildAgentTools(
   catalogue: BridgeTool[],
   agent: { id: string; name: string },
-  autonomy: Autonomy = 'read'
+  autonomy: Autonomy = 'read',
+  provider: ToolProvider = 'local',
+  workspace = 'agence'
 ): AgentTool[] {
   const token = getRunnerToken();
 
@@ -107,12 +183,20 @@ export function buildAgentTools(
       });
 
       try {
-        const res = await fetch(`${RUNNER_URL}/tools/call`, {
-          method: 'POST',
-          headers: headers(),
-          body: JSON.stringify({ tool: tool.name, args, autonomy }),
-          signal: ctx.signal
-        });
+        const res =
+          provider === 'cloud'
+            ? await fetch('/api/sandbox/call', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool: tool.name, args, autonomy, workspace }),
+                signal: ctx.signal
+              })
+            : await fetch(`${RUNNER_URL}/tools/call`, {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({ tool: tool.name, args, autonomy }),
+                signal: ctx.signal
+              });
         const json = (await res.json()) as { result?: any; error?: string; ms?: number };
 
         if (json.error) {

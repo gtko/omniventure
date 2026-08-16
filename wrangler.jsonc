@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "omniventure-factory",
-  "main": "./dist/_worker.js/index.js",
+  "main": "./worker/index.ts",
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
@@ -17,6 +17,10 @@
       {
         "name": "OrchestratorAgent",
         "class_name": "OrchestratorAgent"
+      },
+      {
+        "name": "SANDBOX",
+        "class_name": "Sandbox"
       }
     ]
   },
@@ -24,6 +28,28 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["VentureAutonomousAgent", "OrchestratorAgent"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["Sandbox"]
+    }
+  ],
+
+  // Le développement local ne construit pas l'image du conteneur : cela
+  // exigerait Docker à chaque `astro dev`. Passez à `true` quand vous voulez
+  // essayer le bac à sable sur votre machine, Docker démarré.
+  "dev": {
+    "enable_containers": false
+  },
+
+  // Conteneur d'exécution : c'est lui qui permet aux agents de coder dans le
+  // cloud, sans dépendre du pont local. Facturé au temps d'exécution.
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "lite"
     }
   ],
   "queues": {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AGENT_ACTIVITY_EVENT, readActivities, type AgentActivity } from '../lib/agent-activity';
 import { runAgent, type AgentStep } from '../lib/agent-sdk';
-import { apiCallTool, buildAgentTools, fetchBridgeTools, type BridgeTool } from '../lib/agent-tools';
+import { apiCallTool, buildAgentTools, fetchTools, type BridgeTool, type ToolProvider } from '../lib/agent-tools';
 import { readCulture, cultureBlock } from '../lib/culture';
 import { AUTONOMY_LABEL, type Autonomy } from '../lib/harness-client';
 import { readGraph, type GraphAgent } from '../lib/hiring';
@@ -19,6 +19,8 @@ export const AgentRunConsole: React.FC = () => {
   const [agents, setAgents] = useState<GraphAgent[]>([]);
   const [agentId, setAgentId] = useState('');
   const [autonomy, setAutonomy] = useState<Autonomy>('read');
+  /** Où les outils s'exécutent : votre machine, ou un conteneur dans le cloud. */
+  const [provider, setProvider] = useState<ToolProvider>('local');
   const [mission, setMission] = useState('');
   const [catalogue, setCatalogue] = useState<BridgeTool[]>([]);
   const [steps, setSteps] = useState<AgentStep[]>([]);
@@ -31,15 +33,15 @@ export const AgentRunConsole: React.FC = () => {
 
   const agent = agents.find((entry) => entry.id === agentId);
 
-  const loadCatalogue = useCallback(async (level: Autonomy) => {
-    setCatalogue(await fetchBridgeTools(level));
+  const loadCatalogue = useCallback(async (level: Autonomy, where: ToolProvider) => {
+    setCatalogue(await fetchTools(where, level));
   }, []);
 
   useEffect(() => {
     const graph = readGraph();
     setAgents(graph);
     if (graph.length > 0) setAgentId((current) => current || graph[0].id);
-    void loadCatalogue(autonomy);
+    void loadCatalogue(autonomy, provider);
 
     // Catalogue du coffre : les noms, jamais les valeurs.
     void fetch('/api/vault')
@@ -55,8 +57,8 @@ export const AgentRunConsole: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    void loadCatalogue(autonomy);
-  }, [autonomy, loadCatalogue]);
+    void loadCatalogue(autonomy, provider);
+  }, [autonomy, provider, loadCatalogue]);
 
   const launch = async (event?: React.FormEvent) => {
     if (event) event.preventDefault();
@@ -68,7 +70,11 @@ export const AgentRunConsole: React.FC = () => {
       return;
     }
     if (catalogue.length === 0) {
-      setError('Aucun outil disponible : lancez le pont local (node runner/server.mjs).');
+      setError(
+        provider === 'local'
+          ? 'Aucun outil disponible : lancez le pont local (node runner/server.mjs).'
+          : "Conteneur indisponible : la liaison SANDBOX n'est pas active sur ce déploiement."
+      );
       return;
     }
 
@@ -102,7 +108,7 @@ export const AgentRunConsole: React.FC = () => {
           temperature: agent.temperature,
           maxSteps: 12,
           tools: [
-            ...buildAgentTools(catalogue, { id: agent.id, name: agent.role }, autonomy),
+            ...buildAgentTools(catalogue, { id: agent.id, name: agent.role }, autonomy, provider),
             // Disponible même sans le pont : il tourne dans le Worker.
             apiCallTool({ id: agent.id, name: agent.role })
           ]
@@ -135,7 +141,7 @@ export const AgentRunConsole: React.FC = () => {
       {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
       <form onSubmit={launch} className={`${CARD} space-y-3 p-4`}>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <label className="text-[11px] font-semibold text-slate-600">
             Agent chargé de la mission
             <select
@@ -150,6 +156,32 @@ export const AgentRunConsole: React.FC = () => {
               ))}
             </select>
           </label>
+
+          <div className="text-[11px] font-semibold text-slate-600">
+            Lieu d'exécution
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(
+                [
+                  ['local', '💻 Votre machine', 'gratuit, exige le pont allumé — navigateur inclus'],
+                  ['cloud', '☁️ Conteneur', "tourne sans vous, facturé au temps d'exécution"]
+                ] as const
+              ).map(([id, label, hint]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setProvider(id)}
+                  title={hint}
+                  className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    provider === id
+                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                      : 'border-slate-300 font-normal text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="text-[11px] font-semibold text-slate-600">
             Permissions
@@ -198,7 +230,11 @@ export const AgentRunConsole: React.FC = () => {
                 {catalogue.length} outils disponibles : {catalogue.map((tool) => tool.name).join(', ')}
               </>
             ) : (
-              <>Pont local éteint — lancez <code className="font-mono">node runner/server.mjs</code></>
+              provider === 'local' ? (
+                <>Pont local éteint — lancez <code className="font-mono">node runner/server.mjs</code></>
+              ) : (
+                <>Conteneur non disponible sur ce déploiement</>
+              )
             )}
           </span>
         </div>
