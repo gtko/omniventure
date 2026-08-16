@@ -12,6 +12,7 @@ import {
 } from './office/editor';
 import { EditorPalette } from './office/EditorPalette';
 import { loadOfficeAssets, type OfficeAssets } from './office/assets';
+import { CATALOG } from './office/catalog';
 import { SAVE_INTERVAL_SEC, TIME_SCALES, TILE, ZOOM_MAX, ZOOM_MIN } from './office/constants';
 import { buildNav } from './office/grid';
 import { BUILDING, buildOffice } from './office/layout';
@@ -81,6 +82,8 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   const [layoutSaveState, setLayoutSaveState] = useState('plan d’origine');
   const paintRef = useRef(false);
   const lastPaintRef = useRef('');
+  /** Meuble « en main » avec l'outil Déplacer. */
+  const [held, setHeld] = useState<{ type: string; col: number; row: number; hue?: number } | null>(null);
 
   const signature = patchSignature(patches);
   const blueprint = useMemo(() => buildOffice(patches), [signature]);
@@ -376,6 +379,33 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       if (lastPaintRef.current === key) return;
       lastPaintRef.current = key;
 
+      // Déplacement : premier clic pour prendre, second pour reposer.
+      if (tool === 'move') {
+        if (held) {
+          setPatches((prev) => [
+            ...prev,
+            { k: 'erase', col: held.col, row: held.row, type: held.type },
+            held.hue
+              ? { k: 'add', type: held.type, col, row, hue: held.hue }
+              : { k: 'add', type: held.type, col, row }
+          ]);
+          setHeld(null);
+        } else {
+          const furniture = blueprintRef.current.map.furniture;
+          for (let i = furniture.length - 1; i >= 0; i--) {
+            const item = furniture[i];
+            const entry = CATALOG[item.type];
+            const fw = entry?.fw ?? 1;
+            const fh = entry?.fh ?? 1;
+            if (col >= item.col && col < item.col + fw && row >= item.row && row < item.row + fh) {
+              setHeld({ type: item.type, col: item.col, row: item.row, hue: item.hue });
+              break;
+            }
+          }
+        }
+        return;
+      }
+
       setPatches((prev) => {
         let patch: Patch;
         if (tool === 'furniture') patch = { k: 'add', type: furnitureType, col, row };
@@ -386,7 +416,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
         return [...prev, patch];
       });
     },
-    [floorPalette, floorPattern, furnitureType, tool]
+    [floorPalette, floorPattern, furnitureType, held, tool]
   );
 
   /* ── Caméra & interaction ────────────────────────────────── */
@@ -432,17 +462,21 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
           col,
           row,
           tool,
-          type: tool === 'furniture' ? furnitureType : undefined,
+          type: tool === 'move' ? held?.type : tool === 'furniture' ? furnitureType : undefined,
           color:
-            tool === 'erase'
-              ? 'rgba(244,63,94,0.35)'
-              : tool === 'wall'
-                ? 'rgba(148,163,184,0.45)'
-                : tool === 'seat'
-                  ? 'rgba(52,211,153,0.35)'
-                  : 'rgba(99,102,241,0.3)'
+            tool === 'move'
+              ? held
+                ? 'rgba(56,189,248,0.3)'
+                : 'rgba(56,189,248,0.15)'
+              : tool === 'erase'
+                ? 'rgba(244,63,94,0.35)'
+                : tool === 'wall'
+                  ? 'rgba(148,163,184,0.45)'
+                  : tool === 'seat'
+                    ? 'rgba(52,211,153,0.35)'
+                    : 'rgba(99,102,241,0.3)'
         };
-        if (paintRef.current) applyEdit(col, row);
+        if (paintRef.current && tool !== 'move') applyEdit(col, row);
         canvas.style.cursor = 'crosshair';
         if (!dragRef.current.active) return;
       }
@@ -617,7 +651,10 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && editMode) toggleEdit();
+      if (event.key === 'Escape' && editMode) {
+        if (held) setHeld(null);
+        else toggleEdit();
+      }
       if (editMode && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         undoEdit();
@@ -625,7 +662,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editMode, toggleEdit, undoEdit]);
+  }, [editMode, held, toggleEdit, undoEdit]);
 
   const toggleFullscreen = () => {
     const node = wrapRef.current;
@@ -1008,6 +1045,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
             onReset={() => setPatches([])}
             onClose={toggleEdit}
             saveState={layoutSaveState}
+            heldType={held?.type ?? null}
           />
         </div>
       )}

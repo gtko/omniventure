@@ -779,8 +779,15 @@ export function buildOffice(patches: Patch[] = []): OfficeBlueprint {
         break;
       case 'erase': {
         for (let i = furniture.length - 1; i >= 0; i--) {
-          if (coversTile(furniture[i], patch.col, patch.row)) furniture.splice(i, 1);
+          const item = furniture[i];
+          const match = patch.type
+            ? item.type === patch.type && item.col === patch.col && item.row === patch.row
+            : coversTile(item, patch.col, patch.row);
+          if (!match) continue;
+          furniture.splice(i, 1);
+          if (patch.type) break; // déplacement : un seul objet retiré
         }
+        if (patch.type) break;
         for (let i = seats.length - 1; i >= 0; i--) {
           if (seats[i].col === patch.col && seats[i].row === patch.row) seats.splice(i, 1);
         }

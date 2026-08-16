@@ -13,8 +13,13 @@ import { Direction } from './types';
 export type Patch =
   /** Pose un meuble (son coin haut-gauche sur la tuile). */
   | { k: 'add'; type: string; col: number; row: number; hue?: number }
-  /** Retire le meuble dont l'emprise couvre la tuile. */
-  | { k: 'erase'; col: number; row: number }
+  /**
+   * Retire du mobilier. Sans `type`, on efface tout ce qui couvre la tuile
+   * (gomme) ; avec `type`, on ne retire que l'objet dont l'origine est
+   * exactement sur cette tuile — c'est ce qui permet de déplacer un meuble
+   * sans emporter ce qui est posé dessus.
+   */
+  | { k: 'erase'; col: number; row: number; type?: string }
   /** Transforme la tuile en mur. */
   | { k: 'wall'; col: number; row: number }
   /** Repeint le sol de la tuile. */
@@ -96,10 +101,16 @@ export const PALETTE_GROUPS: Array<{ label: string; types: string[] }> = [
   }
 ];
 
-export type ToolId = 'furniture' | 'seat' | 'wall' | 'floor' | 'erase';
+export type ToolId = 'furniture' | 'move' | 'seat' | 'wall' | 'floor' | 'erase';
 
 export const TOOLS: Array<{ id: ToolId; icon: string; label: string; hint: string }> = [
   { id: 'furniture', icon: '🪑', label: 'Mobilier', hint: 'Cliquez pour poser le meuble sélectionné' },
+  {
+    id: 'move',
+    icon: '✋',
+    label: 'Déplacer',
+    hint: 'Premier clic : prendre le meuble. Second clic : le reposer ailleurs.'
+  },
   { id: 'seat', icon: '💺', label: 'Poste', hint: 'Pose une chaise + un poste assignable à un agent' },
   { id: 'wall', icon: '🧱', label: 'Mur', hint: 'Transforme la tuile en cloison' },
   { id: 'floor', icon: '🎨', label: 'Sol', hint: 'Repeint la tuile avec le motif et la couleur choisis' },

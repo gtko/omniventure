@@ -910,6 +910,11 @@ export class OfficeSim {
     return this.map;
   }
 
+  /** Grille de collision — l'éditeur s'en sert pour montrer les emprises. */
+  get navGrid(): Nav {
+    return this.nav;
+  }
+
   get reservedCount(): number {
     return this.reserved.size;
   }

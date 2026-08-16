@@ -346,7 +346,7 @@ export function renderFrame(
     }
   }
 
-  if (options.editMode) drawEditOverlay(ctx, view, map, assets, options);
+  if (options.editMode) drawEditOverlay(ctx, view, sim, assets, options);
 
   // Étiquettes et bulles au-dessus de la scène, du fond vers l'avant.
   const ordered = visibleActors.sort((a, b) => a.y - b.y);
@@ -422,12 +422,37 @@ function drawZoneLabels(ctx: CanvasRenderingContext2D, view: View, map: OfficeMa
 function drawEditOverlay(
   ctx: CanvasRenderingContext2D,
   view: View,
-  map: OfficeMap,
+  sim: OfficeSim,
   assets: OfficeAssets,
   options: RenderOptions
 ): void {
+  const map = sim.mapRef;
   const step = TILE * view.zoom;
   ctx.save();
+
+  // Emprises occupées : on voit d'un coup d'œil ce que prennent les bureaux,
+  // les cloisons et la verdure — sans ça on aménage à l'aveugle.
+  const nav = sim.navGrid;
+  const firstC = Math.max(0, Math.floor(view.worldLeft / TILE));
+  const lastC = Math.min(map.cols - 1, Math.ceil(view.worldRight / TILE));
+  const firstR = Math.max(0, Math.floor(view.worldTop / TILE));
+  const lastR = Math.min(map.rows - 1, Math.ceil(view.worldBottom / TILE));
+  ctx.fillStyle = 'rgba(244,63,94,0.11)';
+  for (let r = firstR; r <= lastR; r++) {
+    for (let c = firstC; c <= lastC; c++) {
+      if (map.tiles[r * map.cols + c] < TileType.FLOOR) continue;
+      if (nav.walk[r * nav.cols + c] === 1) continue;
+      ctx.fillRect(
+        Math.round(view.offsetX + c * step),
+        Math.round(view.offsetY + r * step),
+        Math.ceil(step),
+        Math.ceil(step)
+      );
+    }
+  }
+
+  // Les postes restent visibles pendant l'aménagement.
+  drawSeatOverlay(ctx, view, sim, options);
 
   // Grille légère, seulement si les tuiles restent lisibles.
   if (step >= 8) {

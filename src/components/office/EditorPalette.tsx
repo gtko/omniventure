@@ -18,6 +18,8 @@ interface Props {
   onReset: () => void;
   onClose: () => void;
   saveState: string;
+  /** Meuble actuellement « en main » avec l'outil Déplacer. */
+  heldType?: string | null;
 }
 
 /** Vignette d'un meuble, dessinée depuis le sprite réellement utilisé sur la carte. */
@@ -57,7 +59,8 @@ export const EditorPalette: React.FC<Props> = ({
   onUndo,
   onReset,
   onClose,
-  saveState
+  saveState,
+  heldType
 }) => {
   const [group, setGroup] = useState(PALETTE_GROUPS[0].label);
   const activeGroup = useMemo(
@@ -111,6 +114,27 @@ export const EditorPalette: React.FC<Props> = ({
       </div>
 
       <p className="border-b border-white/10 px-4 py-2 text-[11px] leading-snug text-slate-400">{hint}</p>
+
+      {tool === 'move' && (
+        <div
+          className={`flex items-center gap-2 border-b border-white/10 px-4 py-2 text-[11px] ${
+            heldType ? 'bg-sky-500/15 text-sky-100' : 'text-slate-400'
+          }`}
+        >
+          {heldType ? (
+            <>
+              <span className="h-8 w-8 shrink-0 rounded border border-white/15 bg-white/10 p-0.5">
+                <Thumb assets={assets} type={heldType} size={28} />
+              </span>
+              <span>
+                <strong>{heldType}</strong> en main — cliquez pour le reposer (Échap pour abandonner).
+              </span>
+            </>
+          ) : (
+            <span>Aucun meuble en main.</span>
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {tool === 'furniture' && (
