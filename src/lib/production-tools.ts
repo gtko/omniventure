@@ -355,6 +355,85 @@ function runnerHeaders(): Record<string, string> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Mesure                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Interroger l'entrepôt de mesure.
+ *
+ * C'est ce qui distingue un constat d'une impression. Un agent qui doit dire si
+ * la promesse tient va chercher le chiffre lui-même, au lieu de raisonner sur
+ * ce qu'il imagine du trafic.
+ *
+ * Il écrit sa propre requête : on ne peut pas prévoir à l'avance les questions
+ * d'un produit. La lecture seule est imposée côté serveur, pas ici — une garde
+ * côté client ne garde rien.
+ */
+function analyticsTool(context: ProductionContext): AgentTool {
+  return {
+    name: 'interroger_mesure',
+    description:
+      "Interroge l'entrepôt de mesure du produit (trafic, événements, conversions, tests A/B, dépense publicitaire). Écris une requête SQL de lecture, ou demande une mesure connue.",
+    parameters: {
+      type: 'object',
+      properties: {
+        sql: {
+          type: 'string',
+          description:
+            "Requête SQL en lecture seule. Tables : analytics_events(site, event, anon_id, session_id, at, day, path, referrer, utm_source, utm_campaign, device, value_cents, props), analytics_experiments, ad_spend. Filtre toujours sur site."
+        },
+        metric: {
+          type: 'string',
+          description: 'À défaut de SQL : apercu | evenements | sources | entonnoir | acquisition'
+        },
+        days: { type: 'number', description: 'Fenêtre en jours (30 par défaut)' }
+      }
+    },
+    async execute(args: any, ctx) {
+      const label = `📊 interroge la mesure`;
+      trace(context, label, String(args.sql ?? args.metric ?? ''), 'running');
+
+      try {
+        const res = await fetch('/api/analytics/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            site: context.ventureSlug,
+            sql: args.sql,
+            metric: args.metric,
+            days: args.days
+          }),
+          signal: ctx.signal
+        });
+        const json = (await res.json()) as any;
+
+        if (json.error) {
+          trace(context, `⚠️ ${label}`, json.error, 'error');
+          return { error: json.error, aide: json.aide };
+        }
+
+        const rows = json.rows ?? [];
+        trace(context, label, `${rows.length} ligne(s)`, 'done');
+
+        // Un jeu de résultats vide n'est pas une erreur : c'est une réponse, et
+        // il vaut mieux le dire que laisser l'agent conclure au hasard.
+        if (rows.length === 0) {
+          return {
+            lignes: [],
+            note: "Aucune donnée sur cette période. Soit le mouchard n'est pas encore posé sur le produit, soit personne n'est venu."
+          };
+        }
+        return { lignes: rows.slice(0, 200), sql: json.sql };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Mesure injoignable';
+        trace(context, `⚠️ ${label}`, message, 'error');
+        return { error: message };
+      }
+    }
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Assemblage                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -377,6 +456,10 @@ export function productionTools(context: ProductionContext, kinds: ArtifactKind[
   // L'écrit typé est toujours disponible : toute étape peut avoir à poser une
   // décision par écrit, même quand son livrable principal est ailleurs.
   tools.push(writingTool(context));
+
+  // La mesure aussi : n'importe quelle étape gagne à vérifier un chiffre plutôt
+  // qu'à raisonner sur ce qu'elle imagine du trafic.
+  tools.push(analyticsTool(context));
 
   return tools;
 }

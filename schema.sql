@@ -188,3 +188,69 @@ CREATE TABLE IF NOT EXISTS vault_secrets (
     last_used_by TEXT,
     rotation_days INTEGER DEFAULT 0
 );
+
+-- ------------------------------------------------------------------
+-- Socle de mesure
+--
+-- Les produits fabriqués par l'agence envoient leurs événements ici. Les
+-- tables sont aussi créées à la demande par src/lib/analytics-schema.ts :
+-- un produit doit pouvoir émettre son premier événement sans qu'on ait rien
+-- préparé. Elles figurent ici pour qu'une base neuve parte complète.
+-- ------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS analytics_events (
+    id TEXT PRIMARY KEY,
+    site TEXT NOT NULL,
+    event TEXT NOT NULL,
+    anon_id TEXT NOT NULL,
+    session_id TEXT,
+    at INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    url TEXT,
+    path TEXT,
+    referrer TEXT,
+    utm_source TEXT,
+    utm_medium TEXT,
+    utm_campaign TEXT,
+    utm_content TEXT,
+    utm_term TEXT,
+    country TEXT,
+    device TEXT,
+    value_cents INTEGER,
+    props TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_site_day ON analytics_events (site, day);
+CREATE INDEX IF NOT EXISTS idx_events_site_event ON analytics_events (site, event, at);
+CREATE INDEX IF NOT EXISTS idx_events_anon ON analytics_events (site, anon_id);
+
+CREATE TABLE IF NOT EXISTS analytics_experiments (
+    id TEXT PRIMARY KEY,
+    site TEXT NOT NULL,
+    key TEXT NOT NULL,
+    name TEXT,
+    hypothesis TEXT,
+    variants TEXT NOT NULL,
+    goal_event TEXT NOT NULL,
+    status TEXT DEFAULT 'running',
+    created_at INTEGER,
+    stopped_at INTEGER,
+    winner TEXT,
+    UNIQUE (site, key)
+);
+
+CREATE TABLE IF NOT EXISTS ad_spend (
+    id TEXT PRIMARY KEY,
+    site TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    campaign TEXT,
+    day TEXT NOT NULL,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    spend_cents INTEGER DEFAULT 0,
+    currency TEXT DEFAULT 'EUR',
+    imported_at INTEGER,
+    UNIQUE (site, platform, campaign, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spend_site_day ON ad_spend (site, day);
