@@ -15,6 +15,7 @@ import { GRAPH_DEFAULTS } from '../components/office/agents';
 const GRAPH_KEYS = ['omniventure_custom_agents_v5', 'omniventure_custom_agents_v4', 'omniventure_custom_agents_v3'];
 const GRAPH_WRITE_KEY = GRAPH_KEYS[0];
 const REQUESTS_KEY = 'omniventure_hiring_requests_v1';
+const CANDIDATES_KEY = 'omniventure_hiring_candidates_v1';
 
 /** Identifiant de la DRH dans le graphe. */
 export const HR_AGENT_ID = 'hr_agent';
@@ -45,6 +46,10 @@ export interface HiringRequest {
   id: string;
   requestedById: string;
   requestedByName: string;
+  /** La DRH rédige la fiche de poste — le travail continue si vous quittez la page. */
+  designing?: boolean;
+  designStartedAt?: number;
+  designError?: string;
   /** Équipe ou projet qui manque de bras. */
   teamName: string;
   /** Ce qui manque, dans les mots du demandeur. */
@@ -217,4 +222,63 @@ export function knownTeams(graph: GraphAgent[]): string[] {
   const teams = new Set<string>();
   for (const agent of graph) if (agent.teamName) teams.add(agent.teamName);
   return [...teams];
+}
+
+/* ── Fiches de poste produites ───────────────────────────── */
+
+export interface HiringCandidate {
+  requestId: string;
+  role: string;
+  hierarchyLevel: string;
+  tier: number;
+  category: string;
+  teamName: string;
+  modelId: string;
+  description: string;
+  temperature: number;
+  maxTokens: number;
+  ameMd: string;
+  jobMd: string;
+  rationale: string;
+  collaborators: string[];
+  createdAt: number;
+  modelUsed?: string;
+}
+
+/**
+ * Les fiches produites sont conservées : la DRH travaille en arrière-plan, et
+ * son résultat doit être là au retour même si on a quitté l'écran entre-temps.
+ */
+export function readCandidates(): Record<string, HiringCandidate> {
+  try {
+    const raw = localStorage.getItem(CANDIDATES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeCandidate(candidate: HiringCandidate): void {
+  const all = readCandidates();
+  all[candidate.requestId] = candidate;
+  try {
+    localStorage.setItem(CANDIDATES_KEY, JSON.stringify(all));
+  } catch {
+    return;
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(HIRING_UPDATED_EVENT, { detail: { requestId: candidate.requestId } }));
+  }
+}
+
+export function removeCandidate(requestId: string): void {
+  const all = readCandidates();
+  delete all[requestId];
+  try {
+    localStorage.setItem(CANDIDATES_KEY, JSON.stringify(all));
+  } catch {
+    /* stockage indisponible */
+  }
 }

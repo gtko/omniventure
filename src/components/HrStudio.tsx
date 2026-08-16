@@ -7,12 +7,17 @@ import {
   hireAgent,
   HIRING_UPDATED_EVENT,
   knownTeams,
+  readCandidates,
   readGraph,
   readRequests,
+  removeCandidate,
   updateRequest,
   type GraphAgent,
+  type HiringCandidate,
   type HiringRequest
 } from '../lib/hiring';
+import { designProfile, resumePendingDesigns } from '../lib/recruiting';
+import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
 
 interface Candidate {
   role: string;
@@ -56,10 +61,12 @@ const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 export const HrStudio: React.FC = () => {
   const [graph, setGraph] = useState<GraphAgent[]>([]);
   const [requests, setRequests] = useState<HiringRequest[]>([]);
-  const [candidates, setCandidates] = useState<Record<string, Candidate>>({});
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<Record<string, HiringCandidate>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Modèle retenu à l'embauche, par demande — modifiable avant de signer. */
+  const [chosenModel, setChosenModel] = useState<Record<string, string>>({});
+  const [models, setModels] = useState<OpenRouterModelItem[]>([]);
 
   // Formulaire de demande
   const [requesterId, setRequesterId] = useState('');
@@ -71,13 +78,34 @@ export const HrStudio: React.FC = () => {
     const current = readGraph();
     setGraph(current);
     setRequests(readRequests());
+    setCandidates(readCandidates());
     if (!requesterId && current.length > 0) setRequesterId(current[0].id);
   }, [requesterId]);
 
   useEffect(() => {
     refresh();
+    // Une fiche laissée en cours par un rechargement de page repart d'elle-même.
+    resumePendingDesigns();
+
     const handler = () => refresh();
     window.addEventListener(HIRING_UPDATED_EVENT, handler);
+
+    // Catalogue de modèles, pour pouvoir changer celui de la recrue avant de signer.
+    void (async () => {
+      try {
+        const key = localStorage.getItem('omniventure_openrouter_key');
+        if (!key) return;
+        const res = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: { Authorization: `Bearer ${key}` }
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as { data?: OpenRouterModelItem[] };
+        setModels(json.data ?? []);
+      } catch {
+        /* catalogue indisponible : le champ reste libre */
+      }
+    })();
+
     return () => window.removeEventListener(HIRING_UPDATED_EVENT, handler);
   }, [refresh]);
 
@@ -122,53 +150,12 @@ export const HrStudio: React.FC = () => {
     flash('Demande transmise à la DRH.');
   };
 
-  /* ── La DRH conçoit le profil ── */
-  const design = async (request: HiringRequest) => {
-    setBusyId(request.id);
+  /* ── La DRH conçoit le profil, en arrière-plan ── */
+  const design = (request: HiringRequest) => {
     setError(null);
-    try {
-      const res = await fetch('/api/agents/recruit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          need: request.need,
-          teamName: request.teamName,
-          requestedByName: request.requestedByName,
-          graph: graph.map((agent) => ({
-            id: agent.id,
-            role: agent.role,
-            hierarchyLevel: agent.hierarchyLevel,
-            teamName: agent.teamName,
-            modelId: agent.modelId
-          })),
-          teams,
-          culture: readCulture(),
-          // Modèle, âme et fiche de poste viennent de la DRH du graphe.
-          ...agentPayload('recruiting'),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
-        })
-      });
-      const json = (await res.json()) as { candidate?: Candidate; error?: string };
-      if (!res.ok || json.error || !json.candidate) throw new Error(json.error ?? `Erreur ${res.status}`);
-
-      setCandidates((prev) => ({ ...prev, [request.id]: json.candidate as Candidate }));
-
-      saveRealAgentLog({
-        fromAgentId: 'hr_agent',
-        fromAgentName: 'DRH',
-        toAgentId: request.requestedById,
-        toAgentName: request.requestedByName,
-        actionSummary: `Profil proposé : ${json.candidate.role}`,
-        bubbleText: `📄 Fiche de poste prête — ${json.candidate.role}`,
-        payloadSummary: JSON.stringify({ level: json.candidate.hierarchyLevel, team: json.candidate.teamName }),
-        costUsd: 0.0004,
-        modelUsed: json.candidate.modelId
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'La DRH n’a pas pu produire de fiche.');
-    } finally {
-      setBusyId(null);
-    }
+    // Volontairement sans await : le travail continue si vous quittez l'écran.
+    void designProfile(request);
+    refresh();
   };
 
   /* ── Vous signez ── */
@@ -184,7 +171,8 @@ export const HrStudio: React.FC = () => {
         tier: candidate.tier,
         teamName: candidate.teamName,
         category: candidate.category,
-        modelId: candidate.modelId,
+        // Le modèle peut être changé avant de signer : c'est votre décision.
+        modelId: chosenModel[request.id] ?? candidate.modelId,
         description: candidate.description,
         temperature: candidate.temperature,
         maxTokens: candidate.maxTokens,
@@ -195,6 +183,7 @@ export const HrStudio: React.FC = () => {
     );
 
     updateRequest(request.id, { status: 'hired', hiredAgentId: id, hiredRole: candidate.role });
+    removeCandidate(request.id);
 
     saveRealAgentLog({
       fromAgentId: 'hr_agent',
@@ -205,7 +194,7 @@ export const HrStudio: React.FC = () => {
       bubbleText: `🎉 Bienvenue à ${candidate.role}`,
       payloadSummary: JSON.stringify({ agentId: id }),
       costUsd: 0,
-      modelUsed: candidate.modelId
+      modelUsed: chosenModel[request.id] ?? candidate.modelId
     });
 
     refresh();
@@ -346,22 +335,40 @@ export const HrStudio: React.FC = () => {
                     <p className="mt-1 text-xs leading-relaxed text-slate-700">{request.need}</p>
                   </div>
 
-                  <div className="flex shrink-0 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void design(request)}
-                      disabled={busyId === request.id}
-                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                    >
-                      {busyId === request.id ? 'La DRH rédige…' : candidate ? '↻ Autre profil' : '📄 Concevoir le profil'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => reject(request)}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] font-semibold text-slate-600"
-                    >
-                      Écarter
-                    </button>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => design(request)}
+                        disabled={request.designing}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {request.designing
+                          ? '⏳ La DRH rédige…'
+                          : candidate
+                            ? '↻ Autre profil'
+                            : '📄 Concevoir le profil'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reject(request)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] font-semibold text-slate-600"
+                      >
+                        Écarter
+                      </button>
+                    </div>
+
+                    {request.designing && (
+                      <span className="text-[10px] text-slate-500">
+                        en arrière-plan — vous pouvez quitter cet écran
+                      </span>
+                    )}
+                    {/* L'erreur se lit ici, à côté du bouton qui l'a provoquée. */}
+                    {request.designError && (
+                      <span className="max-w-xs rounded bg-rose-50 px-2 py-1 text-right text-[10px] text-rose-700">
+                        {request.designError}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -373,7 +380,7 @@ export const HrStudio: React.FC = () => {
                         {LEVEL_LABEL[candidate.hierarchyLevel] ?? candidate.hierarchyLevel}
                       </span>
                       <span className="text-[11px] text-slate-500">{candidate.teamName}</span>
-                      <span className="font-mono text-[10px] text-slate-400">{candidate.modelId}</span>
+                      <span className="font-mono text-[10px] text-slate-400">proposé : {candidate.modelId}</span>
                     </div>
                     <p className="mt-1 text-xs text-slate-700">{candidate.description}</p>
                     <p className="mt-1 text-[11px] italic text-slate-500">{candidate.rationale}</p>
@@ -388,6 +395,19 @@ export const HrStudio: React.FC = () => {
                         {candidate.jobMd}
                       </pre>
                     </details>
+
+                    {/* Le modèle se change avant la signature : la DRH propose, vous arbitrez. */}
+                    <div className="mt-2.5 rounded-lg border border-slate-200 bg-white p-2">
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        Modèle de la recrue
+                      </p>
+                      <ModelCombobox
+                        value={chosenModel[request.id] ?? candidate.modelId}
+                        onChange={(modelId) => setChosenModel((prev) => ({ ...prev, [request.id]: modelId }))}
+                        models={models}
+                        placeholder="Choisir le modèle de cet agent…"
+                      />
+                    </div>
 
                     <button
                       type="button"
