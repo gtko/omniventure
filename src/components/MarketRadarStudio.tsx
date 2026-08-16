@@ -1,31 +1,131 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { getStoredVentures, saveStoredVentures, setActiveProjectId } from '../lib/store';
 import { saveRealAgentLog } from '../lib/agent-bus';
 import type { Venture } from '../types';
+
+/* ------------------------------------------------------------------ */
+/* Forme du rapport                                                    */
+/* ------------------------------------------------------------------ */
+
+interface PricingTier {
+  name: string;
+  price: string;
+  billing: string;
+  target: string;
+  includes: string[];
+}
 
 interface CompetitorResult {
   name: string;
   url: string;
   category: string;
+  summary: string;
   pricing: string;
+  pricingTiers: PricingTier[];
+  strengths: string[];
   weaknesses: string[];
   missingFeatures: string[];
-  pricingExploit: string;
-  recommendedPositioning: string;
   targetAudience: string;
-  viralMarketingHook?: string;
-  mvpCoreFeatures?: string[];
+  icp: Array<{ segment: string; pain: string; trigger: string }>;
+  acquisitionChannels: Array<{ channel: string; evidence: string; ourAngle: string }>;
+  seoKeywords: Array<{ keyword: string; intent: string; difficulty: string }>;
+  recommendedPositioning: string;
+  pricingExploit: string;
+  differentiators: string[];
+  viralMarketingHook: string;
+  mvpCoreFeatures: string[];
+  mvpOutOfScope: string[];
+  plan90Days: Array<{ phase: string; goal: string; actions: string[] }>;
+  risks: string[];
+  competitors: Array<{ name: string; url: string; price: string; angle: string }>;
+  scores: { opportunity: number; difficulty: number; timeToMarketDays: number; confidence: number };
 }
+
+interface AnalyzeResponse {
+  success?: boolean;
+  data?: CompetitorResult;
+  source?: 'openrouter_live' | 'heuristic';
+  modelUsed?: string | null;
+  sources?: string[];
+  failedSources?: string[];
+  techSignals?: string[];
+  tokens?: { input: number; output: number };
+  error?: string;
+}
+
+const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
+
+/* ------------------------------------------------------------------ */
+/* Petits blocs de présentation                                        */
+/* ------------------------------------------------------------------ */
+
+const Score: React.FC<{ label: string; value: number; suffix?: string; tone?: 'good' | 'bad' | 'neutral' }> = ({
+  label,
+  value,
+  suffix = '',
+  tone = 'neutral'
+}) => (
+  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+    <span className="block text-[10px] uppercase tracking-wide text-slate-400">{label}</span>
+    <span
+      className={`font-mono text-lg font-bold ${
+        tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-rose-600' : 'text-slate-900'
+      }`}
+    >
+      {value}
+      {suffix}
+    </span>
+  </div>
+);
+
+const Section: React.FC<{ title: string; icon: string; hint?: string; children: React.ReactNode }> = ({
+  title,
+  icon,
+  hint,
+  children
+}) => (
+  <section className={`${CARD} p-5`}>
+    <header className="mb-3 flex items-baseline gap-2">
+      <span>{icon}</span>
+      <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+      {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+    </header>
+    {children}
+  </section>
+);
+
+const Bullets: React.FC<{ items: string[]; tone: 'red' | 'green' | 'slate' | 'indigo' }> = ({ items, tone }) => {
+  const color =
+    tone === 'red'
+      ? 'text-rose-800 marker:text-rose-400'
+      : tone === 'green'
+        ? 'text-emerald-800 marker:text-emerald-400'
+        : tone === 'indigo'
+          ? 'text-indigo-900 marker:text-indigo-400'
+          : 'text-slate-700 marker:text-slate-400';
+  if (items.length === 0) return <p className="text-xs italic text-slate-400">Non renseigné.</p>;
+  return (
+    <ul className={`list-disc space-y-1.5 pl-4 text-xs leading-relaxed ${color}`}>
+      {items.map((item, index) => (
+        <li key={index}>{item}</li>
+      ))}
+    </ul>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Atelier                                                             */
+/* ------------------------------------------------------------------ */
 
 export const MarketRadarStudio: React.FC = () => {
   const [searchType, setSearchType] = useState<'domain' | 'keyword'>('domain');
-  const [query, setQuery] = useState<string>('');
-  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
-  const [showLiveOffice, setShowLiveOffice] = useState<boolean>(true);
-  const [analysisResult, setAnalysisResult] = useState<CompetitorResult | null>(null);
-  const [analysisSource, setAnalysisSource] = useState<'openrouter_live' | 'heuristic' | null>(null);
-  const [openRouterKey, setOpenRouterKey] = useState<string>('');
+  const [query, setQuery] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [result, setResult] = useState<CompetitorResult | null>(null);
+  const [meta, setMeta] = useState<AnalyzeResponse | null>(null);
+  const [openRouterKey, setOpenRouterKey] = useState('');
   const [notification, setNotification] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [configuredAgent, setConfiguredAgent] = useState<any>(null);
 
   useEffect(() => {
@@ -33,31 +133,39 @@ export const MarketRadarStudio: React.FC = () => {
       const key = localStorage.getItem('omniventure_openrouter_key');
       if (key) setOpenRouterKey(key);
 
-      const agentsStr = localStorage.getItem('omniventure_custom_agents_v3') || localStorage.getItem('omniventure_custom_agents_v2');
+      const agentsStr =
+        localStorage.getItem('omniventure_custom_agents_v4') ||
+        localStorage.getItem('omniventure_custom_agents_v3') ||
+        localStorage.getItem('omniventure_custom_agents_v2');
       if (agentsStr) {
         const list = JSON.parse(agentsStr);
-        const mAgent = list.find((a: any) => a.id === 'market_agent');
-        if (mAgent) setConfiguredAgent(mAgent);
+        const found = Array.isArray(list) ? list.find((a: any) => a.id === 'market_agent') : null;
+        if (found) setConfiguredAgent(found);
       }
-    } catch {}
+    } catch {
+      /* stockage indisponible */
+    }
   }, []);
 
-  const handleAnalyze = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!query.trim()) return;
+  const notify = (message: string) => {
+    setNotification(message);
+    window.setTimeout(() => setNotification(null), 3500);
+  };
 
+  const analyze = async (target: string, mode: 'domain' | 'keyword') => {
+    if (!target.trim()) return;
     setIsAnalyzing(true);
+    setError(null);
     const activeModel = configuredAgent?.modelId || 'google/gemini-2.5-flash';
 
-    // Broadcast Real Step 1: Market Agent triggers Scraper
     saveRealAgentLog({
       fromAgentId: 'market_agent',
-      fromAgentName: 'Alex (Orchestrateur Veille)',
+      fromAgentName: 'Alex (Veille)',
       toAgentId: 'market_scraper_agent',
-      toAgentName: 'Sam (Scraper Web)',
-      actionSummary: `Inspection réelle de la cible "${query}" via ${activeModel}`,
-      bubbleText: `🕷️ Extraction des données de "${query}"...`,
-      payloadSummary: JSON.stringify({ query, searchType, model: activeModel }),
+      toAgentName: 'Sam (Scraper)',
+      actionSummary: `Lecture réelle de "${target}"`,
+      bubbleText: `🕷️ Analyse de "${target}"…`,
+      payloadSummary: JSON.stringify({ target, mode }),
       costUsd: 0.00005,
       modelUsed: activeModel
     });
@@ -67,79 +175,71 @@ export const MarketRadarStudio: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: query.trim(),
-          searchType,
+          query: target.trim(),
+          searchType: mode,
           openRouterKey: openRouterKey || undefined,
           model: activeModel,
           ameMd: configuredAgent?.ameMd,
           jobMd: configuredAgent?.jobMd,
-          temperature: configuredAgent?.temperature || 0.2
+          temperature: configuredAgent?.temperature ?? 0.2
         })
       });
 
-      if (res.ok) {
-        const json = await res.json() as any;
-        if (json && json.data) {
-          setAnalysisResult(json.data);
-          setAnalysisSource(json.source);
-          setNotification(`Analyse terminée pour "${query}".`);
-
-          // Broadcast Real Step 2: Findings received & sent to Master
-          saveRealAgentLog({
-            fromAgentId: 'market_scraper_agent',
-            fromAgentName: 'Sam (Scraper Web)',
-            toAgentId: 'market_agent',
-            toAgentName: 'Alex (Orchestrateur Veille)',
-            actionSummary: `Faiblesses et tarifs extraits pour "${json.data.name}"`,
-            bubbleText: `📊 Prix constaté : ${json.data.pricing}`,
-            payloadSummary: JSON.stringify({ pricing: json.data.pricing, weaknesses: json.data.weaknesses?.length || 0 }),
-            costUsd: json.source === 'openrouter_live' ? 0.00028 : 0.00008,
-            modelUsed: activeModel
-          });
-
-          // Broadcast Real Step 3: Opportunity Blueprint formed
-          saveRealAgentLog({
-            fromAgentId: 'market_agent',
-            fromAgentName: 'Alex (Orchestrateur Veille)',
-            toAgentId: 'master',
-            toAgentName: 'Victoria (CEO)',
-            actionSummary: `Opportunité validée : ${json.data.pricingExploit}`,
-            bubbleText: `🎯 Angle d'attaque : ${json.data.pricingExploit}`,
-            payloadSummary: JSON.stringify({ exploit: json.data.pricingExploit, hook: json.data.viralMarketingHook }),
-            costUsd: 0.00005,
-            modelUsed: activeModel
-          });
-        }
-      } else {
-        setNotification('Erreur lors de l\'analyse.');
+      const json = (await res.json()) as AnalyzeResponse;
+      if (!res.ok || json.error || !json.data) {
+        throw new Error(json.error ?? `Erreur ${res.status}`);
       }
+
+      setResult(json.data);
+      setMeta(json);
+      notify(`Analyse terminée pour "${json.data.name}".`);
+
+      saveRealAgentLog({
+        fromAgentId: 'market_scraper_agent',
+        fromAgentName: 'Sam (Scraper)',
+        toAgentId: 'market_agent',
+        toAgentName: 'Alex (Veille)',
+        actionSummary: `${json.sources?.length ?? 0} page(s) lue(s) · ${json.data.pricingTiers.length} paliers de prix`,
+        bubbleText: `📊 ${json.data.pricing}`,
+        payloadSummary: JSON.stringify({ sources: json.sources, tiers: json.data.pricingTiers.length }),
+        costUsd: json.source === 'openrouter_live' ? 0.0008 : 0,
+        modelUsed: json.modelUsed ?? activeModel
+      });
+
+      saveRealAgentLog({
+        fromAgentId: 'market_agent',
+        fromAgentName: 'Alex (Veille)',
+        toAgentId: 'master',
+        toAgentName: 'Victoria (CEO)',
+        actionSummary: `Opportunité ${json.data.scores.opportunity}/100 — ${json.data.recommendedPositioning.slice(0, 60)}`,
+        bubbleText: `🎯 ${json.data.pricingExploit.slice(0, 70)}`,
+        payloadSummary: JSON.stringify({ scores: json.data.scores }),
+        costUsd: 0.00005,
+        modelUsed: json.modelUsed ?? activeModel
+      });
     } catch (err) {
-      console.error(err);
-      setNotification('Impossible de contacter le moteur d\'analyse.');
+      setError(err instanceof Error ? err.message : "L'analyse a échoué.");
     } finally {
       setIsAnalyzing(false);
-      setTimeout(() => setNotification(null), 3500);
     }
   };
 
-  const handleCreateVentureFromAnalysis = () => {
-    if (!analysisResult) return;
-
-    const rawName = searchType === 'domain'
-      ? `${analysisResult.name.split('.')[0]} Challenger AI`
-      : `${query.slice(0, 18)} AI`;
-
+  const createVenture = () => {
+    if (!result) return;
+    const rawName =
+      searchType === 'domain' ? `${result.name.split('.')[0]} Challenger` : `${query.slice(0, 18)} AI`;
     const cleanName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-    const newSlug = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-');
-    const newVenture: Venture = {
+    const slug = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+
+    const venture: Venture = {
       id: `vnt-${Date.now()}`,
       name: cleanName,
-      slug: newSlug,
-      niche: analysisResult.recommendedPositioning,
+      slug,
+      niche: result.recommendedPositioning,
       type: 'saas',
       businessModel: 'trial_rebill',
       status: 'draft',
-      domain: `${newSlug}.factory.dev`,
+      domain: `${slug}.factory.dev`,
       stripeAccountId: '',
       priceTrialCents: 50,
       priceRecurringCents: 2900,
@@ -154,312 +254,510 @@ export const MarketRadarStudio: React.FC = () => {
       updatedAt: new Date().toISOString()
     };
 
-    const stored = getStoredVentures();
-    saveStoredVentures([newVenture, ...stored]);
-    setActiveProjectId(newVenture.id);
+    saveStoredVentures([venture, ...getStoredVentures()]);
+    setActiveProjectId(venture.id);
 
-    // Broadcast Real Venture Creation Event to Virtual Office
     saveRealAgentLog({
       fromAgentId: 'master',
       fromAgentName: 'Victoria (CEO)',
       toAgentId: 'lead_dev',
       toAgentName: 'David (Architecte)',
-      actionSummary: `Nouveau Micro-SaaS créé : "${cleanName}"`,
-      bubbleText: `🚀 Création de "${cleanName}" enclenchée !`,
-      payloadSummary: JSON.stringify({ ventureId: newVenture.id, name: cleanName, niche: newVenture.niche }),
-      costUsd: 0.00010,
+      actionSummary: `Nouveau micro-SaaS : "${cleanName}"`,
+      bubbleText: `🚀 Lancement de "${cleanName}"`,
+      payloadSummary: JSON.stringify({ ventureId: venture.id, mvp: result.mvpCoreFeatures }),
+      costUsd: 0.0001,
       modelUsed: 'x-ai/grok-2'
     });
 
-    setNotification(`Projet "${newVenture.name}" créé ! Redirection...`);
-    setTimeout(() => {
-      window.location.href = '/';
-    }, 800);
+    notify(`Projet "${cleanName}" créé.`);
+    window.setTimeout(() => (window.location.href = '/'), 800);
   };
 
-  const handleDownloadMarkdownReport = () => {
-    if (!analysisResult) return;
-    const content = `# Rapport d'Étude de Marché — ${analysisResult.name}
+  const downloadReport = () => {
+    if (!result) return;
+    const line = (label: string, value: string) => `- **${label}** : ${value}`;
+    const content = `# Dossier concurrentiel — ${result.name}
 
-## 1. Type d'Analyse : ${searchType === 'domain' ? 'Analyse de Domaine / Concurrent' : 'Analyse par Mots-clés / Niche'}
-- **Cible analysée** : ${query}
-- **Catégorie** : ${analysisResult.category}
-- **Tarification Constatée** : ${analysisResult.pricing}
+${result.summary}
 
-## 2. Points Faibles & Frustrations du Marché
-${analysisResult.weaknesses.map(w => `- ${w}`).join('\n')}
+| | |
+|---|---|
+| Cible analysée | ${query} |
+| Catégorie | ${result.category} |
+| URL | ${result.url} |
+| Opportunité | ${result.scores.opportunity}/100 |
+| Difficulté | ${result.scores.difficulty}/100 |
+| Time to market | ${result.scores.timeToMarketDays} jours |
+| Confiance | ${result.scores.confidence}/100 |
+| Sources lues | ${(meta?.sources ?? []).join(', ') || 'aucune (analyse de mémoire)'} |
+| Technos détectées | ${(meta?.techSignals ?? []).join(', ') || '—'} |
+| Modèle | ${meta?.modelUsed ?? '—'} |
 
-## 3. Opportunités Produit & Besoins Non Comblés
-${analysisResult.missingFeatures.map(f => `- ${f}`).join('\n')}
+## 1. Tarification
+${result.pricing}
 
-## 4. Angle d'Attaque Tarifaire
-- **Faille de Pricing** : ${analysisResult.pricingExploit}
-- **Positionnement Recommandé** : ${analysisResult.recommendedPositioning}
-- **Audience Cible** : ${analysisResult.targetAudience}
+${
+  result.pricingTiers.length
+    ? `| Palier | Prix | Facturation | Cible |
+|---|---|---|---|
+${result.pricingTiers.map((t) => `| ${t.name} | ${t.price} | ${t.billing} | ${t.target} |`).join('\n')}`
+    : '_Paliers non communiqués._'
+}
 
-## 5. Accroche Marketing Virale
-> "${analysisResult.viralMarketingHook || 'Alternative 10x plus rapide pour 0.50$'}"
+## 2. Forces
+${result.strengths.map((s) => `- ${s}`).join('\n') || '—'}
 
-## 6. Spécifications MVP
-${(analysisResult.mvpCoreFeatures || []).map(m => `- ${m}`).join('\n')}
+## 3. Faiblesses exploitables
+${result.weaknesses.map((w) => `- ${w}`).join('\n') || '—'}
+
+## 4. Besoins non couverts
+${result.missingFeatures.map((f) => `- ${f}`).join('\n') || '—'}
+
+## 5. Client cible
+${result.targetAudience}
+
+${result.icp.map((i) => `- **${i.segment}** — douleur : ${i.pain} · déclencheur : ${i.trigger}`).join('\n')}
+
+## 6. Acquisition
+${result.acquisitionChannels.map((c) => `- **${c.channel}** — constat : ${c.evidence} · notre angle : ${c.ourAngle}`).join('\n') || '—'}
+
+### Mots-clés
+${result.seoKeywords.map((k) => `- ${k.keyword} (${k.intent}, difficulté ${k.difficulty})`).join('\n') || '—'}
+
+## 7. Notre position
+${line('Positionnement', result.recommendedPositioning)}
+${line('Angle tarifaire', result.pricingExploit)}
+${line('Accroche', result.viralMarketingHook)}
+
+### Différenciateurs
+${result.differentiators.map((d) => `- ${d}`).join('\n') || '—'}
+
+## 8. MVP
+${result.mvpCoreFeatures.map((m) => `- ${m}`).join('\n') || '—'}
+
+**Hors périmètre au départ**
+${result.mvpOutOfScope.map((m) => `- ${m}`).join('\n') || '—'}
+
+## 9. Plan 90 jours
+${result.plan90Days.map((p) => `### ${p.phase} — ${p.goal}\n${p.actions.map((a) => `- ${a}`).join('\n')}`).join('\n\n') || '—'}
+
+## 10. Risques
+${result.risks.map((r) => `- ${r}`).join('\n') || '—'}
+
+## 11. Autres acteurs
+${result.competitors.map((c) => `- **${c.name}** (${c.url}) — ${c.price} · ${c.angle}`).join('\n') || '—'}
 `;
 
     const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `etude-marche-${searchType}-${query.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
+    a.download = `dossier-${query.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
+  const scores = result?.scores;
+
   return (
-    <div className="space-y-6">
-      {/* Toast Notification */}
+    <div className="space-y-5">
       {notification && (
-        <div className="fixed bottom-5 right-5 z-50 px-4 py-3 bg-slate-900 text-white rounded-lg shadow-lg text-xs flex items-center gap-2">
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-3 text-xs text-white shadow-lg">
           <span>✓</span>
           <span>{notification}</span>
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      {/* En-tête */}
+      <header className="flex flex-col justify-between gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Analyse de Marché & Concurrents</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Analysez un nom de domaine concurrent ou explorez une niche par mots-clés pour détecter les failles produit et de pricing.
+          <h1 className="text-2xl font-bold text-slate-900">Analyse concurrentielle</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            En mode domaine, l'agence <strong>lit réellement le site</strong> (accueil et page de tarifs) avant
+            d'analyser. Le rapport indique toujours ses sources et son niveau de confiance.
           </p>
         </div>
-
         {openRouterKey ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg font-mono font-medium border border-indigo-200">
-            <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-            OpenRouter LLM Connecté
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 font-mono text-xs font-medium text-indigo-700">
+            <span className="h-2 w-2 rounded-full bg-indigo-500" />
+            OpenRouter connecté
           </span>
         ) : (
-          <a
-            href="/agents"
-            className="text-xs text-slate-500 hover:text-indigo-600 underline font-mono"
-          >
-            + Connecter clé OpenRouter
+          <a href="/agents" className="shrink-0 font-mono text-xs text-slate-500 underline hover:text-indigo-600">
+            + Connecter une clé OpenRouter
           </a>
         )}
-      </div>
+      </header>
 
-      {/* Search Type Selector & Input Box (Strict Domain or Keyword, 0 suggestions) */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
-        
-        {/* Toggle Mode: Domain vs Keywords */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider font-mono">Mode d'Analyse :</span>
-          <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-50 text-xs">
-            <button
-              type="button"
-              onClick={() => setSearchType('domain')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
-                searchType === 'domain'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>🌐</span>
-              <span>Nom de Domaine / URL</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchType('keyword')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
-                searchType === 'keyword'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>🔑</span>
-              <span>Mots-clés / Niche de Marché</span>
-            </button>
+      {/* Saisie */}
+      <div className={`${CARD} space-y-4 p-5`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-mono text-xs font-bold uppercase tracking-wider text-slate-700">Mode</span>
+          <div className="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-0.5 text-xs">
+            {(
+              [
+                ['domain', '🌐 Domaine / URL'],
+                ['keyword', '🔑 Mots-clés / Niche']
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setSearchType(id)}
+                className={`rounded-md px-3 py-1.5 font-semibold transition-colors ${
+                  searchType === id ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          {searchType === 'domain' && (
+            <span className="rounded bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
+              Le site sera réellement consulté
+            </span>
+          )}
         </div>
 
-        {/* Input Form */}
-        <form onSubmit={handleAnalyze} className="flex flex-col sm:flex-row gap-3 pt-1">
-          <div className="flex-1">
-            <input
-              type="text"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder={
-                searchType === 'domain'
-                  ? 'Entrez l\'URL ou le domaine (ex: loom.com, linear.app, typeform.com...)'
-                  : 'Entrez les mots-clés ou l\'idée de niche (ex: facturation automatique freelance, ai video editor...)'
-              }
-              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-900 text-sm focus:bg-white focus:outline-none focus:border-indigo-600 font-mono"
-            />
-          </div>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void analyze(query, searchType);
+          }}
+          className="flex flex-col gap-3 sm:flex-row"
+        >
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={
+              searchType === 'domain'
+                ? 'loom.com, linear.app, typeform.com…'
+                : 'facturation freelance, montage vidéo IA, veille RH…'
+            }
+            className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 font-mono text-sm text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none"
+          />
           <button
             type="submit"
             disabled={isAnalyzing || !query.trim()}
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:opacity-50"
           >
             <span>🔍</span>
-            <span>{isAnalyzing ? 'Analyse en cours...' : searchType === 'domain' ? 'Analyser le Domaine' : 'Analyser les Mots-clés'}</span>
+            <span>{isAnalyzing ? 'Analyse en cours…' : 'Analyser'}</span>
           </button>
         </form>
 
-        {/* Toggle Live Office */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-          <span className="text-slate-500">Visualisation Graphique :</span>
-          <button
-            type="button"
-            onClick={() => setShowLiveOffice(!showLiveOffice)}
-            className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1.5"
-          >
-            <span>🏢</span>
-            <span>{showLiveOffice ? 'Masquer le Bureau Virtuel 2D' : 'Afficher le Bureau Virtuel 2D (Live)'}</span>
-          </button>
-        </div>
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {isAnalyzing && searchType === 'domain' && (
+          <p className="font-mono text-[11px] text-slate-400">
+            Lecture de la page d'accueil, puis de la page de tarifs, puis analyse…
+          </p>
+        )}
       </div>
 
-      {/* 2D VIRTUAL OFFICE IN MARKET STUDIO */}
-      {showLiveOffice && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-xs text-slate-500 shadow-sm">
-          <p className="text-sm font-semibold text-slate-900">🏢 Le bureau tourne en permanence derrière cette fenêtre.</p>
-          <p className="mt-1">Fermez cette modale (ou touche Échap) pour reprendre la main sur le plateau.</p>
-          <a
-            href="/office"
-            className="mt-3 inline-block rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
-          >
-            Aller au bureau
-          </a>
-        </div>
-      )}
-
-      {/* Structured Competitor / Keyword Benchmark Results */}
-      {analysisResult ? (
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
-          
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h2 className="text-xl font-bold text-slate-900">{analysisResult.name}</h2>
-                <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700">
-                  {analysisResult.category}
-                </span>
-                {analysisSource === 'openrouter_live' && (
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-mono font-semibold">
-                    ✓ Données LLM Live
-                  </span>
-                )}
-              </div>
-              <span className="text-xs text-slate-500 font-mono mt-1 block">{analysisResult.url}</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleDownloadMarkdownReport}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <span>📄</span>
-                <span>Télécharger Rapport .md</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCreateVentureFromAnalysis}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <span>🚀</span>
-                <span>{searchType === 'domain' ? 'Créer le Challenger' : 'Lancer ce Micro-SaaS'}</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-            {/* Weaknesses */}
-            <div className="p-4 rounded-xl bg-red-50/50 border border-red-200 space-y-2">
-              <h3 className="font-bold text-red-900 text-sm flex items-center gap-1.5">
-                <span>⚠️</span>
-                <span>{searchType === 'domain' ? 'Points Faibles du Concurrent' : 'Frustrations Actuelles sur cette Niche'}</span>
-              </h3>
-              <ul className="space-y-1.5 list-disc list-inside text-red-800 leading-relaxed">
-                {analysisResult.weaknesses.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Missing Features */}
-            <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-2">
-              <h3 className="font-bold text-emerald-900 text-sm flex items-center gap-1.5">
-                <span>✨</span>
-                <span>Opportunités Produit & Besoins Non Comblés</span>
-              </h3>
-              <ul className="space-y-1.5 list-disc list-inside text-emerald-800 leading-relaxed">
-                {analysisResult.missingFeatures.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {/* Pricing & Positioning */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-              <span className="font-bold text-slate-900 text-xs block">Tarification Constatée :</span>
-              <p className="text-slate-700 leading-relaxed">{analysisResult.pricing}</p>
-              <div className="pt-2 border-t border-slate-200 font-semibold text-indigo-700">
-                Angle d'Attaque Tarifaire : {analysisResult.pricingExploit}
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-              <span className="font-bold text-slate-900 text-xs block">Positionnement Recommandé :</span>
-              <p className="text-slate-800 font-medium leading-relaxed">{analysisResult.recommendedPositioning}</p>
-              <div className="text-slate-500 pt-2 border-t border-slate-200">
-                <strong>Cible :</strong> {analysisResult.targetAudience}
-              </div>
-            </div>
-          </div>
-
-          {/* Marketing Hook & MVP Blueprint */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-            {analysisResult.viralMarketingHook && (
-              <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-200 space-y-2">
-                <span className="font-bold text-indigo-900 text-xs block">Accroche Marketing Virale :</span>
-                <blockquote className="p-3 bg-white rounded-lg border border-indigo-100 text-indigo-950 font-medium italic">
-                  "{analysisResult.viralMarketingHook}"
-                </blockquote>
-              </div>
-            )}
-
-            {analysisResult.mvpCoreFeatures && analysisResult.mvpCoreFeatures.length > 0 && (
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <span className="font-bold text-slate-900 text-xs block">Spécifications MVP Express (&lt; 3 jours) :</span>
-                <ul className="space-y-1 list-disc list-inside text-slate-700 font-mono text-[11px]">
-                  {analysisResult.mvpCoreFeatures.map((m, i) => (
-                    <li key={i}>{m}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-
-        </div>
-      ) : (
-        <div className="p-12 bg-white rounded-xl border border-slate-200 text-center space-y-3">
-          <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center mx-auto text-xl">
+      {!result ? (
+        <div className={`${CARD} space-y-3 p-12 text-center`}>
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-xl text-slate-500">
             🔍
           </div>
-          <h3 className="font-bold text-slate-800 text-base">Prêt pour l'Analyse</h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
+          <h3 className="text-base font-bold text-slate-800">Prêt pour l'analyse</h3>
+          <p className="mx-auto max-w-md text-xs text-slate-500">
             {searchType === 'domain'
-              ? 'Saisissez un nom de domaine ou l\'URL d\'un concurrent pour auditer ses faiblesses.'
-              : 'Saisissez des mots-clés ou une thématique de niche pour identifier les opportunités de marché.'}
+              ? "Saisissez un domaine : l'agence lira son site avant d'en tirer un dossier complet — tarifs réels, failles, plan de lancement."
+              : 'Saisissez une niche : vous obtiendrez la carte des acteurs, les opportunités et les concurrents à analyser ensuite.'}
           </p>
         </div>
-      )}
+      ) : (
+        <div className="space-y-5">
+          {/* Bandeau de synthèse */}
+          <div className={`${CARD} p-5`}>
+            <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-start">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-bold text-slate-900">{result.name}</h2>
+                  <span className="rounded bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                    {result.category}
+                  </span>
+                  {meta?.source === 'openrouter_live' ? (
+                    <span className="rounded bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-700">
+                      ✓ analyse live · {meta.modelUsed}
+                    </span>
+                  ) : (
+                    <span className="rounded bg-amber-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-700">
+                      squelette — clé absente
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1 block font-mono text-xs text-slate-500">{result.url}</span>
+                {result.summary && <p className="mt-2 max-w-3xl text-sm text-slate-700">{result.summary}</p>}
+              </div>
 
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadReport}
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                >
+                  <span>📄</span>
+                  <span>Dossier .md</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={createVenture}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
+                >
+                  <span>🚀</span>
+                  <span>Lancer ce projet</span>
+                </button>
+              </div>
+            </div>
+
+            {scores && (
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Score label="Opportunité" value={scores.opportunity} suffix="/100" tone="good" />
+                <Score label="Difficulté" value={scores.difficulty} suffix="/100" tone="bad" />
+                <Score label="Time to market" value={scores.timeToMarketDays} suffix=" j" />
+                <Score label="Confiance" value={scores.confidence} suffix="/100" />
+              </div>
+            )}
+
+            {/* Traçabilité : ce que l'agence a réellement lu. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]">
+              <span className="font-semibold text-slate-500">Sources lues :</span>
+              {(meta?.sources ?? []).length > 0 ? (
+                meta!.sources!.map((source) => (
+                  <a
+                    key={source}
+                    href={source}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-indigo-600 underline decoration-dotted"
+                  >
+                    {source.replace(/^https?:\/\//, '')}
+                  </a>
+                ))
+              ) : (
+                <span className="text-amber-700">
+                  aucune page lue — analyse fondée sur la mémoire du modèle
+                </span>
+              )}
+              {(meta?.techSignals ?? []).length > 0 && (
+                <>
+                  <span className="font-semibold text-slate-500">· Technos détectées :</span>
+                  <span className="font-mono text-slate-600">{meta!.techSignals!.join(', ')}</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Tarification */}
+          <Section title="Tarification" icon="💳" hint={result.pricing}>
+            {result.pricingTiers.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400">
+                    <tr>
+                      <th className="py-1.5 pr-3">Palier</th>
+                      <th className="py-1.5 pr-3">Prix</th>
+                      <th className="py-1.5 pr-3">Facturation</th>
+                      <th className="py-1.5 pr-3">Cible</th>
+                      <th className="py-1.5">Inclus</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {result.pricingTiers.map((tier, index) => (
+                      <tr key={index} className="align-top">
+                        <td className="py-2 pr-3 font-semibold text-slate-900">{tier.name}</td>
+                        <td className="py-2 pr-3 font-mono text-indigo-700">{tier.price}</td>
+                        <td className="py-2 pr-3 text-slate-500">{tier.billing}</td>
+                        <td className="py-2 pr-3 text-slate-600">{tier.target}</td>
+                        <td className="py-2 text-slate-600">{tier.includes.join(' · ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs italic text-slate-400">Aucun palier lisible sur les pages consultées.</p>
+            )}
+            <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800">
+              Angle d'attaque : {result.pricingExploit}
+            </p>
+          </Section>
+
+          {/* Forces / faiblesses */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <Section title="Ce qu'ils font bien" icon="💪" hint="à ne pas attaquer de front">
+              <Bullets items={result.strengths} tone="slate" />
+            </Section>
+            <Section title="Faiblesses exploitables" icon="⚠️">
+              <Bullets items={result.weaknesses} tone="red" />
+            </Section>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <Section title="Besoins non couverts" icon="✨">
+              <Bullets items={result.missingFeatures} tone="green" />
+            </Section>
+            <Section title="Nos différenciateurs" icon="🎯" hint="au-delà du prix">
+              <Bullets items={result.differentiators} tone="indigo" />
+            </Section>
+          </div>
+
+          {/* Clients */}
+          <Section title="Client cible" icon="👥" hint={result.targetAudience}>
+            {result.icp.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {result.icp.map((segment, index) => (
+                  <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-bold text-slate-900">{segment.segment}</p>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      <strong className="text-rose-700">Douleur :</strong> {segment.pain}
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      <strong className="text-emerald-700">Déclencheur :</strong> {segment.trigger}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs italic text-slate-400">Segments non détaillés.</p>
+            )}
+          </Section>
+
+          {/* Acquisition */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <Section title="Canaux d'acquisition" icon="📣">
+              {result.acquisitionChannels.length > 0 ? (
+                <ul className="space-y-2 text-xs">
+                  {result.acquisitionChannels.map((channel, index) => (
+                    <li key={index} className="rounded-lg border border-slate-200 p-2.5">
+                      <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
+                        {channel.channel}
+                      </span>
+                      <p className="mt-1.5 text-slate-500">{channel.evidence}</p>
+                      <p className="mt-1 font-medium text-indigo-700">→ {channel.ourAngle}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs italic text-slate-400">Canaux non identifiés.</p>
+              )}
+            </Section>
+
+            <Section title="Mots-clés à prendre" icon="🔑">
+              {result.seoKeywords.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.seoKeywords.map((keyword, index) => (
+                    <span
+                      key={index}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px]"
+                      title={`${keyword.intent} · difficulté ${keyword.difficulty}`}
+                    >
+                      <span className="font-medium text-slate-800">{keyword.keyword}</span>
+                      <span
+                        className={`ml-1.5 font-mono text-[9px] ${
+                          keyword.difficulty === 'faible'
+                            ? 'text-emerald-600'
+                            : keyword.difficulty === 'forte'
+                              ? 'text-rose-600'
+                              : 'text-amber-600'
+                        }`}
+                      >
+                        {keyword.difficulty}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs italic text-slate-400">Aucun mot-clé proposé.</p>
+              )}
+            </Section>
+          </div>
+
+          {/* Positionnement */}
+          <Section title="Notre position" icon="🧭">
+            <p className="text-sm font-medium leading-relaxed text-slate-800">{result.recommendedPositioning}</p>
+            {result.viralMarketingHook && (
+              <blockquote className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 text-sm italic text-indigo-950">
+                « {result.viralMarketingHook} »
+              </blockquote>
+            )}
+          </Section>
+
+          {/* MVP + plan */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <Section title="MVP" icon="🛠️" hint={`${result.scores.timeToMarketDays} jours visés`}>
+              <Bullets items={result.mvpCoreFeatures} tone="slate" />
+              {result.mvpOutOfScope.length > 0 && (
+                <>
+                  <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Volontairement hors périmètre
+                  </p>
+                  <Bullets items={result.mvpOutOfScope} tone="red" />
+                </>
+              )}
+            </Section>
+
+            <Section title="Plan 90 jours" icon="🗓️">
+              {result.plan90Days.length > 0 ? (
+                <ol className="space-y-3">
+                  {result.plan90Days.map((phase, index) => (
+                    <li key={index} className="border-l-2 border-indigo-200 pl-3">
+                      <p className="text-xs font-bold text-slate-900">{phase.phase}</p>
+                      <p className="text-[11px] text-slate-500">{phase.goal}</p>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-600">
+                        {phase.actions.map((action, actionIndex) => (
+                          <li key={actionIndex}>{action}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-xs italic text-slate-400">Plan non fourni.</p>
+              )}
+            </Section>
+          </div>
+
+          {/* Risques */}
+          <Section title="Risques" icon="🚧" hint="ce qui peut faire échouer le projet">
+            <Bullets items={result.risks} tone="red" />
+          </Section>
+
+          {/* Concurrents : chaque ligne relance une analyse */}
+          <Section title="Autres acteurs" icon="🏁" hint="cliquez pour analyser à votre tour">
+            {result.competitors.length > 0 ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {result.competitors.map((competitor, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    disabled={isAnalyzing || !competitor.url}
+                    onClick={() => {
+                      const target = competitor.url.replace(/^https?:\/\//, '');
+                      setSearchType('domain');
+                      setQuery(target);
+                      void analyze(target, 'domain');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="rounded-lg border border-slate-200 p-3 text-left transition-colors hover:border-indigo-400 hover:bg-indigo-50/50 disabled:opacity-50"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-900">{competitor.name}</span>
+                      <span className="font-mono text-[10px] text-indigo-700">{competitor.price}</span>
+                    </div>
+                    <span className="mt-0.5 block font-mono text-[10px] text-slate-400">{competitor.url}</span>
+                    <p className="mt-1 text-[11px] leading-snug text-slate-600">{competitor.angle}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs italic text-slate-400">Aucun autre acteur identifié.</p>
+            )}
+          </Section>
+        </div>
+      )}
     </div>
   );
 };

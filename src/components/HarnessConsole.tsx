@@ -3,11 +3,13 @@ import {
   cancelRun,
   checkRunner,
   getRunnerToken,
+  listRuns,
   RUNNER_URL,
   setRunnerToken,
   startRun,
   streamRun,
   type HarnessInfo,
+  type KnownRun,
   type RunEvent,
   type RunnerHealth
 } from '../lib/harness-client';
@@ -27,8 +29,26 @@ export const HarnessConsole: React.FC = () => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState('');
+  const [runs, setRuns] = useState<KnownRun[]>([]);
   const stopRef = useRef<(() => void) | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Se branche sur un run existant. Le pont rejoue tout l'historique de sortie
+   * à la connexion : on retrouve donc le log complet, y compris pour un run
+   * lancé depuis une autre page ou avant l'ouverture de celle-ci.
+   */
+  const attach = useCallback((id: string) => {
+    setRunId(id);
+    setEvents([]);
+    setError(null);
+    setRunning(true);
+    stopRef.current?.();
+    stopRef.current = streamRun(id, (payload) => {
+      setEvents((prev) => [...prev.slice(-1200), payload]);
+      if (payload.stream === 'exit') setRunning(false);
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     setProbing(true);
@@ -38,14 +58,25 @@ export const HarnessConsole: React.FC = () => {
       const firstAvailable = found.harnesses.find((h) => h.available);
       if (firstAvailable) setHarnessId(firstAvailable.id);
     }
+    const known = await listRuns();
+    setRuns([...known].reverse());
     setProbing(false);
+    return known;
   }, []);
 
   useEffect(() => {
     setToken(getRunnerToken());
-    void refresh();
+    void refresh().then((known) => {
+      // ?run=<id> ouvre directement un run précis ; sinon on affiche le plus
+      // récent encore en cours, pour ne jamais laisser l'écran vide.
+      const wanted = new URLSearchParams(window.location.search).get('run');
+      const target = wanted
+        ? known.find((run) => run.runId === wanted)
+        : [...known].reverse().find((run) => run.exitCode === null);
+      if (target) attach(target.runId);
+    });
     return () => stopRef.current?.();
-  }, [refresh]);
+  }, [refresh, attach]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -58,13 +89,9 @@ export const HarnessConsole: React.FC = () => {
     setEvents([]);
     setRunning(true);
     try {
-      const id = await startRun(harnessId, prompt.trim(), cwd.trim() || undefined);
-      setRunId(id);
-      stopRef.current?.();
-      stopRef.current = streamRun(id, (payload) => {
-        setEvents((prev) => [...prev.slice(-1200), payload]);
-        if (payload.stream === 'exit') setRunning(false);
-      });
+      const id = await startRun(harnessId, prompt.trim(), cwd.trim() || undefined, 'console');
+      attach(id);
+      void listRuns().then((known) => setRuns([...known].reverse()));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lancement impossible');
       setRunning(false);
@@ -221,6 +248,49 @@ node runner/server.mjs
           committer : rien n'est poussé automatiquement.
         </p>
       </form>
+
+      {/* Exécutions connues du pont — y compris celles lancées ailleurs */}
+      {runs.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-900">Exécutions</span>
+            <span className="font-mono text-[10px] text-slate-400">
+              {runs.filter((r) => r.exitCode === null).length} en cours · {runs.length} au total
+            </span>
+          </div>
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {runs.map((run) => (
+              <button
+                key={run.runId}
+                type="button"
+                onClick={() => attach(run.runId)}
+                className={`flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                  runId === run.runId
+                    ? 'border-indigo-400 bg-indigo-50/70'
+                    : 'border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="font-mono text-[10px] text-slate-400">{run.runId}</span>
+                <span className="text-[11px] font-semibold text-slate-800">
+                  {health?.harnesses.find((h) => h.id === run.harnessId)?.label ?? run.harnessId}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[10px] text-slate-500">{run.prompt}</span>
+                <span
+                  className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold ${
+                    run.exitCode === null
+                      ? 'bg-indigo-100 text-indigo-700'
+                      : run.exitCode === 0
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-rose-100 text-rose-700'
+                  }`}
+                >
+                  {run.exitCode === null ? '● en cours' : run.exitCode === 0 ? '✓ terminé' : `✗ code ${run.exitCode}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Sortie */}
       <div>

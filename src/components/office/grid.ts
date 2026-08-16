@@ -127,8 +127,17 @@ export function directionTo(from: Step, to: Step): Direction {
   return Direction.UP;
 }
 
-/** Tuile praticable la plus proche d'une cible (pour se placer À CÔTÉ de quelqu'un). */
-export function nearestFreeTile(nav: Nav, target: Step, occupied: Set<string>): Step | null {
+/**
+ * Tuile praticable la plus proche d'une cible (pour se placer À CÔTÉ de
+ * quelqu'un). `maxRadius` borne la recherche : au-delà, se poster « à côté »
+ * n'a plus de sens — mieux vaut renoncer que traverser le plateau.
+ */
+export function nearestFreeTile(
+  nav: Nav,
+  target: Step,
+  occupied: Set<string>,
+  maxRadius = 4
+): Step | null {
   const seen = new Set<string>();
   const queue: Step[] = [target];
   seen.add(`${target.col},${target.row}`);
@@ -142,6 +151,7 @@ export function nearestFreeTile(nav: Nav, target: Step, occupied: Set<string>): 
       const nextKey = `${next.col},${next.row}`;
       if (seen.has(nextKey)) continue;
       if (next.col < 0 || next.row < 0 || next.col >= nav.cols || next.row >= nav.rows) continue;
+      if (Math.abs(next.col - target.col) + Math.abs(next.row - target.row) > maxRadius) continue;
       seen.add(nextKey);
       queue.push(next);
     }

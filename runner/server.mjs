@@ -42,9 +42,12 @@ function quoteWindowsArg(arg) {
 }
 
 function spawnHarness(bin, args, options = {}) {
-  if (!IS_WINDOWS) return spawn(bin, args, { ...options, shell: false, windowsHide: true });
+  // stdin fermé d'emblée : sans ça la CLI croit qu'on va lui envoyer quelque
+  // chose et attend quelques secondes (« no stdin data received in 3s »).
+  const base = { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...options };
+  if (!IS_WINDOWS) return spawn(bin, args, { ...base, shell: false });
   const line = [bin, ...args.map(quoteWindowsArg)].join(' ');
-  return spawn(line, { ...options, shell: true, windowsHide: true });
+  return spawn(line, { ...base, shell: true });
 }
 
 /** Les processus en cours, indexés par identifiant de run. */

@@ -49,6 +49,13 @@
   left: 16rem;
 }
 
+/* Écrans de travail où la carte distrait : on la masque sans la démonter, pour
+   que la simulation continue de tourner en arrière-plan. */
+.office-backdrop-hidden #office-backdrop {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Les modales de page sont posées sur un panneau clair : elles ne doivent PAS
    hériter de l'encre claire de l'ambiance sombre, sinon un texte sans classe
    explicite (champ de saisie, paragraphe brut) devient illisible. */
@@ -56,15 +63,25 @@
   color: #0f172a;
 }
 
+/* Idem pour une page pleine surface (sans modale), comme l'atelier d'analyse. */
+.office-immersive [data-page-surface] {
+  color: #0f172a;
+}
+
 /* Les contrôles de formulaire n'héritent pas de la couleur : on la leur donne. */
 .office-immersive [data-page-modal] input,
 .office-immersive [data-page-modal] textarea,
-.office-immersive [data-page-modal] select {
+.office-immersive [data-page-modal] select,
+.office-immersive [data-page-surface] input,
+.office-immersive [data-page-surface] textarea,
+.office-immersive [data-page-surface] select {
   color: #0f172a;
 }
 
 .office-immersive [data-page-modal] input::placeholder,
-.office-immersive [data-page-modal] textarea::placeholder {
+.office-immersive [data-page-modal] textarea::placeholder,
+.office-immersive [data-page-surface] input::placeholder,
+.office-immersive [data-page-surface] textarea::placeholder {
   color: #94a3b8;
 }
 

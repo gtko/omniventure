@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getRunLog, onRunLogChange, type HarnessRunLog } from '../../lib/harness-log';
 
 /** Vue « temps réel » d'un agent, recalculée par le composant parent. */
 export interface AgentView {
@@ -100,9 +101,29 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
   const messages = threads[agent.id] ?? [];
   const mode = MODE_STYLE[agent.mode] ?? MODE_STYLE.desk;
 
+  /**
+   * Intervenant temporaire : l'identifiant porte le run. Sa fiche montre le
+   * journal du processus au lieu d'une conversation — on ne discute pas avec
+   * une CLI en mode non interactif, on lit ce qu'elle écrit.
+   */
+  const runId = agent.id.startsWith('harness:') ? agent.id.slice('harness:'.length) : null;
+  const [runLog, setRunLog] = useState<HarnessRunLog | null>(null);
+
+  useEffect(() => {
+    if (!runId) {
+      setRunLog(null);
+      return;
+    }
+    const sync = () => setRunLog(getRunLog(runId) ? { ...(getRunLog(runId) as HarnessRunLog) } : null);
+    sync();
+    return onRunLogChange((changed) => {
+      if (changed === runId || changed === '*') sync();
+    });
+  }, [runId]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages.length, tab]);
+  }, [messages.length, tab, runLog?.lines.length]);
 
   const send = async (event?: React.FormEvent) => {
     if (event) event.preventDefault();
@@ -221,7 +242,7 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
         {(
           [
             ['etat', 'État'],
-            ['parler', "Parler à l'agent"],
+            ['parler', runId ? 'Journal du run' : "Parler à l'agent"],
             ['reglages', 'Réglages']
           ] as const
         ).map(([id, label]) => (
@@ -270,8 +291,77 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
         </div>
       )}
 
+      {/* ── Journal d'un harnais : toute la sortie, conservée pour relecture ── */}
+      {tab === 'parler' && runId && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-2 text-[10px]">
+            <span className="font-mono text-slate-400">{runId}</span>
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono font-semibold ${
+                runLog?.exitCode == null
+                  ? 'bg-indigo-400/15 text-indigo-200'
+                  : runLog.exitCode === 0
+                    ? 'bg-emerald-400/15 text-emerald-300'
+                    : 'bg-rose-400/15 text-rose-300'
+              }`}
+            >
+              {runLog?.exitCode == null
+                ? '● en cours'
+                : runLog.exitCode === 0
+                  ? '✓ terminé'
+                  : `✗ code ${runLog.exitCode}`}
+            </span>
+          </div>
+
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 font-mono text-[10.5px] leading-relaxed">
+            {runLog && runLog.lines.length > 0 ? (
+              runLog.lines.map((entry, index) => (
+                <div
+                  key={index}
+                  className={
+                    entry.stream === 'stderr'
+                      ? 'text-amber-300'
+                      : entry.stream === 'exit'
+                        ? 'mt-1 font-semibold text-emerald-300'
+                        : 'text-slate-200'
+                  }
+                >
+                  <span className="mr-1.5 text-slate-500">
+                    {new Date(entry.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                  {entry.line}
+                </div>
+              ))
+            ) : (
+              <p className="italic text-slate-500">
+                Aucune sortie pour l'instant. Les lignes arrivent au fil de l'exécution et restent
+                consultables ensuite.
+              </p>
+            )}
+          </div>
+
+          {runLog?.prompt && (
+            <details className="border-t border-white/10 px-4 py-2 text-[10px] text-slate-400">
+              <summary className="cursor-pointer font-semibold">Consigne envoyée</summary>
+              <pre className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap text-[10px] text-slate-300">
+                {runLog.prompt}
+              </pre>
+            </details>
+          )}
+
+          <div className="border-t border-white/10 p-2">
+            <a
+              href={`/harness?run=${encodeURIComponent(runId)}`}
+              className="block rounded-lg bg-indigo-500 px-3 py-2 text-center text-[11px] font-semibold text-white transition-colors hover:bg-indigo-400"
+            >
+              Ouvrir la console complète
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* ── Conversation ── */}
-      {tab === 'parler' && (
+      {tab === 'parler' && !runId && (
         <div className="flex min-h-0 flex-1 flex-col">
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
             {messages.length === 0 && (

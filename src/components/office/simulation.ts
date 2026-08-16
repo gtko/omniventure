@@ -25,7 +25,7 @@ import {
   WALK_SPEED_JITTER,
   WALK_SPEED_PX_S
 } from './constants';
-import { directionTo, findPath, isWalkable, type Nav, type Step } from './grid';
+import { directionTo, findPath, isWalkable, nearestFreeTile, type Nav, type Step } from './grid';
 import type { Seat } from './layout';
 import { Direction, type ActivityKind, type OfficeMap, type Pose, type Spot } from './types';
 
@@ -410,6 +410,11 @@ export class OfficeSim {
         break;
       case 'leave':
         // Arrivé à la porte : l'intervenant quitte définitivement le plateau.
+        if (actor.pose === 'walk') {
+          actor.pose = 'read';
+          actor.frame = 0;
+          actor.frameTimer = 0;
+        }
         if (this.clock >= (actor.leaveAt ?? 0)) this.removeActor(actor);
         break;
       case 'return':
@@ -420,6 +425,9 @@ export class OfficeSim {
         actor.decideAt = this.clock + rand(DESK_PAUSE_MIN_SEC, DESK_PAUSE_MAX_SEC);
         break;
       case 'work':
+        // Arrivé à destination : on arrête de piétiner sur place et on se
+        // tourne vers son interlocuteur (ou vers son écran si on est au poste).
+        if (actor.pose === 'walk') this.settleAtWork(actor);
         if (this.clock >= actor.untilAt) this.sendHome(actor);
         break;
       case 'desk':
@@ -429,6 +437,30 @@ export class OfficeSim {
         if (this.idleEnabled && this.clock >= actor.decideAt) this.decide(actor);
         break;
     }
+  }
+
+  /**
+   * Fin de trajet d'une tâche réelle : on fige la pose et l'orientation.
+   * Sans ça le personnage garde l'animation de marche et son cap de dernière
+   * case — il piétine face à un mur pendant toute la durée de la tâche.
+   */
+  private settleAtWork(actor: Actor): void {
+    const atSeat = actor.col === actor.seat.col && actor.row === actor.seat.row;
+    if (atSeat) {
+      actor.pose = 'type';
+      actor.dir = actor.seat.dir;
+    } else {
+      actor.pose = 'read';
+      const partner = actor.partnerId ? this.byId.get(actor.partnerId) : null;
+      if (partner) {
+        actor.dir = directionTo(
+          { col: actor.col, row: actor.row },
+          { col: partner.col, row: partner.row }
+        );
+      }
+    }
+    actor.frame = 0;
+    actor.frameTimer = 0;
   }
 
   private advance(actor: Actor, dt: number): void {
@@ -653,6 +685,15 @@ export class OfficeSim {
     if (!from || !to || from === to) return;
 
     const target = this.tileNextTo(to.seat, from);
+    // Aucune case libre autour du poste : on ne va pas s'empiler sur un
+    // collègue, l'échange se fait à distance.
+    if (!target) {
+      this.say(from, bubble, 'real', REAL_TASK_SEC);
+      this.say(to, `⚡ Reçu de ${from.profile.short}`, 'real', REAL_TASK_SEC);
+      this.log(`${from.profile.short} → ${to.profile.short} : ${summary}`, 'real');
+      return;
+    }
+
     this.release(from);
     from.partnerId = to.profile.id;
     from.mode = 'work';
@@ -676,22 +717,22 @@ export class OfficeSim {
     this.log(`${from.profile.short} → ${to.profile.short} : ${summary}`, 'real');
   }
 
-  /** Case libre voisine d'un poste, pour venir parler à quelqu'un sans le pousser. */
-  private tileNextTo(seat: Seat, mover: Actor): Step {
-    const around: Step[] = [
-      { col: seat.col - 1, row: seat.row },
-      { col: seat.col + 1, row: seat.row },
-      { col: seat.col, row: seat.row + 1 },
-      { col: seat.col - 1, row: seat.row + 1 },
-      { col: seat.col + 1, row: seat.row + 1 }
-    ];
-    const taken = new Set(this.actors.filter((a) => a !== mover).map((a) => `${a.col},${a.row}`));
-    for (const tile of around) {
-      if (!isWalkable(this.nav, tile.col, tile.row)) continue;
-      if (taken.has(`${tile.col},${tile.row}`)) continue;
-      return tile;
+  /**
+   * Case libre voisine d'un poste, pour venir parler à quelqu'un sans lui
+   * marcher dessus. On tient compte des personnages présents ET de leur case
+   * d'arrivée : deux agents en route ne doivent pas viser la même place.
+   * Renvoie null s'il n'y a rien de libre autour — l'appelant s'abstient.
+   */
+  private tileNextTo(seat: Seat, mover: Actor): Step | null {
+    const taken = new Set<string>();
+    for (const actor of this.actors) {
+      if (actor === mover) continue;
+      taken.add(`${actor.col},${actor.row}`);
+      taken.add(`${actor.seat.col},${actor.seat.row}`);
+      const destination = actor.path[actor.path.length - 1];
+      if (destination) taken.add(`${destination.col},${destination.row}`);
     }
-    return { col: seat.col, row: seat.row + 1 };
+    return nearestFreeTile(this.nav, { col: seat.col, row: seat.row }, taken);
   }
 
   /* ── Intervenants temporaires : les harnais de code ──────── */

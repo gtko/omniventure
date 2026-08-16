@@ -11,6 +11,12 @@ interface Props {
   currentPath?: string;
   /** Page pleine hauteur sans modale : c'est le bureau lui-même. */
   fullBleed?: boolean;
+  /**
+   * Masque le bureau derrière la page. La simulation continue de tourner —
+   * seul l'affichage est coupé — pour les écrans de travail où la carte
+   * distrait plus qu'elle n'aide.
+   */
+  hideOffice?: boolean;
   /** Sous-titre affiché dans l'en-tête de la modale. */
   subtitle?: string;
   icon?: string;
@@ -21,6 +27,7 @@ const {
   description = "OmniVenture AI - Autonomous Money Factory on Cloudflare",
   currentPath = '/',
   fullBleed = false,
+  hideOffice = false,
   subtitle,
   icon
 } = Astro.props;
@@ -45,7 +52,12 @@ const {
     <!-- Navigation sans rechargement : indispensable pour garder le bureau vivant. -->
     <ClientRouter />
   </head>
-  <body class="office-immersive h-full bg-slate-950 text-slate-900 font-sans antialiased overflow-hidden">
+  <body
+    class:list={[
+      'office-immersive h-full bg-slate-950 text-slate-900 font-sans antialiased overflow-hidden',
+      hideOffice && 'office-backdrop-hidden'
+    ]}
+  >
 
     <!--
       LE BUREAU EST LE DÉCOR PERMANENT DE L'APPLICATION.

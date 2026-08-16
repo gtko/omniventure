@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clearRealAgentLogs, getRealAgentLogs, saveRealAgentLog, type RealAgentActivity } from '../lib/agent-bus';
+import { getRealAgentLogs, saveRealAgentLog, type RealAgentActivity } from '../lib/agent-bus';
 import {
   HARNESS_EVENTS,
   listRuns,
@@ -173,8 +173,6 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
   const [harnessRuns, setHarnessRuns] = useState<HarnessRunView[]>([]);
   const [realLogs, setRealLogs] = useState<RealAgentActivity[]>([]);
-  const [liveTestQuery, setLiveTestQuery] = useState('loom.com');
-  const [isExecutingLiveTest, setIsExecutingLiveTest] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
   // Le masquage de l'UI vit sur <body> (il pilote aussi la nav de l'app).
@@ -423,11 +421,23 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
   /* ── Harnais de code : un run = un intervenant sur le plateau ── */
   useEffect(() => {
+    /** Interlocuteur interne d'un harnais : le premier rôle présent au graphe. */
+    const internalContact = (preferred: string[]) => {
+      const sim = simRef.current;
+      if (!sim) return null;
+      for (const id of preferred) {
+        const actor = sim.byId.get(id);
+        if (actor && !actor.profile.harness) return actor;
+      }
+      return sim.actors.find((actor) => !actor.profile.harness) ?? null;
+    };
+
     const onStart = (event: Event) => {
       const detail = (event as CustomEvent<HarnessStartDetail>).detail;
       const sim = simRef.current;
       if (!detail || !sim) return;
-      const actor = sim.spawnHarness(harnessProfile(detail.harnessId, detail.runId), ENTRANCE);
+      const profile = harnessProfile(detail.harnessId, detail.runId);
+      const actor = sim.spawnHarness(profile, ENTRANCE);
       if (!actor) {
         notify('Aucun poste libre pour accueillir le harnais.');
         return;
@@ -436,7 +446,25 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
         { runId: detail.runId, harnessId: detail.harnessId, startedAt: Date.now(), done: false },
         ...prev.filter((run) => run.runId !== detail.runId)
       ]);
-      notify(`${harnessBrand(detail.harnessId).label} arrive dans le bureau.`);
+
+      // L'architecte de l'agence vient lui remettre la consigne : l'échange
+      // apparaît dans le flux réel et se joue sur le plateau.
+      const brief = internalContact(['lead_dev', 'master', 'planner']);
+      const brand = harnessBrand(detail.harnessId);
+      if (brief) {
+        saveRealAgentLog({
+          fromAgentId: brief.profile.id,
+          fromAgentName: brief.profile.short,
+          toAgentId: profile.id,
+          toAgentName: brand.label,
+          actionSummary: `Consigne remise à ${brand.label}`,
+          bubbleText: `📋 Brief pour ${brand.short}`,
+          payloadSummary: (detail.prompt || '').slice(0, 200),
+          costUsd: 0,
+          modelUsed: brand.label
+        });
+      }
+      notify(`${brand.label} arrive dans le bureau.`);
     };
 
     const onLine = (event: Event) => {
@@ -446,13 +474,42 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
 
     const onExit = (event: Event) => {
       const detail = (event as CustomEvent<HarnessExitDetail>).detail;
-      if (!detail) return;
-      simRef.current?.dismissHarness(detail.runId, detail.exitCode === 0, ENTRANCE);
+      const sim = simRef.current;
+      if (!detail || !sim) return;
+
+      const ok = detail.exitCode === 0;
+      const actor = sim.byId.get(`harness:${detail.runId}`);
+      const brand = harnessBrand(actor?.profile.harness ?? 'harness');
+
+      // Restitution : succès → recette, échec → exploitation. L'intervenant
+      // ne repart qu'une fois le relais passé, sinon on ne verrait rien.
+      const reviewer = internalContact(
+        ok ? ['qa_agent', 'lead_dev', 'master'] : ['devops_agent', 'planner', 'master']
+      );
+      if (actor && reviewer) {
+        saveRealAgentLog({
+          fromAgentId: actor.profile.id,
+          fromAgentName: brand.label,
+          toAgentId: reviewer.profile.id,
+          toAgentName: reviewer.profile.short,
+          actionSummary: ok
+            ? `Travail rendu à ${reviewer.profile.short} — à relire`
+            : `Échec signalé à ${reviewer.profile.short} (code ${detail.exitCode})`,
+          bubbleText: ok ? '✅ Diff prêt à relire' : `⚠️ Sortie en code ${detail.exitCode}`,
+          payloadSummary: JSON.stringify({ runId: detail.runId, exitCode: detail.exitCode }),
+          costUsd: 0,
+          modelUsed: brand.label
+        });
+        window.setTimeout(() => simRef.current?.dismissHarness(detail.runId, ok, ENTRANCE), 14000);
+      } else {
+        sim.dismissHarness(detail.runId, ok, ENTRANCE);
+      }
+
       setHarnessRuns((prev) =>
         prev.map((run) => (run.runId === detail.runId ? { ...run, done: true, exitCode: detail.exitCode } : run))
       );
       // La ligne du tableau de bord s'efface une fois l'intervenant sorti.
-      window.setTimeout(() => setHarnessRuns((prev) => prev.filter((run) => run.runId !== detail.runId)), 30000);
+      window.setTimeout(() => setHarnessRuns((prev) => prev.filter((run) => run.runId !== detail.runId)), 45000);
     };
 
     window.addEventListener(HARNESS_EVENTS.start, onStart);
@@ -800,61 +857,6 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   };
 
   /* ── Tâche réelle ────────────────────────────────────────── */
-  const handleExecuteLiveTask = async (event?: React.FormEvent) => {
-    if (event) event.preventDefault();
-    if (!liveTestQuery.trim()) return;
-
-    setIsExecutingLiveTest(true);
-    try {
-      const storedKey = localStorage.getItem('omniventure_openrouter_key') || undefined;
-
-      saveRealAgentLog({
-        fromAgentId: 'market_agent',
-        fromAgentName: 'Alex (Orchestrateur Veille)',
-        toAgentId: 'market_scraper_agent',
-        toAgentName: 'Sam (Scraper Web)',
-        actionSummary: `Inspection réelle de "${liveTestQuery}"`,
-        bubbleText: `🕷️ Crawl des tarifs de "${liveTestQuery}"`,
-        payloadSummary: JSON.stringify({ target: liveTestQuery }),
-        costUsd: 0.00005,
-        modelUsed: 'google/gemini-2.5-flash'
-      });
-
-      const res = await fetch('/api/market/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: liveTestQuery.trim(),
-          searchType: 'domain',
-          openRouterKey: storedKey,
-          model: 'google/gemini-2.5-flash'
-        })
-      });
-
-      if (res.ok) {
-        const json = (await res.json()) as any;
-        if (json?.data) {
-          saveRealAgentLog({
-            fromAgentId: 'market_scraper_agent',
-            fromAgentName: 'Sam (Scraper Web)',
-            toAgentId: 'master',
-            toAgentName: 'Victoria (CEO)',
-            actionSummary: `Données réelles extraites pour "${json.data.name}" (${json.source})`,
-            bubbleText: `🎯 Tarifs : ${json.data.pricing}`,
-            payloadSummary: JSON.stringify({ exploit: json.data.pricingExploit }),
-            costUsd: json.source === 'openrouter_live' ? 0.00025 : 0.00008,
-            modelUsed: json.modelUsed || 'google/gemini-2.5-flash'
-          });
-          notify(`Tâche réelle exécutée pour "${liveTestQuery}".`);
-        }
-      }
-    } catch {
-      notify("Erreur lors de l'exécution réelle.");
-    } finally {
-      setIsExecutingLiveTest(false);
-    }
-  };
-
   const selected = hud.roster.find((entry) => entry.id === selectedId) ?? null;
   const simHours = Math.floor(hud.clock / 3600);
   const simMinutes = Math.floor((hud.clock % 3600) / 60);
@@ -953,6 +955,47 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
                 </span>
               ))}
             </div>
+
+            {/* Harnais présents sur le plateau — dans le flux du bandeau, pour
+                ne recouvrir aucun autre widget. */}
+            {harnessRuns.length > 0 && (
+              <div className="mt-2 border-t border-white/10 pt-2">
+                <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold text-slate-300">
+                  <span>🛠️</span>
+                  <span>Harnais sur le plateau</span>
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-slate-400">
+                    votre machine
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {harnessRuns.map((run) => (
+                    <button
+                      key={run.runId}
+                      type="button"
+                      onClick={() => focusAgent(`harness:${run.runId}`)}
+                      title={`${harnessBrand(run.harnessId).label} — ${run.runId}`}
+                      className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-1.5 py-1 transition-colors hover:bg-white/15"
+                    >
+                      <HarnessBadgeIcon id={run.harnessId} size={15} busy={!run.done} />
+                      <span className="text-[10px] font-semibold text-slate-100">
+                        {harnessBrand(run.harnessId).label}
+                      </span>
+                      <span
+                        className={`rounded px-1 py-0.5 font-mono text-[9px] ${
+                          !run.done
+                            ? 'bg-indigo-400/15 text-indigo-200'
+                            : run.exitCode === 0
+                              ? 'bg-emerald-400/15 text-emerald-300'
+                              : 'bg-rose-400/15 text-rose-300'
+                        }`}
+                      >
+                        {!run.done ? '● en cours' : run.exitCode === 0 ? '✓ fini' : `✗ ${run.exitCode}`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Contrôles */}
@@ -1028,46 +1071,6 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
             )}
           </div>
 
-          {/* Harnais présents sur le plateau — un intervenant par run */}
-          {harnessRuns.length > 0 && (
-            <div className={`pointer-events-auto absolute left-1/2 top-3 w-[min(92vw,340px)] -translate-x-1/2 ${GLASS}`}>
-              <div className="flex items-center gap-1.5 border-b border-white/10 px-3.5 py-2 text-[11px] font-semibold text-slate-200">
-                <span>🛠️</span>
-                <span>Harnais sur le plateau</span>
-                <span className="ml-auto rounded bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-slate-300">
-                  votre machine
-                </span>
-              </div>
-              <div className="space-y-0.5 px-1.5 py-1.5">
-                {harnessRuns.map((run) => (
-                  <button
-                    key={run.runId}
-                    type="button"
-                    onClick={() => focusAgent(`harness:${run.runId}`)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors hover:bg-white/10"
-                  >
-                    <HarnessBadgeIcon id={run.harnessId} busy={!run.done} />
-                    <span className="text-[11px] font-semibold text-slate-100">
-                      {harnessBrand(run.harnessId).label}
-                    </span>
-                    <span className="font-mono text-[9.5px] text-slate-500">{run.runId}</span>
-                    <span
-                      className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[9px] ${
-                        !run.done
-                          ? 'bg-indigo-400/15 text-indigo-200'
-                          : run.exitCode === 0
-                            ? 'bg-emerald-400/15 text-emerald-300'
-                            : 'bg-rose-400/15 text-rose-300'
-                      }`}
-                    >
-                      {!run.done ? '● en cours' : run.exitCode === 0 ? '✓ terminé' : `✗ code ${run.exitCode}`}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Journal de vie */}
           <div className={`pointer-events-auto absolute bottom-3 left-3 w-[min(92vw,360px)] ${GLASS}`}>
             <button
@@ -1126,7 +1129,10 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
                       <span className="text-emerald-300">{log.toAgentName.split(' ')[0]}</span>
                       <span className="ml-1 text-slate-300">{log.actionSummary}</span>
                     </span>
-                    <span className="shrink-0 text-emerald-400">${log.costUsd.toFixed(5)}</span>
+                    {/* Un harnais tourne sur votre machine : il n'a pas de coût OpenRouter. */}
+                    <span className="shrink-0 text-emerald-400">
+                      {log.costUsd > 0 ? `$${log.costUsd.toFixed(5)}` : 'local'}
+                    </span>
                   </div>
                 ))
               ) : (
@@ -1134,27 +1140,6 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
               )}
             </div>
 
-            <form onSubmit={handleExecuteLiveTask} className="flex items-center gap-1.5 border-t border-white/10 p-2">
-              <input
-                type="text"
-                value={liveTestQuery}
-                onChange={(event) => setLiveTestQuery(event.target.value)}
-                placeholder="loom.com…"
-                className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 font-mono text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={isExecutingLiveTest || !liveTestQuery.trim()}
-                className="rounded-lg bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-400 disabled:opacity-40"
-              >
-                {isExecutingLiveTest ? '…' : '⚡ Tâche réelle'}
-              </button>
-              {realLogs.length > 0 && (
-                <button type="button" onClick={clearRealAgentLogs} className={CHIP} title="Vider le flux">
-                  ✕
-                </button>
-              )}
-            </form>
 
             <div className="flex items-center justify-between gap-2 border-t border-white/10 px-3.5 py-2">
               <span className="text-[10px] text-slate-400">

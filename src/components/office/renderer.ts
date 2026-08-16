@@ -379,8 +379,11 @@ export function renderFrame(
       if (tagged) drawNameTag(ctx, view, actor, options.selectedId === actor.profile.id);
     }
   }
+  // Deux collègues côte à côte parlent en même temps : on empile les bulles
+  // au lieu de les superposer.
+  const placedBubbles: Array<{ x: number; y: number; w: number; h: number }> = [];
   for (const actor of ordered) {
-    if (actor.bubble) drawBubble(ctx, view, actor);
+    if (actor.bubble) drawBubble(ctx, view, actor, placedBubbles);
   }
 }
 
@@ -619,7 +622,13 @@ const BUBBLE_STYLE: Record<Actor['bubbleTone'], { bg: string; ink: string; edge:
   real: { bg: 'rgba(79,70,229,0.97)', ink: '#ffffff', edge: 'rgba(199,210,254,0.95)' }
 };
 
-function drawBubble(ctx: CanvasRenderingContext2D, view: View, actor: Actor): void {
+type Rect = { x: number; y: number; w: number; h: number };
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function drawBubble(ctx: CanvasRenderingContext2D, view: View, actor: Actor, placed: Rect[] = []): void {
   const text = actor.bubble;
   if (!text) return;
 
@@ -640,8 +649,16 @@ function drawBubble(ctx: CanvasRenderingContext2D, view: View, actor: Actor): vo
 
   const anchor = px(view, actor.x, actor.y - 30);
   let x = Math.round(anchor.x - w / 2);
-  const y = Math.round(anchor.y - h);
+  let y = Math.round(anchor.y - h);
   x = Math.max(4, Math.min(ctx.canvas.width - w - 4, x));
+
+  // Décalage vers le haut tant qu'une bulle déjà posée occupe la place.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const rect = { x, y, w, h };
+    if (!placed.some((other) => overlaps(rect, other))) break;
+    y -= h + 4;
+  }
+  placed.push({ x, y, w, h });
 
   ctx.fillStyle = style.bg;
   ctx.strokeStyle = style.edge;
