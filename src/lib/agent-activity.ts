@@ -1,4 +1,3 @@
-import { readLocal, writeLocal, removeLocal } from './local';
 /**
  * Ce que font les agents, en direct.
  *
@@ -27,29 +26,20 @@ export interface AgentActivity {
   ms?: number;
 }
 
-const STORAGE_KEY = 'omniventure_agent_activity_v1';
 const MAX_ENTRIES = 200;
 
-let cache: AgentActivity[] | null = null;
+/*
+ * En mémoire, et nulle part ailleurs.
+ *
+ * Ces traces s'écrivaient dans `localStorage` à chaque appel d'outil — des
+ * centaines d'écritures par minute pour un affichage — et auraient suivi le
+ * reste de l'état jusqu'en base. Or ce n'est pas de la donnée : c'est ce que le
+ * bureau montre. Ce que l'agence a réellement fait vit dans le journal
+ * d'événements du serveur, d'où `office-feed.ts` les fait revenir.
+ */
+let cache: AgentActivity[] = [];
 
-function load(): AgentActivity[] {
-  if (cache) return cache;
-  try {
-    const raw = readLocal(STORAGE_KEY);
-    cache = raw ? (JSON.parse(raw) as AgentActivity[]) : [];
-  } catch {
-    cache = [];
-  }
-  return cache;
-}
-
-function persist(): void {
-  try {
-    writeLocal(STORAGE_KEY, JSON.stringify((cache ?? []).slice(-MAX_ENTRIES)));
-  } catch {
-    /* stockage plein : la trace reste en mémoire */
-  }
-}
+const load = (): AgentActivity[] => cache;
 
 /** Trace d'un agent, de la plus ancienne à la plus récente. */
 export function readActivities(agentId?: string, limit = 40): AgentActivity[] {
@@ -81,7 +71,6 @@ export function pushActivity(entry: Omit<AgentActivity, 'id' | 'at'> & { id?: st
   else all.push(activity);
   if (all.length > MAX_ENTRIES) all.splice(0, all.length - MAX_ENTRIES);
 
-  persist();
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AGENT_ACTIVITY_EVENT, { detail: activity }));
   }
@@ -90,11 +79,6 @@ export function pushActivity(entry: Omit<AgentActivity, 'id' | 'at'> & { id?: st
 
 export function clearActivities(): void {
   cache = [];
-  try {
-    removeLocal(STORAGE_KEY);
-  } catch {
-    /* stockage indisponible */
-  }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AGENT_ACTIVITY_EVENT, { detail: null }));
   }

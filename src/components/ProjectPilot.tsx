@@ -25,6 +25,8 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
   const [run, setRun] = useState<ServerRun | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [access, setAccess] = useState<AccessRequest[]>([]);
+  /** Ce qu'un C-Level a fait remonter jusqu'au CEO. */
+  const [escalations, setEscalations] = useState<Array<{ id: string; from: string; subject: string; body: string; at: number }>>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -32,7 +34,17 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
   const refresh = useCallback(() => {
     setInbox(pendingFor(venture.name));
     setAccess(readAccessRequests().filter((request) => request.status === 'attente'));
-  }, [venture.name]);
+
+    /*
+     * Ce que l'agence fait remonter jusqu'à vous vit désormais en base : seul un
+     * C-Level peut vous saisir, et ce qui arrive ici a déjà été jugé hors de sa
+     * portée. La cloche lisait le navigateur, elle serait donc restée muette.
+     */
+    void fetch(`/api/agenda?ventureId=${encodeURIComponent(venture.id)}`)
+      .then((res) => res.json())
+      .then((json: any) => setEscalations(Array.isArray(json?.ceo) ? json.ceo : []))
+      .catch(() => undefined);
+  }, [venture.id, venture.name]);
 
   useEffect(() => {
     refresh();
@@ -66,7 +78,7 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
   };
 
   const running = run?.status === 'en-cours';
-  const waiting = inbox.length + access.length;
+  const waiting = inbox.length + access.length + escalations.length;
 
   /** Répondre « oui » à une étape la franchit : c'est tout l'intérêt de la question. */
   const answerStage = (item: InboxItem, yes: boolean) => {
@@ -167,6 +179,47 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
                     qu'une étape est franchie.
                   </p>
                 )}
+
+                {/* Ce qu'un C-Level a fait remonter : la seule voie jusqu'à vous. */}
+                {escalations.map((request) => (
+                  <article key={request.id} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                    <p className="text-xs font-semibold text-slate-900">🔑 {request.subject}</p>
+                    {request.body && <p className="mt-1 whitespace-pre-wrap text-[11px] text-slate-600">{request.body}</p>}
+                    <p className="mt-1 font-mono text-[10px] text-slate-400">
+                      {request.from} · {new Date(request.at).toLocaleString('fr-FR')}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      {[
+                        { label: 'Accorder', answer: 'Accordé.', className: 'bg-emerald-600 text-white hover:bg-emerald-700' },
+                        {
+                          label: 'Refuser',
+                          answer: 'Refusé pour le moment.',
+                          className: 'border border-slate-300 text-slate-600 hover:bg-slate-50'
+                        }
+                      ].map((choice) => (
+                        <button
+                          key={choice.label}
+                          onClick={async () => {
+                            await fetch('/api/agenda', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                action: 'repondre',
+                                ventureId: venture.id,
+                                requestId: request.id,
+                                answer: choice.answer
+                              })
+                            }).catch(() => undefined);
+                            refresh();
+                          }}
+                          className={`rounded-lg px-3 py-1 text-[11px] font-semibold ${choice.className}`}
+                        >
+                          {choice.label}
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                ))}
 
                 {inbox.map((item) => (
                   <article key={item.id} className="rounded-lg border border-slate-200 p-3">

@@ -1,188 +1,196 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  agencyNow,
-  formatAgency,
-  humanDelay,
-  nextWorkSlot,
-  realDelayUntil,
-  toRealMs,
-  WORK_END,
-  WORK_START,
-  type AgencyTime
-} from '../lib/agency-time';
-import {
-  AGENDA_EVENT,
-  ACCESS_EVENT,
-  answerAccess,
-  cancelMeeting,
-  dueMeetings,
-  hold,
-  isMeetingRunning,
-  MEETING_KINDS,
-  readAccessRequests,
-  readAgenda,
-  ROOMS,
-  schedule,
-  type AccessRequest,
-  type Meeting,
-  type MeetingKind
-} from '../lib/agenda';
-import { readGraph, type GraphAgent } from '../lib/hiring';
-import { renderMarkdown } from '../lib/markdown';
+import { getActiveProjectId, getStoredVentures } from '../lib/store';
+import { readLocal, STATE_HYDRATED_EVENT } from '../lib/local';
+
+interface Meeting {
+  id: string;
+  title: string;
+  kind: string;
+  topic: string;
+  organiserName: string;
+  participantIds: string[];
+  room: string;
+  day: number;
+  hour: number;
+  duration: number;
+  status: 'prevu' | 'en-cours' | 'termine' | 'annule';
+  report: string | null;
+}
+
+interface CeoRequest {
+  id: string;
+  from: string;
+  subject: string;
+  body: string;
+  at: number;
+}
+
+interface Agenda {
+  meetings: Meeting[];
+  due: string[];
+  ceo: CeoRequest[];
+  now: { day: number; hour: number };
+}
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
+
+const STATUS: Record<string, { label: string; className: string }> = {
+  prevu: { label: 'prévue', className: 'bg-slate-100 text-slate-600' },
+  'en-cours': { label: 'en cours', className: 'bg-indigo-50 text-indigo-700' },
+  termine: { label: 'tenue', className: 'bg-emerald-50 text-emerald-700' },
+  annule: { label: 'annulée', className: 'bg-rose-50 text-rose-700' }
+};
 
 /**
  * L'agenda de l'agence.
  *
- * Une heure de votre temps vaut une journée ici : l'agenda avance sous vos
- * yeux, et une réunion prévue « demain » se tiendra dans une heure. On y voit
- * la journée en cours créneau par créneau, salle par salle.
+ * Il lisait le navigateur, et ne montrait donc que les réunions que **vous**
+ * aviez posées. Depuis que les agents en convoquent eux-mêmes, celles-là
+ * existaient sans être visibles nulle part — deux agendas, dont un invisible.
  *
- * Rien ne se tient tout seul sans que vous l'ayez voulu : le déclenchement
- * automatique est une case à cocher, parce qu'une réunion consomme des jetons.
+ * Cette vue lit maintenant la seule source qui compte, et ne détient rien : elle
+ * demande, affiche, et commande.
  */
 export const AgendaStudio: React.FC = () => {
-  const [now, setNow] = useState<AgencyTime>(agencyNow());
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [requests, setRequests] = useState<AccessRequest[]>([]);
-  const [graph, setGraph] = useState<GraphAgent[]>([]);
-  const [viewDay, setViewDay] = useState(agencyNow().day);
+  const [agenda, setAgenda] = useState<Agenda>({ meetings: [], due: [], ceo: [], now: { day: 1, hour: 9 } });
   const [selected, setSelected] = useState<Meeting | null>(null);
-  const [auto, setAuto] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
-    title: '',
-    kind: 'revue' as MeetingKind,
-    topic: '',
-    organiserId: '',
-    participants: [] as string[],
-    hour: nextWorkSlot().hour,
-    day: nextWorkSlot().day,
-    duration: 1
-  });
+  /**
+   * Le produit courant, tenu dans l'état et non lu au vol.
+   *
+   * L'état vient du serveur et arrive après le premier rendu : le lire une
+   * seule fois, à la volée, donnait toujours « aucun projet » — et rien ne
+   * venait jamais corriger cet affichage.
+   */
+  const [venture, setVenture] = useState<{ id: string; name: string } | null>(null);
 
-  const refresh = useCallback(() => {
-    setMeetings(readAgenda());
-    setRequests(readAccessRequests());
+  const reload = useCallback(() => {
+    const active = getActiveProjectId();
+    const found = getStoredVentures().find((entry) => entry.id === active);
+    setVenture(found ? { id: found.id, name: found.name } : null);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const active = getActiveProjectId();
+    if (!active) return;
+    try {
+      const res = await fetch(`/api/agenda?ventureId=${encodeURIComponent(active)}`);
+      if (res.ok) setAgenda((await res.json()) as Agenda);
+    } catch {
+      /* hors ligne : on garde ce qu'on affichait */
+    }
   }, []);
 
   useEffect(() => {
-    const list = readGraph();
-    setGraph(list);
-    if (list.length > 0) setForm((previous) => ({ ...previous, organiserId: previous.organiserId || list[0].id }));
-    refresh();
+    reload();
+    void refresh();
 
-    window.addEventListener(AGENDA_EVENT, refresh);
-    window.addEventListener(ACCESS_EVENT, refresh);
-    // Le temps de l'agence avance : l'écran doit le montrer.
-    const tick = window.setInterval(() => setNow(agencyNow()), 5000);
-    return () => {
-      window.removeEventListener(AGENDA_EVENT, refresh);
-      window.removeEventListener(ACCESS_EVENT, refresh);
-      window.clearInterval(tick);
+    const onState = () => {
+      reload();
+      void refresh();
     };
-  }, [refresh]);
+    window.addEventListener(STATE_HYDRATED_EVENT, onState);
+    window.addEventListener('active-project-changed', onState);
 
-  // Déclenchement automatique : uniquement si vous l'avez demandé.
-  useEffect(() => {
-    if (!auto) return;
-    const timer = window.setInterval(() => {
-      if (isMeetingRunning()) return;
-      const due = dueMeetings()[0];
-      if (due) hold(due.id);
-    }, 8000);
-    return () => window.clearInterval(timer);
-  }, [auto]);
+    // Les agents convoquent pendant qu'on regarde ailleurs : on relit.
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => {
+      window.removeEventListener(STATE_HYDRATED_EVENT, onState);
+      window.removeEventListener('active-project-changed', onState);
+      window.clearInterval(timer);
+    };
+  }, [reload, refresh]);
 
-  const dayMeetings = meetings.filter((meeting) => meeting.day === viewDay && meeting.status !== 'annule');
-  const pending = requests.filter((request) => request.status === 'attente');
-  const due = dueMeetings();
-
-  const create = (event: React.FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    if (form.title.trim().length < 3 || form.topic.trim().length < 8) {
-      setError('Un titre et un sujet un peu consistant, au minimum.');
-      return;
+  const command = async (payload: Record<string, unknown>, label: string) => {
+    if (!venture) return;
+    setBusy(label);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/agenda', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ventureId: venture.id,
+          ventureName: venture.name,
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined,
+          ...payload
+        })
+      });
+      const json = (await res.json()) as any;
+      if (json?.error) setNotice(json.error);
+      await refresh();
+    } catch {
+      setNotice("Le serveur n'a pas répondu.");
+    } finally {
+      setBusy(null);
     }
-    const result = schedule({
-      title: form.title.trim(),
-      kind: form.kind,
-      topic: form.topic.trim(),
-      organiserId: form.organiserId,
-      participantIds: form.participants,
-      day: form.day,
-      hour: form.hour,
-      duration: form.duration
-    });
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    setForm({ ...form, title: '', topic: '', participants: [] });
-    setViewDay(form.day);
-    refresh();
   };
 
-  const toggleParticipant = (id: string) =>
-    setForm((previous) => ({
-      ...previous,
-      participants: previous.participants.includes(id)
-        ? previous.participants.filter((entry) => entry !== id)
-        : [...previous.participants, id]
-    }));
+  if (!venture) {
+    return (
+      <div className={`${CARD} p-8 text-center`}>
+        <p className="text-sm text-slate-500">Sélectionnez un produit : l'agenda est celui de son équipe.</p>
+      </div>
+    );
+  }
 
-  const hours = Array.from({ length: WORK_END - WORK_START }, (_, index) => WORK_START + index);
+  const planned = agenda.meetings.filter((entry) => entry.status === 'prevu');
+  const held = agenda.meetings.filter((entry) => entry.status === 'termine');
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Agenda</h1>
-          <p className="mt-0.5 max-w-3xl text-sm text-slate-500">
-            Une heure de votre temps vaut une journée ici. N'importe quel agent peut convoquer une réunion, réserver
-            une salle et inviter qui il veut ; ce qui en sort — tâches, processus, annulations, demandes qui vous
-            remontent — s'applique pour de bon.
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="font-mono text-lg font-bold text-slate-900">{formatAgency(now)}</p>
-          <label className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-slate-600">
-            <input type="checkbox" checked={auto} onChange={(event) => setAuto(event.target.checked)} />
-            tenir les réunions automatiquement
-          </label>
+      <header className={`${CARD} p-5`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">Agenda</h1>
+            <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
+              Une heure de votre temps vaut une journée ici. Les agents convoquent eux-mêmes, selon leur rang : un
+              expert demande à son responsable, un lead réunit son équipe, un C-Level convoque un comité. Ce qui en sort
+              — tâches, annulations, demandes qui vous remontent — s'applique pour de bon.
+            </p>
+          </div>
+          <span className="font-mono text-sm text-slate-500">
+            Jour {agenda.now.day} · {String(agenda.now.hour).padStart(2, '0')}:00
+          </span>
         </div>
       </header>
 
-      {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+      {notice && <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">{notice}</p>}
 
-      {/* Ce qui vous attend */}
-      {pending.length > 0 && (
-        <div className={`${CARD} border-amber-200 bg-amber-50/60 p-4`}>
-          <h2 className="text-sm font-bold text-amber-900">Demandes qui vous remontent · {pending.length}</h2>
-          <p className="mt-0.5 text-[11px] text-amber-800">
-            Les agents ne s'accordent pas eux-mêmes ce qu'ils n'ont pas. Ces demandes attendent votre décision.
+      {/* Ce qui vous revient */}
+      {agenda.ceo.length > 0 && (
+        <section className={`${CARD} border-amber-200 p-5`}>
+          <h2 className="text-sm font-bold text-slate-900">
+            🔑 Ce que l'agence vous demande
+            <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              {agenda.ceo.length}
+            </span>
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Seul un C-Level peut vous saisir : ce qui arrive ici a déjà été jugé hors de portée de l'agence.
           </p>
-          <ul className="mt-2 space-y-2">
-            {pending.map((request) => (
-              <li key={request.id} className="rounded-lg border border-amber-200 bg-white p-2.5">
-                <p className="text-xs font-semibold text-slate-900">{request.what}</p>
-                {request.why && <p className="mt-0.5 text-[11px] text-slate-600">{request.why}</p>}
-                <p className="mt-0.5 font-mono text-[10px] text-slate-400">
-                  {request.askedByName} · réunion « {request.meetingTitle} »
+          <ul className="mt-3 space-y-2">
+            {agenda.ceo.map((request) => (
+              <li key={request.id} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                <p className="text-xs font-semibold text-slate-900">{request.subject}</p>
+                {request.body && <p className="mt-1 whitespace-pre-wrap text-[11px] text-slate-600">{request.body}</p>}
+                <p className="mt-1 font-mono text-[10px] text-slate-400">
+                  {request.from} · {new Date(request.at).toLocaleString('fr-FR')}
                 </p>
-                <div className="mt-1.5 flex gap-2">
+                <div className="mt-2 flex gap-2">
                   <button
-                    onClick={() => answerAccess(request.id, 'accorde')}
-                    className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                    onClick={() => command({ action: 'repondre', requestId: request.id, answer: 'Accordé.' }, request.id)}
+                    className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
                   >
                     Accorder
                   </button>
                   <button
-                    onClick={() => answerAccess(request.id, 'refuse')}
-                    className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                    onClick={() =>
+                      command({ action: 'repondre', requestId: request.id, answer: 'Refusé pour le moment.' }, request.id)
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
                   >
                     Refuser
                   </button>
@@ -190,302 +198,134 @@ export const AgendaStudio: React.FC = () => {
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
 
-      {due.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-indigo-50 px-3 py-2">
-          <span className="text-xs text-indigo-900">
-            {due.length} réunion(s) à tenir : l'heure est passée dans l'agence.
-          </span>
-          <button
-            onClick={() => hold(due[0].id)}
-            disabled={isMeetingRunning()}
-            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            Tenir « {due[0].title.slice(0, 30)} »
-          </button>
-        </div>
-      )}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Ce qui est prévu */}
+        <section className={`${CARD} p-5 lg:col-span-2`}>
+          <h2 className="text-sm font-bold text-slate-900">
+            À venir <span className="ml-1 text-[11px] font-normal text-slate-400">{planned.length}</span>
+          </h2>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        {/* La journée */}
-        <section className={`${CARD} p-4`}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-900">Jour {viewDay}</h2>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setViewDay(Math.max(1, viewDay - 1))}
-                className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
-              >
-                ‹
-              </button>
-              <button
-                onClick={() => setViewDay(now.day)}
-                className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
-              >
-                aujourd'hui
-              </button>
-              <button
-                onClick={() => setViewDay(viewDay + 1)}
-                className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
-              >
-                ›
-              </button>
-            </div>
-          </div>
-
-          <ul className="space-y-1">
-            {hours.map((hour) => {
-              const slot = dayMeetings.filter((meeting) => hour >= meeting.hour && hour < meeting.hour + meeting.duration);
-              const isNow = viewDay === now.day && hour === now.hour;
-              return (
-                <li key={hour} className={`flex gap-2 rounded ${isNow ? 'bg-indigo-50' : ''}`}>
-                  <span className="w-12 shrink-0 py-1 text-right font-mono text-[10px] text-slate-400">
-                    {String(hour).padStart(2, '0')}:00
-                  </span>
-                  <div className="min-w-0 flex-1 space-y-1 border-l border-slate-100 py-1 pl-2">
-                    {slot.length === 0 ? (
-                      <span className="text-[10px] text-slate-300">—</span>
-                    ) : (
-                      slot
-                        .filter((meeting) => meeting.hour === hour)
-                        .map((meeting) => (
-                          <button
-                            key={meeting.id}
-                            onClick={() => setSelected(meeting)}
-                            className={`block w-full rounded-lg border px-2 py-1.5 text-left transition-colors ${
-                              meeting.status === 'termine'
-                                ? 'border-emerald-200 bg-emerald-50/60'
-                                : meeting.status === 'en-cours'
-                                  ? 'border-indigo-400 bg-indigo-50'
-                                  : 'border-slate-200 hover:border-indigo-300'
-                            }`}
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <span>{MEETING_KINDS[meeting.kind].icon}</span>
-                              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-800">
-                                {meeting.title}
-                              </span>
-                              <span className="shrink-0 font-mono text-[9px] text-slate-400">{meeting.room}</span>
-                            </span>
-                            <span className="mt-0.5 block truncate text-[10px] text-slate-500">
-                              {meeting.participantNames.map((name) => name.split('—')[0].trim()).join(', ')}
-                            </span>
-                            {meeting.status === 'prevu' && (
-                              <span className="mt-0.5 block font-mono text-[9px] text-slate-400">
-                                {humanDelay(realDelayUntil(meeting.day, meeting.hour))}
-                              </span>
-                            )}
-                            {meeting.outcomes.length > 0 && (
-                              <span className="mt-0.5 block text-[9px] text-emerald-700">
-                                {meeting.outcomes.length} suite(s)
-                              </span>
-                            )}
-                          </button>
-                        ))
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          {planned.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">
+              Rien au calendrier. Lancez l'agence : les agents convoqueront ce dont ils ont besoin, quand ils en auront
+              besoin.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {planned.map((meeting) => {
+                const due = agenda.due.includes(meeting.id);
+                return (
+                  <li key={meeting.id} className="rounded-lg border border-slate-200 p-3">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <button
+                        onClick={() => setSelected(meeting)}
+                        className="text-xs font-semibold text-slate-900 hover:text-indigo-700 hover:underline"
+                      >
+                        {meeting.title}
+                      </button>
+                      {due && (
+                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                          l'heure est passée
+                        </span>
+                      )}
+                      <span className="ml-auto font-mono text-[10px] text-slate-400">
+                        jour {meeting.day} · {String(meeting.hour).padStart(2, '0')}:00 · {meeting.room}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-600">{meeting.topic}</p>
+                    <p className="mt-1 font-mono text-[10px] text-slate-400">
+                      {meeting.organiserName} · {meeting.participantIds.length} participant(s)
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => command({ action: 'tenir', meetingId: meeting.id }, meeting.id)}
+                        disabled={busy === meeting.id}
+                        className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                      >
+                        {busy === meeting.id ? 'en cours…' : 'Tenir maintenant'}
+                      </button>
+                      <button
+                        onClick={() => command({ action: 'annuler', meetingId: meeting.id }, meeting.id)}
+                        className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
 
-        {/* Convoquer */}
-        <form onSubmit={create} className={`${CARD} space-y-2 p-4`}>
-          <h2 className="text-sm font-bold text-slate-900">Convoquer une réunion</h2>
-
-          <input
-            value={form.title}
-            onChange={(event) => setForm({ ...form, title: event.target.value })}
-            placeholder="Revue des alertes"
-            className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
-          />
-
-          <div className="grid grid-cols-2 gap-2">
-            <select
-              value={form.kind}
-              onChange={(event) => setForm({ ...form, kind: event.target.value as MeetingKind })}
-              className="rounded-lg border border-slate-300 px-2 py-2 text-xs text-slate-700"
-            >
-              {(Object.keys(MEETING_KINDS) as MeetingKind[]).map((kind) => (
-                <option key={kind} value={kind} title={MEETING_KINDS[kind].hint}>
-                  {MEETING_KINDS[kind].icon} {MEETING_KINDS[kind].label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={form.organiserId}
-              onChange={(event) => setForm({ ...form, organiserId: event.target.value })}
-              className="rounded-lg border border-slate-300 px-2 py-2 text-xs text-slate-700"
-            >
-              {graph.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.role.split('—')[0].trim()}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <textarea
-            value={form.topic}
-            onChange={(event) => setForm({ ...form, topic: event.target.value })}
-            rows={3}
-            placeholder="Ce dont il faut parler, et ce qu'on attend de la réunion."
-            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs focus:bg-white focus:outline-none"
-          />
-
-          <div className="grid grid-cols-3 gap-2">
-            <label className="text-[10px] font-semibold uppercase text-slate-400">
-              Jour
-              <input
-                type="number"
-                min={1}
-                value={form.day}
-                onChange={(event) => setForm({ ...form, day: Number(event.target.value) })}
-                className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-normal text-slate-800"
-              />
-            </label>
-            <label className="text-[10px] font-semibold uppercase text-slate-400">
-              Heure
-              <select
-                value={form.hour}
-                onChange={(event) => setForm({ ...form, hour: Number(event.target.value) })}
-                className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-normal text-slate-800"
-              >
-                {hours.map((hour) => (
-                  <option key={hour} value={hour}>
-                    {String(hour).padStart(2, '0')}:00
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[10px] font-semibold uppercase text-slate-400">
-              Durée
-              <select
-                value={form.duration}
-                onChange={(event) => setForm({ ...form, duration: Number(event.target.value) })}
-                className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-normal text-slate-800"
-              >
-                {[1, 2, 3].map((entry) => (
-                  <option key={entry} value={entry}>
-                    {entry} h
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-              Convier · {form.participants.length}
-            </p>
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-1.5">
-              {graph
-                .filter((agent) => agent.id !== form.organiserId)
-                .map((agent) => (
-                  <label key={agent.id} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      checked={form.participants.includes(agent.id)}
-                      onChange={() => toggleParticipant(agent.id)}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-[11px] text-slate-700">{agent.role}</span>
-                  </label>
-                ))}
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
-          >
-            📅 Réserver une salle
-          </button>
-          <p className="text-[10px] text-slate-400">
-            {ROOMS.length} salles. Une salle occupée l'est vraiment, et un agent déjà pris ne peut pas être à deux
-            endroits.
-          </p>
-        </form>
-      </div>
-
-      {/* Compte rendu */}
-      {selected && (
-        <div className={`${CARD} p-5`}>
-          <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 pb-3">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">
-                {MEETING_KINDS[selected.kind].icon} {selected.title}
-              </h2>
-              <p className="mt-0.5 font-mono text-[10px] text-slate-400">
-                Jour {selected.day} · {String(selected.hour).padStart(2, '0')}:00 · {selected.room} ·{' '}
-                {selected.participantNames.join(', ')}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {selected.status === 'prevu' && (
-                <>
+        {/* Ce qui a été tenu */}
+        <section className={`${CARD} p-5`}>
+          <h2 className="text-sm font-bold text-slate-900">
+            Tenues <span className="ml-1 text-[11px] font-normal text-slate-400">{held.length}</span>
+          </h2>
+          {held.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">Aucune réunion tenue pour l'instant.</p>
+          ) : (
+            <ul className="mt-3 space-y-1.5">
+              {held.slice(0, 12).map((meeting) => (
+                <li key={meeting.id}>
                   <button
-                    onClick={() => hold(selected.id)}
-                    disabled={isMeetingRunning() || Date.now() < toRealMs(selected.day, selected.hour)}
-                    title={
-                      Date.now() < toRealMs(selected.day, selected.hour)
-                        ? "L'agence n'y est pas encore arrivée."
-                        : undefined
-                    }
-                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                    onClick={() => setSelected(meeting)}
+                    className="w-full rounded-lg border border-slate-200 p-2 text-left hover:border-indigo-300 hover:bg-slate-50"
                   >
-                    Tenir la réunion
+                    <p className="truncate text-[11px] font-semibold text-slate-800">{meeting.title}</p>
+                    <p className="font-mono text-[10px] text-slate-400">
+                      jour {meeting.day} · {meeting.organiserName}
+                    </p>
                   </button>
-                  <button
-                    onClick={() => {
-                      cancelMeeting(selected.id);
-                      setSelected(null);
-                    }}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
-                  >
-                    Annuler
-                  </button>
-                </>
-              )}
-              <button
-                onClick={() => setSelected(null)}
-                className="rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] text-slate-500"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-
-          {selected.outcomes.length > 0 && (
-            <ul className="mt-3 space-y-1">
-              {selected.outcomes.map((outcome, index) => (
-                <li key={index} className="flex items-baseline gap-2 text-[11px]">
-                  <span className={outcome.applied ? 'text-emerald-600' : 'text-amber-600'}>
-                    {outcome.applied ? '✅' : '⏳'}
-                  </span>
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600">
-                    {outcome.kind}
-                  </span>
-                  <span className="min-w-0 flex-1 text-slate-700">{outcome.label}</span>
-                  {outcome.ownerName && (
-                    <span className="shrink-0 text-[10px] text-slate-400">{outcome.ownerName.split('—')[0].trim()}</span>
-                  )}
                 </li>
               ))}
             </ul>
           )}
+        </section>
+      </div>
+
+      {/* Le compte rendu */}
+      {selected && (
+        <section className={`${CARD} p-5`}>
+          <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">{selected.title}</h2>
+              <p className="mt-0.5 font-mono text-[10px] text-slate-400">
+                jour {selected.day} · {String(selected.hour).padStart(2, '0')}:00 · {selected.room} ·{' '}
+                {selected.organiserName}
+              </p>
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                STATUS[selected.status]?.className ?? ''
+              }`}
+            >
+              {STATUS[selected.status]?.label ?? selected.status}
+            </span>
+            <button
+              onClick={() => setSelected(null)}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-400 hover:bg-slate-50"
+            >
+              ✕
+            </button>
+          </div>
+
+          <p className="mt-3 text-xs text-slate-600">{selected.topic}</p>
 
           {selected.report ? (
-            <div
-              className="md-page mt-3"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(selected.report) }}
-            />
+            <div className="mt-3 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700">
+              {selected.report}
+            </div>
           ) : (
-            <p className="mt-3 text-xs text-slate-500">{selected.topic}</p>
+            <p className="mt-3 text-[11px] text-slate-400">
+              Pas encore de compte rendu : la réunion n'a pas eu lieu.
+            </p>
           )}
-        </div>
+        </section>
       )}
     </div>
   );

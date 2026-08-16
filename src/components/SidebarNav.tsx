@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { readLedger, LEDGER_EVENT } from '../lib/agent-ledger';
 import { hydrate, readLocal, refresh as refreshState, STATE_HYDRATED_EVENT, writeLocal } from '../lib/local';
+import { watchOffice, stopOffice } from '../lib/office-feed';
 import { getStoredVentures, getActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
 import { ProjectPilot } from './ProjectPilot';
@@ -175,6 +176,22 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
     const syncTimer = window.setInterval(() => void refreshState(), 20000);
     window.addEventListener(STATE_HYDRATED_EVENT, loadData);
 
+    /*
+     * Le bureau s'anime de ce que le serveur fait.
+     *
+     * Il ne bougeait que lorsque le navigateur travaillait ; la chaîne étant
+     * partie côté serveur, le plateau était devenu un décor immobile pendant que
+     * l'agence avançait pour de bon.
+     */
+    // Après hydratation seulement : avant, aucun produit n'est encore connu.
+    const followOffice = () => {
+      const active = getActiveProjectId();
+      if (active) watchOffice(active);
+    };
+    followOffice();
+    window.addEventListener(STATE_HYDRATED_EVENT, followOffice);
+    window.addEventListener('active-project-changed', followOffice);
+
     loadData();
     loadLocal();
     setCollapsed(readCollapsed());
@@ -209,9 +226,12 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
       window.removeEventListener('active-project-changed', onActive);
       window.removeEventListener(LEDGER_EVENT, loadLocal);
       window.removeEventListener(STATE_HYDRATED_EVENT, loadData);
+      window.removeEventListener(STATE_HYDRATED_EVENT, followOffice);
+      window.removeEventListener('active-project-changed', followOffice);
       window.clearInterval(usageInterval);
       window.clearInterval(localInterval);
       window.clearInterval(syncTimer);
+      stopOffice();
     };
   }, [loadData, loadLocal]);
 
