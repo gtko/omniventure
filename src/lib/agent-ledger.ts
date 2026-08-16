@@ -13,6 +13,7 @@
  */
 
 import { costOf, loadPrices } from './model-pricing';
+import { readLocal, writeLocal, removeLocal } from './local';
 
 const STORE_KEY = 'omniventure_ledger_v1';
 export const LEDGER_EVENT = 'omniventure_ledger_updated';
@@ -55,7 +56,7 @@ export interface LedgerEntry {
 export function readLedger(): LedgerEntry[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -77,7 +78,7 @@ export function record(entry: Omit<LedgerEntry, 'id' | 'at' | 'costUsd'> & { cos
 
   try {
     const all = [written, ...readLedger()];
-    localStorage.setItem(STORE_KEY, JSON.stringify(all.slice(0, MAX_ENTRIES)));
+    writeLocal(STORE_KEY, JSON.stringify(all.slice(0, MAX_ENTRIES)));
   } catch {
     /* stockage plein : l'agence continue de tourner, elle perd une écriture */
   }
@@ -189,7 +190,7 @@ export function totalSpend(): { costUsd: number; runs: number; unpriced: number 
 
 export function clearLedger(): void {
   try {
-    localStorage.removeItem(STORE_KEY);
+    removeLocal(STORE_KEY);
   } catch {
     /* rien à faire */
   }

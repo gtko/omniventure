@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { readLocal, writeLocal, removeLocal } from '../lib/local';
 
 const POSITION_KEY = 'omniventure_monitor_position_v1';
 const COLLAPSED_KEY = 'omniventure_monitor_collapsed_v1';
@@ -42,7 +43,7 @@ interface Position {
 
 function readStoredPosition(): Position | null {
   try {
-    const raw = localStorage.getItem(POSITION_KEY);
+    const raw = readLocal(POSITION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Position;
     return Number.isFinite(parsed?.x) && Number.isFinite(parsed?.y) ? parsed : null;
@@ -54,10 +55,10 @@ function readStoredPosition(): Position | null {
 /** Identifiant d'onglet : c'est lui qui rend le comptage de présence honnête. */
 function clientId(): string {
   try {
-    const existing = localStorage.getItem(CLIENT_KEY);
+    const existing = readLocal(CLIENT_KEY);
     if (existing) return existing;
     const fresh = crypto.randomUUID?.() ?? `c-${Math.random().toString(36).slice(2)}${Date.now()}`;
-    localStorage.setItem(CLIENT_KEY, fresh);
+    writeLocal(CLIENT_KEY, fresh);
     return fresh;
   } catch {
     return 'anonyme';
@@ -122,7 +123,7 @@ export const FloatingMonitor: React.FC = () => {
   useEffect(() => {
     setPosition(readStoredPosition());
     try {
-      setCollapsed(localStorage.getItem(COLLAPSED_KEY) === '1');
+      setCollapsed(readLocal(COLLAPSED_KEY) === '1');
     } catch {
       /* stockage indisponible */
     }
@@ -135,8 +136,8 @@ export const FloatingMonitor: React.FC = () => {
 
   const persistPosition = useCallback((next: Position | null) => {
     try {
-      if (next) localStorage.setItem(POSITION_KEY, JSON.stringify(next));
-      else localStorage.removeItem(POSITION_KEY);
+      if (next) writeLocal(POSITION_KEY, JSON.stringify(next));
+      else removeLocal(POSITION_KEY);
     } catch {
       /* stockage indisponible */
     }
@@ -146,7 +147,7 @@ export const FloatingMonitor: React.FC = () => {
     setCollapsed((previous) => {
       const next = !previous;
       try {
-        localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
+        writeLocal(COLLAPSED_KEY, next ? '1' : '0');
       } catch {
         /* stockage indisponible */
       }

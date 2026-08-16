@@ -9,6 +9,7 @@
  */
 
 import { Direction } from './types';
+import { readLocal, writeLocal } from '../../lib/local';
 
 export type Patch =
   /** Pose un meuble (son coin haut-gauche sur la tuile). */
@@ -123,7 +124,7 @@ export const TOOLS: Array<{ id: ToolId; icon: string; label: string; hint: strin
 
 export function readLocalPatches(): Patch[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readLocal(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     return Array.isArray(parsed) ? (parsed as Patch[]) : [];
   } catch {
@@ -133,7 +134,7 @@ export function readLocalPatches(): Patch[] {
 
 export function writeLocalPatches(patches: Patch[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(patches));
+    writeLocal(STORAGE_KEY, JSON.stringify(patches));
   } catch {
     /* quota */
   }

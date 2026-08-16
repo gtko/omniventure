@@ -10,6 +10,7 @@
  */
 
 import { GRAPH_DEFAULTS } from '../components/office/agents';
+import { readLocal, writeLocal } from './local';
 
 /** Clés successives du graphe — on lit la plus récente disponible. */
 const GRAPH_KEYS = ['omniventure_custom_agents_v5', 'omniventure_custom_agents_v4', 'omniventure_custom_agents_v3'];
@@ -66,7 +67,7 @@ export interface HiringRequest {
 function readStoredGraph(): GraphAgent[] {
   for (const key of GRAPH_KEYS) {
     try {
-      const raw = localStorage.getItem(key);
+      const raw = readLocal(key);
       if (!raw) continue;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed as GraphAgent[];
@@ -106,7 +107,7 @@ export function ensureCoreAgents(): GraphAgent[] {
 
   let alreadySynced = false;
   try {
-    alreadySynced = localStorage.getItem(SYNC_KEY) === CORE_SIGNATURE;
+    alreadySynced = readLocal(SYNC_KEY) === CORE_SIGNATURE;
   } catch {
     alreadySynced = false;
   }
@@ -124,7 +125,7 @@ export function ensureCoreAgents(): GraphAgent[] {
 
 function markSynced(): void {
   try {
-    localStorage.setItem(SYNC_KEY, CORE_SIGNATURE);
+    writeLocal(SYNC_KEY, CORE_SIGNATURE);
   } catch {
     /* stockage indisponible */
   }
@@ -140,7 +141,7 @@ export function readGraph(): GraphAgent[] {
 
 export function writeGraph(agents: GraphAgent[]): void {
   try {
-    localStorage.setItem(GRAPH_WRITE_KEY, JSON.stringify(agents));
+    writeLocal(GRAPH_WRITE_KEY, JSON.stringify(agents));
   } catch {
     return;
   }
@@ -180,7 +181,7 @@ export function hireAgent(agent: GraphAgent, forNeed?: string): string {
 
 export function readRequests(): HiringRequest[] {
   try {
-    const raw = localStorage.getItem(REQUESTS_KEY);
+    const raw = readLocal(REQUESTS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as HiringRequest[]) : [];
@@ -191,7 +192,7 @@ export function readRequests(): HiringRequest[] {
 
 export function writeRequests(requests: HiringRequest[]): void {
   try {
-    localStorage.setItem(REQUESTS_KEY, JSON.stringify(requests.slice(0, 100)));
+    writeLocal(REQUESTS_KEY, JSON.stringify(requests.slice(0, 100)));
   } catch {
     return;
   }
@@ -251,7 +252,7 @@ export interface HiringCandidate {
  */
 export function readCandidates(): Record<string, HiringCandidate> {
   try {
-    const raw = localStorage.getItem(CANDIDATES_KEY);
+    const raw = readLocal(CANDIDATES_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -264,7 +265,7 @@ export function writeCandidate(candidate: HiringCandidate): void {
   const all = readCandidates();
   all[candidate.requestId] = candidate;
   try {
-    localStorage.setItem(CANDIDATES_KEY, JSON.stringify(all));
+    writeLocal(CANDIDATES_KEY, JSON.stringify(all));
   } catch {
     return;
   }
@@ -277,7 +278,7 @@ export function removeCandidate(requestId: string): void {
   const all = readCandidates();
   delete all[requestId];
   try {
-    localStorage.setItem(CANDIDATES_KEY, JSON.stringify(all));
+    writeLocal(CANDIDATES_KEY, JSON.stringify(all));
   } catch {
     /* stockage indisponible */
   }

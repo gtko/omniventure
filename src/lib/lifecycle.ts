@@ -18,6 +18,7 @@
 
 import { stackFor, type StackId } from './stacks';
 import { getStoredVentures } from './store';
+import { readLocal, writeLocal } from './local';
 
 export type StageId = 'mvp' | 'traction' | 'scale' | 'cash-cow' | 'sunset';
 
@@ -247,7 +248,7 @@ type Store = Record<string, LifecycleState>;
 function read(): Store {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
@@ -257,7 +258,7 @@ function read(): Store {
 
 function write(store: Store): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(store));
+    writeLocal(STORE_KEY, JSON.stringify(store));
   } catch {
     /* stockage plein */
   }

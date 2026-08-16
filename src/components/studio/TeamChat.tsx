@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getRealAgentLogs, type RealAgentActivity } from '../../lib/agent-bus';
 import { readGraph, type GraphAgent } from '../../lib/hiring';
 import { channelsOf, postMessage, readMessages, WORKSPACE_EVENT, type Message } from '../../lib/workspace';
+import { readLocal } from '../../lib/local';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 
@@ -86,7 +87,7 @@ export const TeamChat: React.FC = () => {
           ameMd: agent.ameMd,
           jobMd: agent.jobMd,
           model: agent.modelId,
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
       const json = (await res.json()) as { reply?: string; error?: string };

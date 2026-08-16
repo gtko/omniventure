@@ -13,6 +13,7 @@ import {
 import { getRunLog, onRunLogChange, type HarnessRunLog } from '../../lib/harness-log';
 import { formatUsd } from '../../lib/model-pricing';
 import { readTasks, type Task } from '../../lib/workspace';
+import { readLocal } from '../../lib/local';
 
 /** Vue « temps réel » d'un agent, recalculée par le composant parent. */
 export interface AgentView {
@@ -93,9 +94,9 @@ interface StoredAgent {
 function readStoredAgent(id: string): StoredAgent | null {
   try {
     const raw =
-      localStorage.getItem('omniventure_custom_agents_v5') ??
-      localStorage.getItem('omniventure_custom_agents_v4') ??
-      localStorage.getItem('omniventure_custom_agents_v3');
+      readLocal('omniventure_custom_agents_v5') ??
+      readLocal('omniventure_custom_agents_v4') ??
+      readLocal('omniventure_custom_agents_v3');
     if (!raw) return null;
     const list = JSON.parse(raw) as StoredAgent[];
     return Array.isArray(list) ? list.find((entry) => entry.id === id) ?? null : null;
@@ -195,7 +196,7 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
           temperature: stored?.temperature,
           message: text,
           history: (threads[agent.id] ?? []).map((m) => ({ role: m.role, content: m.content })),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
 

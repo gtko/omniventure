@@ -11,6 +11,7 @@
 import { SHARED_ROLES } from '../../lib/agent-roster';
 import { harnessBrand } from './harnessMarks';
 import type { AgentProfile } from './simulation';
+import { readLocal } from '../../lib/local';
 
 type Category = 'orchestration' | 'research' | 'engineering' | 'growth' | 'operations';
 
@@ -143,9 +144,9 @@ export function loadGraphProfiles(): AgentProfile[] {
   try {
     // Clés successives du studio d'agents : on lit la plus récente disponible.
     const raw =
-      localStorage.getItem('omniventure_custom_agents_v5') ??
-      localStorage.getItem('omniventure_custom_agents_v4') ??
-      localStorage.getItem('omniventure_custom_agents_v3');
+      readLocal('omniventure_custom_agents_v5') ??
+      readLocal('omniventure_custom_agents_v4') ??
+      readLocal('omniventure_custom_agents_v3');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) stored = parsed as GraphAgent[];

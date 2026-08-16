@@ -16,6 +16,7 @@ import {
   type RoadmapItem
 } from '../lib/roadmap';
 import { readDocs } from '../lib/workspace';
+import { readLocal } from '../lib/local';
 
 interface Props {
   venture: { id: string; name: string; slug: string };
@@ -58,7 +59,7 @@ export const RoadmapPanel: React.FC<Props> = ({ venture }) => {
   const dismissed = items.filter((item) => item.status === 'ecarte');
 
   const launch = () => {
-    const key = localStorage.getItem('omniventure_openrouter_key');
+    const key = readLocal('omniventure_openrouter_key');
     if (!key) return;
 
     // Ce que l'équipe sait déjà : le dossier, et ce que la chaîne a produit.

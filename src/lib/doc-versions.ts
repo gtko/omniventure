@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from './local';
 /**
  * L'historique des documents.
  *
@@ -33,7 +34,7 @@ type Store = Record<string, DocVersion[]>;
 function read(): Store {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
@@ -43,7 +44,7 @@ function read(): Store {
 
 function write(store: Store): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(store));
+    writeLocal(STORE_KEY, JSON.stringify(store));
   } catch {
     /* stockage plein : on perd l'historique, jamais la version courante */
   }

@@ -7,6 +7,7 @@ import { SHARED_ROLES } from '../lib/agent-roster';
 import { CultureEditor } from './CultureEditor';
 import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
+import { readLocal, writeLocal } from '../lib/local';
 
 export type HierarchyLevel = 'c_level' | 'vp' | 'head_of' | 'lead' | 'expert';
 
@@ -425,7 +426,7 @@ export const AgentGraphStudio: React.FC = () => {
           }));
           setModelsList(mapped);
           try {
-            localStorage.setItem('omniventure_openrouter_models_cache', JSON.stringify(mapped));
+            writeLocal('omniventure_openrouter_models_cache', JSON.stringify(mapped));
           } catch {}
           return mapped;
         }
@@ -440,17 +441,17 @@ export const AgentGraphStudio: React.FC = () => {
 
   useEffect(() => {
     try {
-      const savedKey = localStorage.getItem('omniventure_openrouter_key');
+      const savedKey = readLocal('omniventure_openrouter_key');
       if (savedKey) {
         setOpenRouterKey(savedKey);
         setKeyStatus('valid');
       }
 
-      const savedTeams = localStorage.getItem('omniventure_teams_v5');
+      const savedTeams = readLocal('omniventure_teams_v5');
       if (savedTeams) {
         setTeams(JSON.parse(savedTeams));
       } else {
-        localStorage.setItem('omniventure_teams_v5', JSON.stringify(INITIAL_TEAMS));
+        writeLocal('omniventure_teams_v5', JSON.stringify(INITIAL_TEAMS));
       }
 
       // Un graphe déjà enregistré ne connaît pas les métiers ajoutés depuis :
@@ -459,18 +460,18 @@ export const AgentGraphStudio: React.FC = () => {
       if (synced.length > 0) {
         setAgents(synced as unknown as AgentCustomData[]);
       } else {
-        localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(INITIAL_AGENTS_DATA));
+        writeLocal('omniventure_custom_agents_v5', JSON.stringify(INITIAL_AGENTS_DATA));
         setAgents(INITIAL_AGENTS_DATA);
       }
 
-      const savedChannels = localStorage.getItem('omniventure_channels_v5');
+      const savedChannels = readLocal('omniventure_channels_v5');
       if (savedChannels) {
         setChannels(JSON.parse(savedChannels));
       } else {
-        localStorage.setItem('omniventure_channels_v5', JSON.stringify(INITIAL_CHANNELS));
+        writeLocal('omniventure_channels_v5', JSON.stringify(INITIAL_CHANNELS));
       }
 
-      const cachedModels = localStorage.getItem('omniventure_openrouter_models_cache');
+      const cachedModels = readLocal('omniventure_openrouter_models_cache');
       if (cachedModels) {
         setModelsList(JSON.parse(cachedModels));
       }
@@ -485,23 +486,23 @@ export const AgentGraphStudio: React.FC = () => {
   const handleUpdateCurrentAgent = (fields: Partial<AgentCustomData>) => {
     const updated = agents.map(a => a.id === currentAgent.id ? { ...a, ...fields } : a);
     setAgents(updated);
-    localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(updated));
+    writeLocal('omniventure_custom_agents_v5', JSON.stringify(updated));
   };
 
   const handleToggleChannel = (channelId: string) => {
     const updated = channels.map(c => c.id === channelId ? { ...c, enabled: !c.enabled } : c);
     setChannels(updated);
-    localStorage.setItem('omniventure_channels_v5', JSON.stringify(updated));
+    writeLocal('omniventure_channels_v5', JSON.stringify(updated));
     setNotification('Canal de communication mis à jour.');
     setTimeout(() => setNotification(null), 2500);
   };
 
   const handleSaveAll = () => {
     try {
-      localStorage.setItem('omniventure_openrouter_key', openRouterKey);
-      localStorage.setItem('omniventure_teams_v5', JSON.stringify(teams));
-      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(agents));
-      localStorage.setItem('omniventure_channels_v5', JSON.stringify(channels));
+      writeLocal('omniventure_openrouter_key', openRouterKey);
+      writeLocal('omniventure_teams_v5', JSON.stringify(teams));
+      writeLocal('omniventure_custom_agents_v5', JSON.stringify(agents));
+      writeLocal('omniventure_channels_v5', JSON.stringify(channels));
       setNotification('Super-Graphe d\'Équipes enregistré avec succès !');
       setTimeout(() => setNotification(null), 3500);
     } catch (e) {
@@ -533,15 +534,15 @@ export const AgentGraphStudio: React.FC = () => {
       const imported = await importGraphFromZip(file);
       if (imported.teams && imported.teams.length > 0) {
         setTeams(imported.teams);
-        localStorage.setItem('omniventure_teams_v5', JSON.stringify(imported.teams));
+        writeLocal('omniventure_teams_v5', JSON.stringify(imported.teams));
       }
       setAgents(imported.agents);
       if (imported.channels && imported.channels.length > 0) {
         setChannels(imported.channels);
-        localStorage.setItem('omniventure_channels_v5', JSON.stringify(imported.channels));
+        writeLocal('omniventure_channels_v5', JSON.stringify(imported.channels));
       }
       setSelectedAgentId(imported.agents[0].id);
-      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(imported.agents));
+      writeLocal('omniventure_custom_agents_v5', JSON.stringify(imported.agents));
 
       setNotification(`✓ Succès ! ${imported.agents.length} agents et ${imported.channels?.length || 0} canaux importés depuis le .zip.`);
       setTimeout(() => setNotification(null), 4000);
@@ -594,26 +595,26 @@ export const AgentGraphStudio: React.FC = () => {
     if (generatorMode === 'full_supergraph') {
       if (generatedGraphPreview.teams && generatedGraphPreview.teams.length > 0) {
         setTeams(generatedGraphPreview.teams);
-        localStorage.setItem('omniventure_teams_v5', JSON.stringify(generatedGraphPreview.teams));
+        writeLocal('omniventure_teams_v5', JSON.stringify(generatedGraphPreview.teams));
       }
       setAgents(generatedGraphPreview.agents);
       setChannels(generatedGraphPreview.channels);
       setSelectedAgentId(generatedGraphPreview.agents[0].id);
-      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(generatedGraphPreview.agents));
-      localStorage.setItem('omniventure_channels_v5', JSON.stringify(generatedGraphPreview.channels));
+      writeLocal('omniventure_custom_agents_v5', JSON.stringify(generatedGraphPreview.agents));
+      writeLocal('omniventure_channels_v5', JSON.stringify(generatedGraphPreview.channels));
     } else {
       // Add team mode: append new teams, agents and channels
       if (generatedGraphPreview.teams) {
         const mergedTeams = [...teams, ...generatedGraphPreview.teams.filter(t => !teams.some(existing => existing.id === t.id))];
         setTeams(mergedTeams);
-        localStorage.setItem('omniventure_teams_v5', JSON.stringify(mergedTeams));
+        writeLocal('omniventure_teams_v5', JSON.stringify(mergedTeams));
       }
       const mergedAgents = [...agents, ...generatedGraphPreview.agents.filter(a => !agents.some(existing => existing.id === a.id))];
       const mergedChannels = [...channels, ...generatedGraphPreview.channels.filter(c => !channels.some(existing => existing.id === c.id))];
       setAgents(mergedAgents);
       setChannels(mergedChannels);
-      localStorage.setItem('omniventure_custom_agents_v5', JSON.stringify(mergedAgents));
-      localStorage.setItem('omniventure_channels_v5', JSON.stringify(mergedChannels));
+      writeLocal('omniventure_custom_agents_v5', JSON.stringify(mergedAgents));
+      writeLocal('omniventure_channels_v5', JSON.stringify(mergedChannels));
     }
 
     setIsAiModalOpen(false);
@@ -636,7 +637,7 @@ export const AgentGraphStudio: React.FC = () => {
       const models = await fetchOpenRouterModels(openRouterKey);
       if (models && models.length > 0) {
         setKeyStatus('valid');
-        localStorage.setItem('omniventure_openrouter_key', openRouterKey);
+        writeLocal('omniventure_openrouter_key', openRouterKey);
         setNotification(`Connexion réussie ! ${models.length} modèles OpenRouter prêts.`);
       } else {
         setKeyStatus('invalid');

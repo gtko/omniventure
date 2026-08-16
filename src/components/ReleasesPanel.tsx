@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { renderMarkdown } from '../lib/markdown';
+import { readLocal } from '../lib/local';
 import {
   prepare,
   publish,
@@ -54,7 +55,7 @@ export const ReleasesPanel: React.FC<Props> = ({ venture }) => {
 
   const cut = async () => {
     if (!draft) return;
-    const key = localStorage.getItem('omniventure_openrouter_key');
+    const key = readLocal('omniventure_openrouter_key');
     if (!key) {
       setError('Clé OpenRouter absente : le journal ne peut pas être rédigé.');
       return;

@@ -1,3 +1,4 @@
+import { readLocal, writeLocal, removeLocal } from './local';
 /**
  * Ce que font les agents, en direct.
  *
@@ -34,7 +35,7 @@ let cache: AgentActivity[] | null = null;
 function load(): AgentActivity[] {
   if (cache) return cache;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readLocal(STORAGE_KEY);
     cache = raw ? (JSON.parse(raw) as AgentActivity[]) : [];
   } catch {
     cache = [];
@@ -44,7 +45,7 @@ function load(): AgentActivity[] {
 
 function persist(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify((cache ?? []).slice(-MAX_ENTRIES)));
+    writeLocal(STORAGE_KEY, JSON.stringify((cache ?? []).slice(-MAX_ENTRIES)));
   } catch {
     /* stockage plein : la trace reste en mémoire */
   }
@@ -90,7 +91,7 @@ export function pushActivity(entry: Omit<AgentActivity, 'id' | 'at'> & { id?: st
 export function clearActivities(): void {
   cache = [];
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    removeLocal(STORAGE_KEY);
   } catch {
     /* stockage indisponible */
   }

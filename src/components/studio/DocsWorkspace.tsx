@@ -4,6 +4,7 @@ import { readCulture } from '../../lib/culture';
 import { lineDiff, versionsOf, VERSIONS_EVENT, type DocVersion } from '../../lib/doc-versions';
 import { excerpt, outline, renderMarkdown } from '../../lib/markdown';
 import { readDocs, removeDoc, upsertDoc, WORKSPACE_EVENT, type Doc } from '../../lib/workspace';
+import { readLocal } from '../../lib/local';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 
@@ -159,7 +160,7 @@ export const DocsWorkspace: React.FC = () => {
           docs: docs.map((doc) => ({ title: doc.title, path: doc.path, body: doc.body.slice(0, 4000) })),
           culture: readCulture(),
           ...agentPayload('docsReview'),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
       const json = (await res.json()) as { findings?: ReviewFinding[]; note?: string; error?: string };

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { agentPayload } from '../lib/agent-profile';
 import { readCulture } from '../lib/culture';
 import { checkRunner, startRun, type HarnessInfo } from '../lib/harness-client';
+import { readLocal, writeLocal } from '../lib/local';
 
 interface Improvement {
   id: string;
@@ -86,7 +87,7 @@ export const ImprovementBoard: React.FC = () => {
   useEffect(() => {
     void load();
     try {
-      setDirection(localStorage.getItem(DIRECTION_KEY) ?? '');
+      setDirection(readLocal(DIRECTION_KEY) ?? '');
     } catch {
       /* stockage indisponible */
     }
@@ -101,7 +102,7 @@ export const ImprovementBoard: React.FC = () => {
   const rememberDirection = (text: string) => {
     setDirection(text);
     try {
-      localStorage.setItem(DIRECTION_KEY, text);
+      writeLocal(DIRECTION_KEY, text);
     } catch {
       /* stockage indisponible */
     }
@@ -126,7 +127,7 @@ export const ImprovementBoard: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined,
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined,
           context,
           direction: direction.trim(),
           culture: readCulture(),

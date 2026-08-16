@@ -28,6 +28,7 @@ import type { GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
 import { lifecycleBlock, lifecycleOfVenture } from './lifecycle';
 import type { PhaseId } from './pipeline';
+import { readLocal, writeLocal } from './local';
 
 export type Horizon = 'maintenant' | 'ensuite' | 'plus-tard';
 export type ItemStatus = 'propose' | 'retenu' | 'en-cours' | 'livre' | 'ecarte';
@@ -79,7 +80,7 @@ export const ORIGIN_STYLE: Record<Origin, { label: string; icon: string }> = {
 export function readRoadmap(): RoadmapItem[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -89,7 +90,7 @@ export function readRoadmap(): RoadmapItem[] {
 
 function writeRoadmap(items: RoadmapItem[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(items.slice(0, 400)));
+    writeLocal(STORE_KEY, JSON.stringify(items.slice(0, 400)));
   } catch {
     /* stockage plein */
   }
@@ -150,7 +151,7 @@ export const RITUAL_EVENT = 'omniventure_ritual_updated';
 export function readRitual(): RitualState {
   if (typeof window === 'undefined') return EMPTY_RITUAL;
   try {
-    const raw = localStorage.getItem(RITUAL_KEY);
+    const raw = readLocal(RITUAL_KEY);
     return raw ? { ...EMPTY_RITUAL, ...JSON.parse(raw) } : EMPTY_RITUAL;
   } catch {
     return EMPTY_RITUAL;
@@ -187,7 +188,7 @@ export function ritualHeldFor(ventureName: string, cycle: number): boolean {
 function setRitual(changes: Partial<RitualState>): RitualState {
   const next = { ...readRitual(), ...changes, at: Date.now() };
   try {
-    localStorage.setItem(RITUAL_KEY, JSON.stringify(next));
+    writeLocal(RITUAL_KEY, JSON.stringify(next));
   } catch {
     /* rien */
   }

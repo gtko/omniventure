@@ -13,6 +13,7 @@
 import { saveRealAgentLog } from './agent-bus';
 import { agentPayload } from './agent-profile';
 import { readCulture } from './culture';
+import { readLocal } from './local';
 import {
   knownTeams,
   readCandidates,
@@ -62,7 +63,7 @@ export async function designProfile(request: HiringRequest): Promise<void> {
         teams: knownTeams(graph),
         culture: readCulture(),
         ...agentPayload('recruiting'),
-        openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+        openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
       })
     });
 

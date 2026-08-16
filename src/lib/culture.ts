@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from './local';
 /**
  * Culture d'OmniVenture.
  *
@@ -41,7 +42,7 @@ export const CULTURE_UPDATED_EVENT = 'omniventure_culture_updated';
 
 export function readCulture(): CulturePillar[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readLocal(STORAGE_KEY);
     if (!raw) return DEFAULT_PILLARS;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_PILLARS;
@@ -59,7 +60,7 @@ export function readCulture(): CulturePillar[] {
 
 export function writeCulture(pillars: CulturePillar[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(pillars));
+    writeLocal(STORAGE_KEY, JSON.stringify(pillars));
   } catch {
     return;
   }

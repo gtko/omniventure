@@ -5,6 +5,7 @@ import { apiCallTool, buildAgentTools, fetchTools, type BridgeTool, type ToolPro
 import { readCulture, cultureBlock } from '../lib/culture';
 import { AUTONOMY_LABEL, readAutonomy, writeAutonomy, type Autonomy } from '../lib/harness-client';
 import { readGraph, type GraphAgent } from '../lib/hiring';
+import { readLocal } from '../lib/local';
 
 const CARD = 'rounded-xl border border-slate-200 bg-white shadow-sm';
 
@@ -80,7 +81,7 @@ export const AgentRunConsole: React.FC = () => {
     if (event) event.preventDefault();
     if (!agent || mission.trim().length < 8 || busy) return;
 
-    const key = localStorage.getItem('omniventure_openrouter_key');
+    const key = readLocal('omniventure_openrouter_key');
     if (!key) {
       setError('Clé OpenRouter absente : renseignez-la dans le studio d’agents.');
       return;

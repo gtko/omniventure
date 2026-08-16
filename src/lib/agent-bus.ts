@@ -1,3 +1,4 @@
+import { readLocal, writeLocal, removeLocal } from './local';
 export interface RealAgentActivity {
   id: string;
   timestamp: string;
@@ -16,7 +17,7 @@ const STORAGE_KEY = 'omniventure_real_agent_logs_v1';
 
 export function getRealAgentLogs(): RealAgentActivity[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readLocal(STORAGE_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -34,7 +35,7 @@ export function saveRealAgentLog(activity: Omit<RealAgentActivity, 'id' | 'times
   try {
     const current = getRealAgentLogs();
     const updated = [newEntry, ...current.slice(0, 49)]; // keep 50 latest real events
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    writeLocal(STORAGE_KEY, JSON.stringify(updated));
     
     // Broadcast CustomEvent in window
     if (typeof window !== 'undefined') {
@@ -49,7 +50,7 @@ export function saveRealAgentLog(activity: Omit<RealAgentActivity, 'id' | 'times
 
 export function clearRealAgentLogs(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    removeLocal(STORAGE_KEY);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('omniventure_real_agent_activity_cleared'));
     }

@@ -10,6 +10,7 @@
 import { STATE_STORAGE_KEY, TOPICS_STORAGE_KEY } from './constants';
 import type { OfficeSnapshot } from './simulation';
 import { agentCall } from '../../lib/agent-profile';
+import { readLocal, writeLocal } from '../../lib/local';
 
 export type StateSource = 'd1' | 'kv' | 'local' | 'none';
 
@@ -23,7 +24,7 @@ interface TopicBank {
 
 function readLocalSnapshot(): OfficeSnapshot | null {
   try {
-    const raw = localStorage.getItem(STATE_STORAGE_KEY);
+    const raw = readLocal(STATE_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as OfficeSnapshot) : null;
   } catch {
     return null;
@@ -52,7 +53,7 @@ export async function loadSnapshot(): Promise<{ snapshot: OfficeSnapshot | null;
 
 export async function saveSnapshot(snapshot: OfficeSnapshot, remote: boolean): Promise<StateSource> {
   try {
-    localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(snapshot));
+    writeLocal(STATE_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
     // Quota dépassé : on continue, la base reste la référence.
   }
@@ -81,7 +82,7 @@ export async function saveSnapshot(snapshot: OfficeSnapshot, remote: boolean): P
  */
 export function flushSnapshot(snapshot: OfficeSnapshot): void {
   try {
-    localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(snapshot));
+    writeLocal(STATE_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
     /* quota */
   }
@@ -96,7 +97,7 @@ export function flushSnapshot(snapshot: OfficeSnapshot): void {
 
 function readLocalTopics(): TopicBank | null {
   try {
-    const raw = localStorage.getItem(TOPICS_STORAGE_KEY);
+    const raw = readLocal(TOPICS_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as TopicBank) : null;
   } catch {
     return null;
@@ -105,7 +106,7 @@ function readLocalTopics(): TopicBank | null {
 
 export function cacheTopics(bank: TopicBank): void {
   try {
-    localStorage.setItem(TOPICS_STORAGE_KEY, JSON.stringify(bank));
+    writeLocal(TOPICS_STORAGE_KEY, JSON.stringify(bank));
   } catch {
     /* quota */
   }
@@ -141,7 +142,7 @@ export async function generateTopics(options: {
   count: number;
   context: string;
 }): Promise<GenerateTopicsResult> {
-  const openRouterKey = localStorage.getItem('omniventure_openrouter_key') ?? undefined;
+  const openRouterKey = readLocal('omniventure_openrouter_key') ?? undefined;
   // La banque de sujets est un appel de modèle : elle a donc un agent
   // responsable dans le graphe, dont elle prend modèle, âme et fiche de poste.
   const owner = agentCall('officeTopics');

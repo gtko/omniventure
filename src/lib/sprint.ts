@@ -20,6 +20,7 @@ import { artifactsOf, ARTIFACT_KINDS, type Artifact } from './artifacts';
 import { lifecycleBlock, lifecycleOfVenture } from './lifecycle';
 import { roadmapOf } from './roadmap';
 import { readTasks, updateTask, type Task } from './workspace';
+import { readLocal, writeLocal } from './local';
 
 /** Deux semaines de l'agence. Modifiable à l'ouverture d'un sprint. */
 export const SPRINT_DAYS = 14;
@@ -52,7 +53,7 @@ export const SPRINT_EVENT = 'omniventure_sprints_updated';
 export function readSprints(): Sprint[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -62,7 +63,7 @@ export function readSprints(): Sprint[] {
 
 function writeSprints(sprints: Sprint[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(sprints.slice(0, 200)));
+    writeLocal(STORE_KEY, JSON.stringify(sprints.slice(0, 200)));
   } catch {
     /* stockage plein */
   }

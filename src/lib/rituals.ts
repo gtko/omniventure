@@ -18,6 +18,7 @@ import { agencyNow, WORK_START } from './agency-time';
 import { readAgenda, schedule, type MeetingKind, type MeetingTemplate } from './agenda';
 import { readGraph, type GraphAgent } from './hiring';
 import { currentSprint, demoBrief, planningBrief, retroBrief, sprintTeam, type Sprint } from './sprint';
+import { readLocal, writeLocal } from './local';
 
 export type Cadence = 'quotidien' | 'hebdomadaire' | 'sprint-debut' | 'sprint-fin' | 'manuel';
 
@@ -166,21 +167,21 @@ const SYNC_KEY = 'omniventure_rituals_sync';
 export function readRituals(): RitualDef[] {
   if (typeof window === 'undefined') return DEFAULTS;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const stored = raw ? (JSON.parse(raw) as RitualDef[]) : [];
     if (!Array.isArray(stored) || stored.length === 0) {
       writeRituals(DEFAULTS);
-      localStorage.setItem(SYNC_KEY, SIGNATURE);
+      writeLocal(SYNC_KEY, SIGNATURE);
       return DEFAULTS;
     }
 
     // Un rituel ajouté par une nouvelle version apparaît une fois ; un rituel
     // que vous avez supprimé reste supprimé.
-    if (localStorage.getItem(SYNC_KEY) !== SIGNATURE) {
+    if (readLocal(SYNC_KEY) !== SIGNATURE) {
       const known = new Set(stored.map((ritual) => ritual.id));
       const merged = [...stored, ...DEFAULTS.filter((ritual) => !known.has(ritual.id))];
       writeRituals(merged);
-      localStorage.setItem(SYNC_KEY, SIGNATURE);
+      writeLocal(SYNC_KEY, SIGNATURE);
       return merged;
     }
     return stored;
@@ -191,7 +192,7 @@ export function readRituals(): RitualDef[] {
 
 export function writeRituals(rituals: RitualDef[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(rituals));
+    writeLocal(STORE_KEY, JSON.stringify(rituals));
   } catch {
     /* stockage plein */
   }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { readLedger, LEDGER_EVENT } from '../lib/agent-ledger';
-import { readLocal, writeLocal } from '../lib/local';
+import { hydrate, readLocal, refresh as refreshState, STATE_HYDRATED_EVENT, writeLocal } from '../lib/local';
 import { getStoredVentures, getActiveProjectId } from '../lib/store';
 import type { Venture } from '../types';
 import { ProjectPilot } from './ProjectPilot';
@@ -165,6 +165,16 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
   }, []);
 
   useEffect(() => {
+    /*
+     * L'état vient de la base. La barre est montée sur toutes les pages : c'est
+     * l'endroit naturel pour l'aller chercher une fois, puis pour rapatrier ce
+     * que le serveur écrit de son côté — un chantier qui livre, un agent qui
+     * crée une tâche — sans attendre un rechargement.
+     */
+    void hydrate();
+    const syncTimer = window.setInterval(() => void refreshState(), 20000);
+    window.addEventListener(STATE_HYDRATED_EVENT, loadData);
+
     loadData();
     loadLocal();
     setCollapsed(readCollapsed());
@@ -198,8 +208,10 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
       window.removeEventListener('ventures-updated', onVentures);
       window.removeEventListener('active-project-changed', onActive);
       window.removeEventListener(LEDGER_EVENT, loadLocal);
+      window.removeEventListener(STATE_HYDRATED_EVENT, loadData);
       window.clearInterval(usageInterval);
       window.clearInterval(localInterval);
+      window.clearInterval(syncTimer);
     };
   }, [loadData, loadLocal]);
 

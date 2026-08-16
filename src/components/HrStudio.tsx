@@ -18,6 +18,7 @@ import {
 } from '../lib/hiring';
 import { designProfile, resumePendingDesigns } from '../lib/recruiting';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
+import { readLocal } from '../lib/local';
 
 interface Candidate {
   role: string;
@@ -93,7 +94,7 @@ export const HrStudio: React.FC = () => {
     // Catalogue de modèles, pour pouvoir changer celui de la recrue avant de signer.
     void (async () => {
       try {
-        const key = localStorage.getItem('omniventure_openrouter_key');
+        const key = readLocal('omniventure_openrouter_key');
         if (!key) return;
         const res = await fetch('https://openrouter.ai/api/v1/models', {
           headers: { Authorization: `Bearer ${key}` }

@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from './local';
 /**
  * Ce que l'agence produit vraiment.
  *
@@ -127,7 +128,7 @@ const MAX_ENTRIES = 800;
 export function readArtifacts(): Artifact[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -142,7 +143,7 @@ export function addArtifact(artifact: Omit<Artifact, 'id' | 'at'>): Artifact {
     at: Date.now()
   };
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify([entry, ...readArtifacts()].slice(0, MAX_ENTRIES)));
+    writeLocal(STORE_KEY, JSON.stringify([entry, ...readArtifacts()].slice(0, MAX_ENTRIES)));
   } catch {
     /* stockage plein : on perd la référence, pas le livrable */
   }

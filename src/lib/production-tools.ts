@@ -19,6 +19,7 @@ import { pushActivity } from './agent-activity';
 import { readCulture } from './culture';
 import { getRunnerToken, RUNNER_URL } from './harness-client';
 import { readDesignSystem, upsertDoc, writeDesignSystem } from './workspace';
+import { readLocal } from './local';
 
 export interface ProductionContext {
   agent: { id: string; name: string };
@@ -79,7 +80,7 @@ function visualTool(context: ProductionContext): AgentTool {
           body: JSON.stringify({
             prompt: String(args.brief ?? ''),
             // Le modele choisi dans l'atelier graphique, s'il y en a un.
-            model: localStorage.getItem('omniventure_image_model') || undefined,
+            model: readLocal('omniventure_image_model') || undefined,
             kind: String(args.kind ?? 'illustration'),
             count: Math.max(1, Math.min(3, Number(args.count) || 1)),
             palette: Array.isArray(args.palette) ? args.palette : [],
@@ -87,7 +88,7 @@ function visualTool(context: ProductionContext): AgentTool {
             agentId: context.agent.id,
             agentName: context.agent.name,
             culture: readCulture(),
-            openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+            openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
           }),
           signal: ctx.signal
         });
@@ -150,7 +151,7 @@ function designSystemTool(context: ProductionContext): AgentTool {
             agentId: context.agent.id,
             agentName: context.agent.name,
             culture: readCulture(),
-            openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+            openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
           }),
           signal: ctx.signal
         });

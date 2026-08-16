@@ -14,6 +14,7 @@
 
 import { forgetVersions, snapshot } from './doc-versions';
 import type { PhaseId } from './pipeline';
+import { readLocal, writeLocal } from './local';
 
 const KEYS = {
   tasks: 'omniventure_tasks_v1',
@@ -126,7 +127,7 @@ export interface DesignSystem {
 
 function read<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = readLocal(key);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
     return parsed ?? fallback;
@@ -137,7 +138,7 @@ function read<T>(key: string, fallback: T): T {
 
 function write(key: string, value: unknown): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    writeLocal(key, JSON.stringify(value));
   } catch {
     return;
   }

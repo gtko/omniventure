@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { saveRealAgentLog } from '../../lib/agent-bus';
 import { readCulture } from '../../lib/culture';
 import { readGraph } from '../../lib/hiring';
+import { readLocal } from '../../lib/local';
 import {
   readDesignSystem,
   tokensToCss,
@@ -82,7 +83,7 @@ export const DesignSystemStudio: React.FC<{
           model: designer?.modelId,
           temperature: designer?.temperature,
           culture: readCulture(),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined
         })
       });
 

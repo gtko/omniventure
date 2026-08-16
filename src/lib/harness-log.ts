@@ -1,3 +1,4 @@
+import { readLocal, writeLocal, removeLocal } from './local';
 /**
  * Journal des exécutions de harnais, côté navigateur.
  *
@@ -48,7 +49,7 @@ function load(): void {
   if (loaded) return;
   loaded = true;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readLocal(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) runs = parsed as HarnessRunLog[];
@@ -64,12 +65,12 @@ function scheduleFlush(): void {
   flushTimer = window.setTimeout(() => {
     flushTimer = null;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(runs.slice(0, MAX_RUNS)));
+      writeLocal(STORAGE_KEY, JSON.stringify(runs.slice(0, MAX_RUNS)));
     } catch {
       // Stockage plein : on sacrifie les runs les plus anciens.
       runs = runs.slice(0, 5);
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+        writeLocal(STORAGE_KEY, JSON.stringify(runs));
       } catch {
         /* tant pis, le journal reste en mémoire */
       }
@@ -105,7 +106,7 @@ export function onRunLogChange(listener: (runId: string) => void): () => void {
 export function clearRunLogs(): void {
   runs = [];
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    removeLocal(STORAGE_KEY);
   } catch {
     /* stockage indisponible */
   }

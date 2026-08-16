@@ -23,6 +23,7 @@ import { cultureBlock, readCulture } from './culture';
 import { getRunnerToken, RUNNER_URL } from './harness-client';
 import { readGraph, type GraphAgent } from './hiring';
 import { readTasks, upsertDoc, type Task } from './workspace';
+import { readLocal, writeLocal } from './local';
 
 export interface Commit {
   hash: string;
@@ -62,7 +63,7 @@ export const RELEASES_EVENT = 'omniventure_releases_updated';
 export function readReleases(): Release[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -72,7 +73,7 @@ export function readReleases(): Release[] {
 
 function writeReleases(releases: Release[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(releases.slice(0, 200)));
+    writeLocal(STORE_KEY, JSON.stringify(releases.slice(0, 200)));
   } catch {
     /* stockage plein */
   }

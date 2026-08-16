@@ -8,6 +8,7 @@
  */
 
 import registry from './harnesses.json';
+import { readLocal, writeLocal, removeLocal } from './local';
 
 export interface HarnessInfo {
   id: string;
@@ -44,7 +45,7 @@ const TOKEN_KEY = 'omniventure_runner_token';
 
 export function getRunnerToken(): string {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? '';
+    return readLocal(TOKEN_KEY) ?? '';
   } catch {
     return '';
   }
@@ -52,8 +53,8 @@ export function getRunnerToken(): string {
 
 export function setRunnerToken(token: string): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (token) writeLocal(TOKEN_KEY, token);
+    else removeLocal(TOKEN_KEY);
   } catch {
     /* stockage indisponible */
   }
@@ -188,13 +189,13 @@ const AUTONOMY_KEY = 'omniventure_autonomy';
 
 export function readAutonomy(fallback: Autonomy = 'full'): Autonomy {
   if (typeof window === 'undefined') return fallback;
-  const stored = localStorage.getItem(AUTONOMY_KEY);
+  const stored = readLocal(AUTONOMY_KEY);
   return stored === 'read' || stored === 'write' || stored === 'full' ? stored : fallback;
 }
 
 export function writeAutonomy(level: Autonomy): void {
   try {
-    localStorage.setItem(AUTONOMY_KEY, level);
+    writeLocal(AUTONOMY_KEY, level);
   } catch {
     /* stockage refusé : le choix vaut pour cette session */
   }

@@ -23,6 +23,7 @@ import { readGraph, type GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
 import { commit, sprintById, updateSprint, type Sprint } from './sprint';
 import { addTask, readTasks, updateTask, upsertDoc } from './workspace';
+import { readLocal, writeLocal } from './local';
 
 export type MeetingKind = 'rituel' | 'un-a-un' | 'revue' | 'atelier' | 'incident' | 'comite';
 
@@ -93,7 +94,7 @@ export const AGENDA_EVENT = 'omniventure_agenda_updated';
 export function readAgenda(): Meeting[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = readLocal(STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -103,7 +104,7 @@ export function readAgenda(): Meeting[] {
 
 function writeAgenda(meetings: Meeting[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(meetings.slice(0, 300)));
+    writeLocal(STORE_KEY, JSON.stringify(meetings.slice(0, 300)));
   } catch {
     /* stockage plein */
   }
@@ -226,7 +227,7 @@ export function hold(meetingId: string): void {
   const meeting = readAgenda().find((entry) => entry.id === meetingId);
   if (!meeting || meeting.status === 'termine') return;
 
-  const key = localStorage.getItem('omniventure_openrouter_key');
+  const key = readLocal('omniventure_openrouter_key');
   if (!key) {
     updateMeeting(meetingId, { report: 'Clé OpenRouter absente : la réunion ne peut pas se tenir.' });
     return;
@@ -773,7 +774,7 @@ export const ACCESS_EVENT = 'omniventure_access_updated';
 export function readAccessRequests(): AccessRequest[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(ACCESS_KEY);
+    const raw = readLocal(ACCESS_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -783,7 +784,7 @@ export function readAccessRequests(): AccessRequest[] {
 
 function writeAccess(list: AccessRequest[]): void {
   try {
-    localStorage.setItem(ACCESS_KEY, JSON.stringify(list.slice(0, 120)));
+    writeLocal(ACCESS_KEY, JSON.stringify(list.slice(0, 120)));
   } catch {
     /* stockage plein */
   }

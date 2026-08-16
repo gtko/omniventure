@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from './local';
 /**
  * Le temps de l'agence.
  *
@@ -39,10 +40,10 @@ export interface AgencyTime {
 function epoch(): number {
   if (typeof window === 'undefined') return Date.now();
   try {
-    const stored = localStorage.getItem(EPOCH_KEY);
+    const stored = readLocal(EPOCH_KEY);
     if (stored) return Number(stored);
     const now = Date.now();
-    localStorage.setItem(EPOCH_KEY, String(now));
+    writeLocal(EPOCH_KEY, String(now));
     return now;
   } catch {
     return Date.now();

@@ -20,6 +20,7 @@ import { resetLifecycle } from './lifecycle';
 import { readRoadmap, type RoadmapItem } from './roadmap';
 import { readSprints, type Sprint } from './sprint';
 import { readDocs, readTasks, writeDocs, writeTasks, type Doc, type Task } from './workspace';
+import { readLocal, writeLocal, removeLocal } from './local';
 
 export interface ResetOptions {
   /** Garder le dossier de lancement : c'est l'instruction d'origine. */
@@ -99,8 +100,8 @@ export function resetVenture(
   // L'état du chantier n'est effacé que s'il porte sur ce produit : un autre
   // projet peut très bien être en cours.
   try {
-    const raw = localStorage.getItem('omniventure_worksite_v2');
-    if (raw && (JSON.parse(raw) as any)?.ventureId === id) localStorage.removeItem('omniventure_worksite_v2');
+    const raw = readLocal('omniventure_worksite_v2');
+    if (raw && (JSON.parse(raw) as any)?.ventureId === id) removeLocal('omniventure_worksite_v2');
   } catch {
     /* état illisible : il sera régénéré */
   }
@@ -110,10 +111,10 @@ export function resetVenture(
   // Les rituels reprennent leur cadence à zéro, sinon leur repère « déjà
   // programmé ce jour-là » empêcherait le prochain sprint de poser les siens.
   try {
-    const raw = localStorage.getItem('omniventure_rituals_v1');
+    const raw = readLocal('omniventure_rituals_v1');
     if (raw) {
       const rituals = JSON.parse(raw) as any[];
-      localStorage.setItem(
+      writeLocal(
         'omniventure_rituals_v1',
         JSON.stringify(rituals.map((ritual) => ({ ...ritual, lastDay: undefined })))
       );
@@ -142,11 +143,11 @@ export function resetVenture(
 /** Filtre une liste stockée, en laissant le reste intact. */
 function drop(key: string, keep: (entry: any) => boolean): void {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = readLocal(key);
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return;
-    localStorage.setItem(key, JSON.stringify(parsed.filter(keep)));
+    writeLocal(key, JSON.stringify(parsed.filter(keep)));
   } catch {
     /* entrée illisible : on n'y touche pas */
   }

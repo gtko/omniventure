@@ -3,6 +3,7 @@ import { getStoredVentures, saveStoredVentures, setActiveProjectId } from '../li
 import { saveRealAgentLog } from '../lib/agent-bus';
 import { readGraph } from '../lib/hiring';
 import type { Venture } from '../types';
+import { readLocal } from '../lib/local';
 
 /* ------------------------------------------------------------------ */
 /* Forme du rapport                                                    */
@@ -201,7 +202,7 @@ export const MarketRadarStudio: React.FC = () => {
 
   useEffect(() => {
     try {
-      const key = localStorage.getItem('omniventure_openrouter_key');
+      const key = readLocal('omniventure_openrouter_key');
       if (key) setOpenRouterKey(key);
 
       // Le graphe courant fait foi : c'est lui qui porte modèle, âme et poste.

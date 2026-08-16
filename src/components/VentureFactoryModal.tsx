@@ -5,6 +5,7 @@ import { addRequest, readGraph } from '../lib/hiring';
 import { addTask, postMessage, upsertDoc } from '../lib/workspace';
 import type { Venture } from '../types';
 import { Portal } from './Portal';
+import { readLocal } from '../lib/local';
 
 interface Props {
   isOpen: boolean;
@@ -212,7 +213,7 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idea: idea.trim(),
-          openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined,
+          openRouterKey: readLocal('omniventure_openrouter_key') ?? undefined,
           culture: readCulture(),
           graph: graph.map((agent) => ({
             id: agent.id,

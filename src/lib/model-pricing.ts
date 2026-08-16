@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from './local';
 /**
  * Ce que coûte réellement un appel.
  *
@@ -47,7 +48,7 @@ let loading: Promise<Record<string, ModelPrice>> | null = null;
 
 function readCache(): Record<string, ModelPrice> | null {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = readLocal(CACHE_KEY);
     if (!raw) return null;
     const cache = JSON.parse(raw) as PriceCache;
     if (!cache?.prices || Date.now() - cache.at > TTL_MS) return null;
@@ -73,7 +74,7 @@ export async function loadPrices(): Promise<Record<string, ModelPrice>> {
 
   loading = (async () => {
     try {
-      const key = localStorage.getItem('omniventure_openrouter_key') ?? '';
+      const key = readLocal('omniventure_openrouter_key') ?? '';
       const res = await fetch('https://openrouter.ai/api/v1/models', {
         headers: key ? { Authorization: `Bearer ${key}` } : {}
       });
@@ -88,7 +89,7 @@ export async function loadPrices(): Promise<Record<string, ModelPrice>> {
         prices[String(model.id)] = { prompt, completion };
       }
 
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), prices } satisfies PriceCache));
+      writeLocal(CACHE_KEY, JSON.stringify({ at: Date.now(), prices } satisfies PriceCache));
       memory = { ...FALLBACK, ...prices };
     } catch {
       // Catalogue injoignable : on travaille avec ce qu'on sait.
