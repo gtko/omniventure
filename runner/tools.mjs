@@ -53,11 +53,29 @@ const clip = (text, max = MAX_OUTPUT) =>
 /* Exécution de commandes                                              */
 /* ------------------------------------------------------------------ */
 
-function run(bin, args, { cwd, timeout = 120_000, input }) {
+/**
+ * Citation d'un argument pour cmd.exe (règles argv de MSVCRT).
+ * Exportée : le pont s'en sert aussi pour lancer les harnais.
+ */
+export function quoteWindowsArg(arg) {
+  const value = Array.from(String(arg), (ch) => (ch < ' ' ? ' ' : ch)).join('');
+  const escaped = value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+  return `"${escaped}"`;
+}
+
+/** Un chemin complet (Chrome, par exemple) ne doit jamais passer par le shell. */
+const isPath = (bin) => /[\\/]/.test(bin) || /\.(exe|app)$/i.test(bin);
+
+function run(bin, args, { cwd, timeout = 120_000, input, maxOutput = MAX_OUTPUT }) {
   return new Promise((done) => {
-    const child = spawn(bin, args, {
+    // Chemin complet : exécution directe, les espaces ne posent alors aucun
+    // problème. Nom nu sous Windows : shell obligatoire (shims .cmd), donc
+    // arguments cités nous-mêmes.
+    const useShell = IS_WINDOWS && !isPath(bin);
+    const command = useShell ? [bin, ...args.map(quoteWindowsArg)].join(' ') : bin;
+    const child = spawn(command, useShell ? undefined : args, {
       cwd,
-      shell: IS_WINDOWS, // les CLI npm sont des shims .cmd
+      shell: useShell,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env
@@ -67,7 +85,7 @@ function run(bin, args, { cwd, timeout = 120_000, input }) {
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill();
-      done({ ok: false, code: -1, stdout: clip(stdout), stderr: `Délai dépassé (${timeout} ms)` });
+      done({ ok: false, code: -1, stdout: clip(stdout, maxOutput), stderr: `Délai dépassé (${timeout} ms)` });
     }, timeout);
 
     child.stdout?.on('data', (chunk) => (stdout += chunk));
@@ -78,7 +96,7 @@ function run(bin, args, { cwd, timeout = 120_000, input }) {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      done({ ok: code === 0, code, stdout: clip(stdout), stderr: clip(stderr) });
+      done({ ok: code === 0, code, stdout: clip(stdout, maxOutput), stderr: clip(stderr) });
     });
     if (input) child.stdin?.end(input);
   });
@@ -107,8 +125,18 @@ function findChrome() {
   return CHROME_CANDIDATES.find((path) => existsSync(path)) ?? null;
 }
 
-const stripHtml = (html) =>
-  html
+/**
+ * Texte lisible d'une page.
+ *
+ * On isole d'abord le corps : la feuille de style d'une application moderne
+ * pèse des dizaines de milliers de caractères, et elle n'apprend rien à un
+ * agent qui cherche à lire un contenu.
+ */
+const stripHtml = (html) => {
+  const start = html.search(/<body[^>]*>/i);
+  const end = html.toLowerCase().lastIndexOf('</body>');
+  const body = start >= 0 ? html.slice(html.indexOf('>', start) + 1, end > start ? end : undefined) : html;
+  return body
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -116,6 +144,7 @@ const stripHtml = (html) =>
     .replace(/&amp;/gi, '&')
     .replace(/\s+/g, ' ')
     .trim();
+};
 
 /* ------------------------------------------------------------------ */
 /* Catalogue                                                           */
@@ -319,7 +348,9 @@ export function buildTools(projectRoot) {
         const result = await run(
           chrome,
           ['--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=8000', '--dump-dom', String(url)],
-          { cwd: root, timeout: 60_000 }
+          // Sans cette limite relevée, le document serait coupé dans sa tête et
+          // le corps n'atteindrait jamais le filtre.
+          { cwd: root, timeout: 60_000, maxOutput: 4_000_000 }
         );
         if (!result.stdout) throw new Error(result.stderr || 'Page vide');
         const text = stripHtml(result.stdout);

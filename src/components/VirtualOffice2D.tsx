@@ -8,6 +8,7 @@ import {
   type HarnessLineDetail,
   type HarnessStartDetail
 } from '../lib/harness-client';
+import { AGENT_ACTIVITY_EVENT, type AgentActivity } from '../lib/agent-activity';
 import { GRAPH_UPDATED_EVENT } from '../lib/hiring';
 import { harnessProfile, loadGraphProfiles } from './office/agents';
 import { drawHarnessBadge, harnessBrand } from './office/harnessMarks';
@@ -161,6 +162,9 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   const [zoomLabel, setZoomLabel] = useState(1);
   const [uiVisible, setUiVisible] = useState(true);
   const [feedOpen, setFeedOpen] = useState(true);
+  /** Liste de l'équipe : ouvrir une fiche sans avoir à chercher le personnage. */
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [rosterFilter, setRosterFilter] = useState('');
 
 
   const [headcount, setHeadcount] = useState(0);
@@ -419,6 +423,21 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       window.removeEventListener('omniventure_real_agent_activity_cleared', onCleared);
     };
   }, [notify]);
+
+  /* ── Outils : ce que fait un agent se voit au-dessus de sa tête ── */
+  useEffect(() => {
+    const onActivity = (event: Event) => {
+      const activity = (event as CustomEvent<AgentActivity | null>).detail;
+      const sim = simRef.current;
+      if (!activity || !sim) return;
+
+      // La bulle dit ce qu'il fait ; l'échec le dit aussi, plus longtemps.
+      sim.speak(activity.agentId, activity.label, activity.status === 'error' ? 20 : 12);
+    };
+
+    window.addEventListener(AGENT_ACTIVITY_EVENT, onActivity);
+    return () => window.removeEventListener(AGENT_ACTIVITY_EVENT, onActivity);
+  }, []);
 
   /* ── Recrutement : une embauche fait arriver quelqu'un au bureau ── */
   useEffect(() => {
@@ -1066,6 +1085,14 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
               </button>
               <button
                 type="button"
+                onClick={() => setRosterOpen((value) => !value)}
+                className={`${CHIP} ${rosterOpen ? 'bg-white/20' : ''}`}
+                title="Ouvrir la fiche d'un agent sans le chercher sur la carte"
+              >
+                👥 Équipe
+              </button>
+              <button
+                type="button"
                 onClick={toggleEdit}
                 title="Aménager le bureau : mobilier, postes, murs, sols"
                 className={`${CHIP} ${editMode ? 'border-indigo-400/40 bg-indigo-500/25 text-indigo-100' : ''}`}
@@ -1090,6 +1117,47 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
               </button>
             )}
           </div>
+
+          {/* Équipe : accès direct à la fiche de chacun */}
+          {rosterOpen && (
+            <div className={`pointer-events-auto absolute left-3 top-24 w-[min(92vw,300px)] ${GLASS}`}>
+              <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+                <span className="text-[11px] font-semibold text-slate-200">👥 Équipe</span>
+                <span className="font-mono text-[10px] text-slate-400">{hud.roster.length}</span>
+                <input
+                  value={rosterFilter}
+                  onChange={(event) => setRosterFilter(event.target.value)}
+                  placeholder="filtrer…"
+                  className="ml-auto w-24 rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-100 placeholder:text-slate-500 focus:outline-none"
+                />
+              </div>
+              <div className="max-h-80 overflow-y-auto p-1">
+                {hud.roster
+                  .filter(
+                    (entry) =>
+                      !rosterFilter ||
+                      `${entry.short} ${entry.role}`.toLowerCase().includes(rosterFilter.toLowerCase())
+                  )
+                  .map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => focusAgent(entry.id)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                        selectedId === entry.id ? 'bg-white/15' : 'hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="text-sm">{entry.emoji}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-semibold text-slate-100">{entry.short}</span>
+                        <span className="block truncate text-[9.5px] text-slate-400">{entry.role}</span>
+                      </span>
+                      {entry.bubble && <span className="shrink-0 text-[10px]">💬</span>}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {/* Journal de vie */}
           <div className={`pointer-events-auto absolute bottom-3 left-3 w-[min(92vw,360px)] ${GLASS}`}>

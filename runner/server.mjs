@@ -15,7 +15,9 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, resolve, sep } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { dirname, extname, resolve, sep } from 'node:path';
+import { buildTools, describeTools, quoteWindowsArg, toolsForLevel } from './tools.mjs';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -26,21 +28,6 @@ const PROJECT_ROOT = resolve(HERE, '..');
 const IS_WINDOWS = process.platform === 'win32';
 const MAX_BUFFER_LINES = 4000;
 
-/**
- * Sous Windows, les CLI installées via npm sont des shims `.cmd` : Node refuse
- * de les lancer sans shell. On passe donc par cmd.exe, mais en citant nous-mêmes
- * chaque argument (règles argv de MSVCRT) au lieu de laisser Node concaténer —
- * sinon un prompt contenant un guillemet ou un `&` casserait la commande.
- */
-function quoteWindowsArg(arg) {
-  // Les caracteres de controle casseraient la ligne de commande : on les
-  // neutralise avant toute citation.
-  const value = Array.from(String(arg), (ch) => (ch < ' ' ? ' ' : ch)).join('');
-  // Regles argv de MSVCRT : les antislashs qui precedent un guillemet doublent.
-  const escaped = value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
-  return `"${escaped}"`;
-}
-
 function spawnHarness(bin, args, options = {}) {
   // stdin fermé d'emblée : sans ça la CLI croit qu'on va lui envoyer quelque
   // chose et attend quelques secondes (« no stdin data received in 3s »).
@@ -49,6 +36,9 @@ function spawnHarness(bin, args, options = {}) {
   const line = [bin, ...args.map(quoteWindowsArg)].join(' ');
   return spawn(line, { ...base, shell: true });
 }
+
+/** Boîte à outils des agents, construite une fois pour ce projet. */
+const TOOLS = buildTools(PROJECT_ROOT);
 
 /** Les processus en cours, indexés par identifiant de run. */
 const runs = new Map();
@@ -274,6 +264,62 @@ const server = createServer(async (req, res) => {
         cwd: run.cwd,
         autonomy: run.autonomy
       });
+    }
+
+    /* ── Boîte à outils des agents ────────────────────────── */
+
+    // Catalogue : schémas seuls, filtrés par niveau d'autonomie.
+    if (req.method === 'GET' && url.pathname === '/tools') {
+      const autonomy = url.searchParams.get('autonomy') ?? 'read';
+      return sendJson(res, 200, {
+        projectRoot: PROJECT_ROOT,
+        autonomy,
+        tools: describeTools(toolsForLevel(TOOLS, autonomy))
+      });
+    }
+
+    // Exécution d'un outil. Le niveau demandé est vérifié ici, pas côté client.
+    if (req.method === 'POST' && url.pathname === '/tools/call') {
+      const body = await readBody(req);
+      const autonomy = body.autonomy ?? 'read';
+      const allowed = toolsForLevel(TOOLS, autonomy);
+      const tool = allowed.find((entry) => entry.name === body.tool);
+      if (!tool) {
+        const known = TOOLS.find((entry) => entry.name === body.tool);
+        return sendJson(res, 403, {
+          error: known
+            ? `L'outil « ${body.tool} » exige le niveau « ${known.level} », la demande est en « ${autonomy} ».`
+            : `Outil inconnu : ${body.tool}`
+        });
+      }
+      const started = Date.now();
+      try {
+        const result = await tool.run(body.args ?? {}, { autonomy, projectRoot: PROJECT_ROOT });
+        console.log(`🔧 ${tool.name} (${autonomy}) — ${Date.now() - started} ms`);
+        return sendJson(res, 200, { tool: tool.name, ms: Date.now() - started, result });
+      } catch (error) {
+        return sendJson(res, 200, {
+          tool: tool.name,
+          ms: Date.now() - started,
+          error: error instanceof Error ? error.message : 'Échec de l’outil'
+        });
+      }
+    }
+
+    // Sert un fichier du projet — les captures d'écran doivent être visibles
+    // dans l'interface, et le navigateur ne peut pas lire le disque.
+    if (req.method === 'GET' && url.pathname === '/tools/file') {
+      const requested = url.searchParams.get('path') ?? '';
+      const target = resolve(PROJECT_ROOT, requested);
+      if (target !== PROJECT_ROOT && !target.startsWith(PROJECT_ROOT + sep)) {
+        return sendJson(res, 403, { error: 'Chemin hors du projet' });
+      }
+      const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+      res.writeHead(200, {
+        'Content-Type': types[extname(target).toLowerCase()] ?? 'application/octet-stream',
+        'Cache-Control': 'no-store'
+      });
+      return createReadStream(target).pipe(res);
     }
 
     // Runs connus du pont : permet au bureau de se raccrocher aux exécutions

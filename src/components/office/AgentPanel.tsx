@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AGENT_ACTIVITY_EVENT, lastScreen, readActivities, type AgentActivity } from '../../lib/agent-activity';
 import { getRunLog, onRunLogChange, type HarnessRunLog } from '../../lib/harness-log';
 
 /** Vue « temps réel » d'un agent, recalculée par le composant parent. */
@@ -80,7 +81,9 @@ interface StoredAgent {
 function readStoredAgent(id: string): StoredAgent | null {
   try {
     const raw =
-      localStorage.getItem('omniventure_custom_agents_v4') ?? localStorage.getItem('omniventure_custom_agents_v3');
+      localStorage.getItem('omniventure_custom_agents_v5') ??
+      localStorage.getItem('omniventure_custom_agents_v4') ??
+      localStorage.getItem('omniventure_custom_agents_v3');
     if (!raw) return null;
     const list = JSON.parse(raw) as StoredAgent[];
     return Array.isArray(list) ? list.find((entry) => entry.id === id) ?? null : null;
@@ -108,6 +111,19 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
    */
   const runId = agent.id.startsWith('harness:') ? agent.id.slice('harness:'.length) : null;
   const [runLog, setRunLog] = useState<HarnessRunLog | null>(null);
+  /** Ce que l'agent fait avec ses outils, et l'écran qu'il regarde. */
+  const [activities, setActivities] = useState<AgentActivity[]>([]);
+  const [screen, setScreen] = useState<AgentActivity | null>(null);
+
+  useEffect(() => {
+    const sync = () => {
+      setActivities(readActivities(agent.id, 12));
+      setScreen(lastScreen(agent.id));
+    };
+    sync();
+    window.addEventListener(AGENT_ACTIVITY_EVENT, sync);
+    return () => window.removeEventListener(AGENT_ACTIVITY_EVENT, sync);
+  }, [agent.id]);
 
   useEffect(() => {
     if (!runId) {
@@ -273,6 +289,55 @@ export const AgentPanel: React.FC<Props> = ({ agent, onClose, onFollow, onSpeak 
             <p className="text-[10px] uppercase tracking-wide text-slate-400">Dernière bulle</p>
             <p className="mt-1 text-slate-200">{agent.bubble ?? '—'}</p>
           </div>
+
+          {/* Son écran : ce que l'agent a réellement sous les yeux. */}
+          {screen?.screenUrl && (
+            <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
+              <div className="flex items-center justify-between px-3 py-1.5 text-[10px] text-slate-400">
+                <span className="uppercase tracking-wide">Son écran</span>
+                <span className="font-mono">{new Date(screen.at).toLocaleTimeString('fr-FR')}</span>
+              </div>
+              <a href={screen.screenUrl} target="_blank" rel="noreferrer">
+                <img
+                  src={screen.screenUrl}
+                  alt={screen.detail}
+                  className="w-full border-t border-white/10 object-cover"
+                />
+              </a>
+              <p className="px-3 py-1.5 text-[10px] text-slate-400">{screen.label}</p>
+            </div>
+          )}
+
+          {/* Trace des outils : ce qu'il fait, dans l'ordre. */}
+          {activities.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">Outils utilisés</p>
+              <ul className="mt-1.5 space-y-1">
+                {[...activities].reverse().map((activity) => (
+                  <li key={activity.id} className="flex items-baseline gap-2 text-[11px]">
+                    <span
+                      className={
+                        activity.status === 'error'
+                          ? 'text-amber-300'
+                          : activity.status === 'running'
+                            ? 'animate-pulse text-indigo-300'
+                            : 'text-emerald-300'
+                      }
+                    >
+                      {activity.status === 'error' ? '⚠' : activity.status === 'running' ? '●' : '✓'}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-slate-200">{activity.label}</span>
+                      <span className="block truncate font-mono text-[9.5px] text-slate-500">{activity.detail}</span>
+                    </span>
+                    {activity.ms != null && (
+                      <span className="font-mono text-[9px] text-slate-500">{activity.ms} ms</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {stored?.description && (
             <div className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
