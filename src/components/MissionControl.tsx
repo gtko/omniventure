@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getStoredVentures, saveStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
 import type { Venture, AgentTask } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
+import { WorksitePanel } from './WorksitePanel';
 
 export const MissionControl: React.FC = () => {
   const [ventures, setVentures] = useState<Venture[]>([]);
@@ -158,6 +159,11 @@ export const MissionControl: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Ce qui fait avancer le projet : sans ça, le dossier reste lettre morte */}
+      <WorksitePanel
+        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
+      />
 
       {/* Project Configuration Form & Telemetry */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
