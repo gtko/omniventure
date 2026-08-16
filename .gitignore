@@ -30,3 +30,6 @@ Thumbs.db
 
 # Espace de travail des agents (captures, fichiers temporaires)
 .omniventure/
+
+# Le code des produits vit dans son propre depot, hors de l usine.
+ventures/
