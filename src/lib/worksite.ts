@@ -55,6 +55,35 @@ const BREATH_MS = 2500;
 /** Borne d'un passage : au-delà, on rend la main plutôt que de courir seul. */
 const MAX_TASKS_PER_RUN = 40;
 
+/**
+ * Combien d'agents peuvent travailler en même temps.
+ *
+ * Au-delà, on ne gagne plus grand-chose : la dépense monte au même rythme que
+ * le nombre de voies, et les refus pour cadence dépassée arrivent.
+ */
+export const MAX_LANES = 5;
+export const DEFAULT_LANES = 3;
+/**
+ * Décalage au démarrage des voies.
+ *
+ * Quatre agents qui partent à la même milliseconde forment une seule bouffée
+ * de bulles illisible sur le plateau, et frappent l'API en même temps.
+ */
+const LANE_STAGGER_MS = 700;
+
+/** Une voie occupée : un agent, une tâche, ce qu'il est en train de faire. */
+export interface Worker {
+  taskId: string;
+  title: string;
+  agentId: string;
+  agentName: string;
+  phase: PhaseId;
+  /** Ce que fait cet agent-là, à ne pas confondre avec l'état de la chaîne. */
+  step: string;
+  attempt: number;
+  startedAt: number;
+}
+
 export interface WorksiteState {
   ventureId: string | null;
   ventureName: string;
@@ -67,12 +96,18 @@ export interface WorksiteState {
   cycle: number;
   /** Nombre de traversées demandées avant de rendre la main. */
   cycles: number;
-  /** Ce qui se passe maintenant. */
-  currentTaskId: string | null;
-  currentTitle: string;
-  currentAgent: string;
+  /** Voies demandées : combien d'agents travaillent de front. */
+  lanes: number;
+  /**
+   * Ce qui tourne en ce moment, une entrée par voie occupée.
+   *
+   * La chaîne n'avait qu'une tâche courante parce qu'elle n'en menait qu'une.
+   * Avec plusieurs voies, un champ unique ne dirait plus que la dernière à
+   * avoir parlé.
+   */
+  workers: Worker[];
+  /** Ce que fait la chaîne dans son ensemble — pas un agent en particulier. */
   currentStep: string;
-  attempt: number;
   done: number;
   failed: number;
   startedAt: number | null;
@@ -90,11 +125,9 @@ const EMPTY: WorksiteState = {
   phase: 'vision',
   cycle: 1,
   cycles: 1,
-  currentTaskId: null,
-  currentTitle: '',
-  currentAgent: '',
+  lanes: DEFAULT_LANES,
+  workers: [],
   currentStep: '',
-  attempt: 0,
   done: 0,
   failed: 0,
   startedAt: null,
@@ -205,9 +238,99 @@ export function isWorksiteRunning(): boolean {
   return loop !== null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Les voies                                                           */
+/*                                                                     */
+/* Toutes ces fonctions sont synchrones de bout en bout. C'est ce qui   */
+/* les rend sûres : en JavaScript, rien ne s'intercale entre la lecture */
+/* et l'écriture tant qu'aucun `await` ne les sépare — deux voies ne    */
+/* peuvent pas s'écraser mutuellement.                                  */
+/* ------------------------------------------------------------------ */
+
+function beginWorker(worker: Worker): void {
+  patch({ workers: [...readWorksite().workers.filter((entry) => entry.taskId !== worker.taskId), worker] });
+}
+
+function stepWorker(taskId: string, changes: Partial<Worker>): void {
+  patch({
+    workers: readWorksite().workers.map((entry) => (entry.taskId === taskId ? { ...entry, ...changes } : entry))
+  });
+}
+
+function endWorker(taskId: string): void {
+  patch({ workers: readWorksite().workers.filter((entry) => entry.taskId !== taskId) });
+}
+
+/**
+ * Combien d'agents travaillent de front sur cette étape.
+ *
+ * Le développement et la mise en ligne font exception : les agents y écrivent
+ * tous dans le même dépôt et lancent le même build. Deux d'entre eux en même
+ * temps se marchent dessus — fichier écrasé par l'autre, `npm run build` lancé
+ * sur un arbre à moitié écrit, index git verrouillé. Tant que ces étapes ont le
+ * droit d'écrire, elles restent à une voie ; en lecture seule, rien n'est
+ * modifié, donc rien ne peut entrer en conflit.
+ *
+ * Les étapes qui produisent des documents, des spécifications ou des images
+ * n'ont pas ce problème : chaque agent écrit son propre livrable. Ce sont
+ * aussi les plus lentes — une image se fabrique en dizaines de secondes — donc
+ * celles où le parallélisme se voit le plus.
+ */
+function lanesFor(phase: Phase, state: WorksiteState): number {
+  const solo = phase.id === 'build' || phase.id === 'deploy';
+  if (solo && state.autonomy !== 'read') return 1;
+  return Math.min(Math.max(1, state.lanes || DEFAULT_LANES), MAX_LANES);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Fait travailler plusieurs voies sur une même réserve de tâches.
+ *
+ * Chaque voie tire dans le même sac jusqu'à ce qu'il soit vide, puis s'arrête.
+ * Une voie lente ne retient pas les autres : elles continuent à se servir.
+ *
+ * La propriété qui décide de la justesse de tout ceci : **deux voies ne
+ * prennent jamais le même élément**. Elle ne tient pas à une astuce mais à une
+ * règle simple — `take()` doit prélever ET réserver sans le moindre `await`
+ * entre les deux. En JavaScript, rien ne s'intercale dans une suite
+ * d'instructions synchrones ; une voie ne peut donc pas relire la réserve
+ * pendant qu'une autre est en train d'y puiser.
+ *
+ * Exporté pour être vérifiable : cette propriété se démontre sur un jeu
+ * d'essai, alors qu'elle serait invisible tant qu'elle n'est pas violée.
+ */
+export async function runLanes<T>(
+  lanes: number,
+  take: () => T | null,
+  work: (item: T, lane: number) => Promise<void>,
+  options: { staggerMs?: number; stopped?: () => boolean; breathMs?: number } = {}
+): Promise<void> {
+  const { staggerMs = 0, stopped = () => false, breathMs = 0 } = options;
+
+  const lane = async (index: number): Promise<void> => {
+    if (staggerMs > 0) await sleep(index * staggerMs);
+    while (!stopped()) {
+      const item = take();
+      if (item === null) return;
+      await work(item, index);
+      if (breathMs > 0) await sleep(breathMs);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.max(1, lanes) }, (_, index) => lane(index)));
+}
+
 export function startWorksite(
   venture: { id: string; name: string; slug: string },
-  options: { autonomy?: Autonomy; provider?: ToolProvider; cycles?: number; restart?: boolean } = {}
+  options: {
+    autonomy?: Autonomy;
+    provider?: ToolProvider;
+    cycles?: number;
+    restart?: boolean;
+    /** Agents travaillant de front. Les étapes qui écrivent restent à une voie. */
+    lanes?: number;
+  } = {}
 ): void {
   if (loop) return;
 
@@ -233,11 +356,12 @@ export function startWorksite(
     autonomy: options.autonomy ?? previous.autonomy,
     provider: options.provider ?? previous.provider,
     cycles: options.cycles ?? 1,
+    lanes: options.lanes ?? previous.lanes ?? DEFAULT_LANES,
     phase: resuming ? previous.phase : 'vision',
     cycle: resuming ? previous.cycle : 1,
+    workers: [],
     done: 0,
     failed: 0,
-    attempt: 0,
     error: null,
     startedAt: Date.now(),
     stoppedAt: null
@@ -318,56 +442,117 @@ async function drive(venture: { id: string; name: string; slug: string }, openRo
       }
     }
 
+    /**
+     * Les tâches d'une étape, menées de front.
+     *
+     * Elles l'étaient une par une : l'agence attendait qu'un agent ait fini
+     * d'écrire une spécification pour qu'un autre commence la suivante, alors
+     * que les deux ne se lisent ni ne s'écrivent l'un l'autre. Sur une étape
+     * de design, où chaque image demande des dizaines de secondes, l'attente
+     * était l'essentiel du temps passé.
+     *
+     * Chaque voie tire dans le même sac de tâches jusqu'à ce qu'il soit vide.
+     * Une voie lente ne bloque pas les autres : elles continuent à se servir.
+     */
     const stumbled = new Set<string>();
+    const lanes = lanesFor(phase, state);
+    /*
+     * Pourquoi les voies se sont arrêtées, tenu dans un objet plutôt que dans
+     * trois variables : une variable écrite depuis une fonction imbriquée et
+     * lue après un `await` est considérée comme jamais réassignée par
+     * l'analyse de flux, qui la réduit alors à son type initial.
+     */
+    const halt: { quota: boolean; orphan: boolean; fatal: string | null } = {
+      quota: false,
+      orphan: false,
+      fatal: null
+    };
 
-    while (readWorksite().running) {
+    patch({
+      currentStep:
+        lanes > 1 ? `${phase.label} — ${lanes} agents en parallèle` : `${phase.label} — un agent à la fois`
+    });
+
+    /**
+     * Prélever une tâche ET la réserver, sans `await` entre les deux.
+     *
+     * C'est ce qui empêche deux voies de partir avec la même : sans la
+     * réservation, la seconde relirait la liste pendant que la première attend
+     * le modèle, et y retrouverait la tâche encore marquée « à faire ».
+     */
+    const take = (): { task: Task; agent: GraphAgent } | null => {
       if (handled >= MAX_TASKS_PER_RUN) {
-        patch({
-          running: false,
-          currentTaskId: null,
-          currentStep: `${MAX_TASKS_PER_RUN} tâches sur ce passage — relancez pour continuer`,
-          stoppedAt: Date.now()
-        });
-        return;
+        halt.quota = true;
+        return null;
       }
 
       const task = nextTask(venture.name, phase.id, stumbled);
-      if (!task) break;
-      handled += 1;
+      if (!task) return null;
 
       const agent = pickAgent(task, phase, graph);
       if (!agent) {
-        patch({ running: false, error: 'Aucun agent dans le graphe : ouvrez le studio d’agents.', stoppedAt: Date.now() });
-        return;
+        halt.orphan = true;
+        return null;
       }
 
-      const outcome = await execute(task, agent, phase, context);
+      updateTask(task.id, { status: 'doing', assigneeId: agent.id, assigneeName: agent.role, phase: phase.id });
+      handled += 1;
+      return { task, agent };
+    };
 
-      if (outcome.ok) {
-        consecutiveFailures = 0;
-        patch({ done: readWorksite().done + 1 });
-      } else {
+    // On attend que toutes les voies se soient tues : couper sans cela
+    // laisserait des tâches marquées « en cours » que plus personne ne mène.
+    await runLanes(
+      lanes,
+      take,
+      async ({ task, agent }) => {
+        const outcome = await execute(task, agent, phase, context);
+
+        if (outcome.ok) {
+          consecutiveFailures = 0;
+          patch({ done: readWorksite().done + 1 });
+          return;
+        }
+
         consecutiveFailures += 1;
         stumbled.add(task.id);
         patch({ failed: readWorksite().failed + 1 });
-        if (consecutiveFailures >= 2) {
-          patch({
-            running: false,
-            error: `Deux tâches de suite ont échoué (${outcome.report.slice(0, 120)}). Le chantier s'arrête.`,
-            stoppedAt: Date.now()
-          });
-          return;
-        }
+        // Deux échecs sans succès entre les deux : le problème dépasse la tâche.
+        if (consecutiveFailures >= 2) halt.fatal = outcome.report;
+      },
+      {
+        staggerMs: LANE_STAGGER_MS,
+        breathMs: BREATH_MS,
+        stopped: () => !readWorksite().running || halt.quota || halt.orphan || halt.fatal !== null
       }
+    );
 
-      await new Promise((resolve) => setTimeout(resolve, BREATH_MS));
+    if (halt.orphan) {
+      patch({ running: false, error: 'Aucun agent dans le graphe : ouvrez le studio d’agents.', stoppedAt: Date.now() });
+      return;
+    }
+    if (halt.fatal) {
+      patch({
+        running: false,
+        error: `Deux tâches ont échoué coup sur coup (${halt.fatal.slice(0, 120)}). Le chantier s'arrête.`,
+        stoppedAt: Date.now()
+      });
+      return;
+    }
+    if (halt.quota) {
+      patch({
+        running: false,
+        currentStep: `${MAX_TASKS_PER_RUN} tâches sur ce passage — relancez pour continuer`,
+        stoppedAt: Date.now()
+      });
+      return;
     }
 
     if (!readWorksite().running) break;
     if (!(await advance(phase, context))) return;
   }
 
-  patch({ currentStep: 'arrêté', currentTaskId: null, stoppedAt: Date.now() });
+  patch({ currentStep: 'arrêté', workers: [], stoppedAt: Date.now() });
 }
 
 interface Context {
@@ -473,7 +658,7 @@ async function advance(phase: Phase, context: Context): Promise<boolean> {
     return false;
   }
 
-  patch({ currentStep: `passation ${phase.label} → ${target?.label ?? 'cycle suivant'}`, currentAgent: lead.role });
+  patch({ currentStep: `passation ${phase.label} → ${target?.label ?? 'cycle suivant'} (${lead.role})` });
 
   saveRealAgentLog({
     fromAgentId: 'master',
@@ -576,7 +761,7 @@ function closeCycle(context: Context, note: string): boolean {
       running: false,
       phase: 'discovery',
       cycle: state.cycle + 1,
-      currentTaskId: null,
+      workers: [],
       currentStep: `cycle ${state.cycle} terminé${note ? ` — ${note}` : ''}`,
       stoppedAt: Date.now()
     });
@@ -617,14 +802,17 @@ async function execute(
   const state = readWorksite();
 
   updateTask(task.id, { status: 'doing', assigneeId: agent.id, assigneeName: agent.role, phase: phase.id });
-  patch({
-    currentTaskId: task.id,
-    currentTitle: task.title,
-    currentAgent: agent.role,
-    currentStep: `${phase.label} — au travail`,
+  beginWorker({
+    taskId: task.id,
+    title: task.title,
+    agentId: agent.id,
+    agentName: agent.role,
+    phase: phase.id,
+    step: 'au travail',
     attempt: 1,
-    error: null
+    startedAt: Date.now()
   });
+  patch({ error: null });
 
   saveRealAgentLog({
     fromAgentId: 'master',
@@ -639,8 +827,11 @@ async function execute(
   });
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (!readWorksite().running && attempt > 1) return { ok: false, report: 'Chantier arrêté en cours de reprise.' };
-    patch({ attempt, currentStep: attempt === 1 ? `${phase.label} — au travail` : `reprise ${attempt}/${MAX_ATTEMPTS}` });
+    if (!readWorksite().running && attempt > 1) {
+      endWorker(task.id);
+      return { ok: false, report: 'Chantier arrêté en cours de reprise.' };
+    }
+    stepWorker(task.id, { attempt, step: attempt === 1 ? 'au travail' : `reprise ${attempt}/${MAX_ATTEMPTS}` });
     const startedAt = Date.now();
 
     try {
@@ -682,7 +873,7 @@ async function execute(
         {
           openRouterKey: context.openRouterKey,
           onStep: (step: AgentStep) => {
-            if (step.kind === 'tool' && step.name) patch({ currentStep: `outil : ${step.name}` });
+            if (step.kind === 'tool' && step.name) stepWorker(task.id, { step: `outil : ${step.name}` });
           }
         }
       );
@@ -718,7 +909,7 @@ async function execute(
 
       const doc = archive(task, agent, phase, context, report, produced);
       updateTask(task.id, { status: 'review' });
-      patch({ currentStep: `${phase.label} — livré, en revue` });
+      endWorker(task.id);
 
       record({
         agentId: agent.id,
@@ -758,7 +949,7 @@ async function execute(
           labels: [...new Set([...(task.labels ?? []), 'échec'])],
           detail: `${task.detail ?? ''}\n\n⚠️ Chantier : ${message}`.trim()
         });
-        patch({ currentStep: `échec — ${message.slice(0, 80)}` });
+        endWorker(task.id);
 
         saveRealAgentLog({
           fromAgentId: agent.id,
@@ -947,16 +1138,27 @@ export function recoverWorksite(): void {
   recovered = true;
 
   const state = readWorksite();
-  if (state.currentTaskId) {
-    const task = readTasks().find((entry) => entry.id === state.currentTaskId);
+
+  /*
+   * Toutes les voies sont mortes avec la page. Chaque tâche qu'elles menaient
+   * doit redevenir disponible — une seule était rendue jusqu'ici, ce qui
+   * suffisait quand il n'y avait qu'une voie, et laissait les autres bloquées
+   * en « en cours » dès qu'il y en a eu plusieurs.
+   */
+  const tasks = readTasks();
+  for (const worker of state.workers ?? []) {
+    const task = tasks.find((entry) => entry.id === worker.taskId);
     if (task?.status === 'doing') updateTask(task.id, { status: 'todo' });
   }
+
   if (state.running) {
     patch({
       running: false,
-      currentTaskId: null,
+      workers: [],
       currentStep: 'interrompu par un rechargement',
       stoppedAt: Date.now()
     });
+  } else if ((state.workers ?? []).length > 0) {
+    patch({ workers: [] });
   }
 }

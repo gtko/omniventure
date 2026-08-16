@@ -85,10 +85,18 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
         >
           <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-indigo-600" />
           <span className="min-w-0 flex-1">
+            {/* Plusieurs agents peuvent travailler de front : on annonce le nombre. */}
             <span className="block text-xs font-semibold text-indigo-900">
-              {phaseById(worksite.phase).icon} {phaseById(worksite.phase).label} — {worksite.currentAgent || 'attribution'}
+              {phaseById(worksite.phase).icon} {phaseById(worksite.phase).label} —{' '}
+              {worksite.workers.length === 0
+                ? 'attribution'
+                : worksite.workers.length === 1
+                  ? worksite.workers[0].agentName
+                  : `${worksite.workers.length} agents au travail`}
             </span>
-            <span className="block truncate text-[11px] text-slate-700">{worksite.currentTitle || worksite.currentStep}</span>
+            <span className="block truncate text-[11px] text-slate-700">
+              {worksite.workers[0]?.title || worksite.currentStep}
+            </span>
           </span>
           <span className="shrink-0 font-mono text-[10px] text-indigo-700">
             {worksite.done} livrée(s) · cycle {worksite.cycle}

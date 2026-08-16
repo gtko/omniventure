@@ -5,6 +5,7 @@ import { AUTONOMY_LABEL, readAutonomy, writeAutonomy, type Autonomy } from '../l
 import { PHASES, phaseIndex, type PhaseId } from '../lib/pipeline';
 import { WORKSPACE_EVENT, type Task } from '../lib/workspace';
 import {
+  DEFAULT_LANES,
   readWorksite,
   recoverWorksite,
   startWorksite,
@@ -31,6 +32,7 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
   const [autonomy, setAutonomy] = useState<Autonomy>(() => readAutonomy());
   const [provider, setProvider] = useState<ToolProvider>('local');
   const [cycles, setCycles] = useState(1);
+  const [lanes, setLanes] = useState(() => readWorksite().lanes || DEFAULT_LANES);
   const [toolCount, setToolCount] = useState<number | null>(null);
   const [autopilot, setAutopilot] = useState(() => readAutopilot());
 
@@ -124,7 +126,7 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
           <div className="flex items-center gap-2">
             {mine && state.cycle > 1 && (
               <button
-                onClick={() => startWorksite(venture, { autonomy, provider, cycles, restart: true })}
+                onClick={() => startWorksite(venture, { autonomy, provider, cycles, lanes, restart: true })}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                 title="Repartir de la vision plutôt que de reprendre où on en était"
               >
@@ -132,7 +134,7 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
               </button>
             )}
             <button
-              onClick={() => startWorksite(venture, { autonomy, provider, cycles })}
+              onClick={() => startWorksite(venture, { autonomy, provider, cycles, lanes })}
               className="rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
             >
               ▶ {mine && state.stoppedAt ? 'Reprendre la chaîne' : 'Lancer la chaîne'}
@@ -172,19 +174,46 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
         })}
       </ol>
 
-      {/* Ce qui se passe maintenant */}
+      {/*
+        Qui travaille en ce moment.
+
+        Un seul encadré suffisait quand un seul agent travaillait. Avec
+        plusieurs voies, il ne montrerait que le dernier à s'être manifesté :
+        chaque agent occupé a maintenant sa ligne.
+      */}
       {active && (
-        <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
-          <p className="flex items-center gap-2 text-xs font-semibold text-indigo-900">
+        <div className="mt-3 space-y-1.5">
+          <p className="flex items-center gap-2 px-0.5 font-mono text-[10px] text-slate-500">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-600" />
-            {state.currentAgent || 'Attribution…'}
+            <span>{state.currentStep}</span>
+            <span className="ml-auto">
+              {state.done} livrée(s) · {state.failed} en échec
+            </span>
           </p>
-          <p className="mt-0.5 text-xs text-slate-700">{state.currentTitle || '—'}</p>
-          <p className="mt-0.5 font-mono text-[10px] text-slate-500">
-            {state.currentStep}
-            {state.attempt > 1 ? ` · tentative ${state.attempt}/3` : ''}
-            {` · ${state.done} livrée(s), ${state.failed} en échec`}
-          </p>
+
+          {state.workers.length === 0 ? (
+            <p className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 text-xs text-indigo-900">
+              Attribution…
+            </p>
+          ) : (
+            <ul className="grid gap-1.5 sm:grid-cols-2">
+              {state.workers.map((worker) => (
+                <li key={worker.taskId} className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-2.5">
+                  <p className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-900">
+                    <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-indigo-600" />
+                    <span className="truncate">{worker.agentName}</span>
+                  </p>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-700" title={worker.title}>
+                    {worker.title}
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-[10px] text-slate-500">
+                    {worker.step}
+                    {worker.attempt > 1 ? ` · tentative ${worker.attempt}/3` : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -261,6 +290,32 @@ export const WorksitePanel: React.FC<Props> = ({ venture }) => {
             <option value={1}>1 — s'arrête après la mesure</option>
             <option value={2}>2 — une boucle d'amélioration</option>
             <option value={3}>3 — deux boucles</option>
+          </select>
+        </label>
+
+        {/*
+          Les voies parallèles.
+
+          Elles n'accélèrent que les étapes où chaque agent produit son propre
+          livrable — spécifications, images, mesures. Le développement et la
+          mise en ligne écrivent dans le même dépôt et retombent d'office à une
+          voie : deux agents qui éditent les mêmes fichiers et lancent le même
+          build s'annulent.
+        */}
+        <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          Voies
+          <select
+            value={lanes}
+            disabled={active}
+            onChange={(event) => setLanes(Number(event.target.value))}
+            title="Agents travaillant de front. La dépense monte au même rythme que le nombre de voies."
+            className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-normal normal-case text-slate-700 disabled:opacity-50"
+          >
+            <option value={1}>1 — un agent à la fois</option>
+            <option value={2}>2 agents en parallèle</option>
+            <option value={3}>3 agents en parallèle</option>
+            <option value={4}>4 agents en parallèle</option>
+            <option value={5}>5 agents en parallèle</option>
           </select>
         </label>
 
