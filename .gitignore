@@ -27,3 +27,6 @@ Thumbs.db
 # AntiGravity CLI & Logs
 .system_generated/
 .gemini/
+
+# Espace de travail des agents (captures, fichiers temporaires)
+.omniventure/
