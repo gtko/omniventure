@@ -30,6 +30,7 @@ import { cultureBlock, readCulture } from './culture';
 import { type Autonomy } from './harness-client';
 import { readGraph, type GraphAgent } from './hiring';
 import { parseModelJson } from './model-json';
+import { roadmapOf, updateItem } from './roadmap';
 import { handoffPrompt, PHASES, phaseById, phaseIndex, type Phase, type PhaseId } from './pipeline';
 import {
   addTask,
@@ -348,6 +349,41 @@ interface Context {
  * que l'amont n'a pas jugée nécessaire.
  */
 async function openPhase(phase: Phase, context: Context, state: WorksiteState): Promise<boolean> {
+  /**
+   * La feuille de route commande.
+   *
+   * Ce que le rituel a placé en « maintenant » entre en discovery, sans
+   * attendre une passation : c'est la direction décidée par l'équipe, pas une
+   * conséquence de l'étape précédente. Sinon la roadmap ne serait qu'un
+   * affichage.
+   */
+  if (phase.id === 'discovery') {
+    const existing = new Set(tasksOf(context.venture.name).map((task) => task.title.toLowerCase()));
+    const due = roadmapOf(context.venture.name).filter(
+      (item) => item.horizon === 'maintenant' && item.status === 'retenu' && !existing.has(item.title.toLowerCase())
+    );
+
+    for (const item of due) {
+      addTask({
+        title: item.title,
+        detail: [item.outcome ? `Résultat visé : ${item.outcome}` : '', item.why].filter(Boolean).join('\n'),
+        status: 'todo',
+        priority: item.impact >= 4 ? 'haute' : 'moyenne',
+        source: context.venture.name,
+        phase: 'discovery',
+        cycle: state.cycle,
+        createdById: item.proposedById,
+        createdByName: item.proposedByName,
+        labels: ['roadmap']
+      });
+      updateItem(item.id, { status: 'en-cours', phase: 'discovery' });
+    }
+    if (due.length > 0) {
+      patch({ currentStep: `${due.length} élément(s) de la feuille de route entrent en discovery` });
+      return true;
+    }
+  }
+
   if (phase.id !== 'vision') return false;
   if (tasksOf(context.venture.name, 'vision').length > 0) return false;
 

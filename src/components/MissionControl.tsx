@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getStoredVentures, saveStoredVentures, getActiveProjectId, setActiveProjectId } from '../lib/store';
 import type { Venture, AgentTask } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
+import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { WorksitePanel } from './WorksitePanel';
 
@@ -160,6 +161,11 @@ export const MissionControl: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* La direction du produit : ce qu'on fait, et surtout ce qu'on ne fait pas */}
+      <RoadmapPanel
+        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
+      />
 
       {/* Ce qui fait avancer le projet : sans ça, le dossier reste lettre morte */}
       <WorksitePanel
