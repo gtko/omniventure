@@ -1,31 +1,39 @@
 ---
+import { ClientRouter } from 'astro:transitions';
+import PageModal from '../components/PageModal.astro';
 import Sidebar from '../components/Sidebar.astro';
+import { VirtualOffice2D } from '../components/VirtualOffice2D';
 import '../styles/global.css';
 
 interface Props {
   title: string;
   description?: string;
   currentPath?: string;
-  /** Page pleine hauteur sans marges ni pied de page (bureau virtuel). */
+  /** Page pleine hauteur sans modale : c'est le bureau lui-même. */
   fullBleed?: boolean;
+  /** Sous-titre affiché dans l'en-tête de la modale. */
+  subtitle?: string;
+  icon?: string;
 }
 
 const {
   title,
   description = "OmniVenture AI - Autonomous Money Factory on Cloudflare",
   currentPath = '/',
-  fullBleed = false
+  fullBleed = false,
+  subtitle,
+  icon
 } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="fr" class="bg-slate-50 text-slate-900 h-full">
+<html lang="fr" class="bg-slate-950 text-slate-900 h-full">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="generator" content={Astro.generator} />
-    
+
     <title>{title} — OmniVenture AI</title>
     <meta name="description" content={description} />
 
@@ -33,30 +41,36 @@ const {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- Navigation sans rechargement : indispensable pour garder le bureau vivant. -->
+    <ClientRouter />
   </head>
-  <body
-    class:list={[
-      'h-full text-slate-900 flex font-sans antialiased overflow-hidden',
-      fullBleed ? 'office-immersive bg-slate-950' : 'bg-slate-50'
-    ]}
-  >
-    
-    <!-- Left Sidebar (Full Height with Integrated Project Switcher and Telemetry) -->
+  <body class="office-immersive h-full bg-slate-950 text-slate-900 font-sans antialiased overflow-hidden">
+
+    <!--
+      LE BUREAU EST LE DÉCOR PERMANENT DE L'APPLICATION.
+      `transition:persist` conserve le canvas et sa simulation d'une page à
+      l'autre : les agents continuent leur journée pendant qu'on travaille
+      dans une modale.
+    -->
+    <div id="office-backdrop" class="fixed inset-0 z-0">
+      <VirtualOffice2D
+        initialMissionName="Agence OmniVenture — orchestration multi-agents"
+        height="100%"
+        client:load
+        transition:persist="office"
+      />
+    </div>
+
     <Sidebar currentPath={currentPath} />
 
-    <!-- Right Area: Full Height Main Scrollable Content -->
-    <div class={`flex-1 flex flex-col min-w-0 h-full ${fullBleed ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-      <main class={fullBleed ? 'flex-1 min-h-0 w-full' : 'flex-1 max-w-7xl w-full mx-auto px-8 py-8'}>
+    {fullBleed ? (
+      <slot />
+    ) : (
+      <PageModal title={title} subtitle={subtitle} icon={icon}>
         <slot />
-      </main>
-
-      {!fullBleed && (
-        <footer class="border-t border-slate-200 py-3.5 px-8 text-xs text-slate-500 font-mono flex items-center justify-between bg-white">
-          <div>OmniVenture Cloudflare OS</div>
-          <div class="text-[11px] text-slate-400">Grok 4.6 • Qwen 3.8-Max • Gemini 3.7 Flash • DeepSeek V4 Flash</div>
-        </footer>
-      )}
-    </div>
+      </PageModal>
+    )}
 
   </body>
 </html>

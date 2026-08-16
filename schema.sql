@@ -131,3 +131,37 @@ CREATE TABLE IF NOT EXISTS api_vault (
     status TEXT CHECK(status IN ('active', 'invalid', 'quota_exceeded')) DEFAULT 'active',
     last_verified DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ── Auto-amélioration & télémétrie de coût ────────────────────────
+-- Backlog des évolutions proposées par l'organisation elle-même.
+-- La colonne `status` matérialise le garde-fou : proposed → dispatched →
+-- shipped ne franchit jamais l'étape de relecture humaine automatiquement.
+CREATE TABLE IF NOT EXISTS improvement_backlog (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    rationale TEXT,
+    impact TEXT,
+    effort TEXT,
+    score REAL DEFAULT 0,
+    prompt TEXT,
+    status TEXT DEFAULT 'proposed',
+    run_id TEXT,
+    created_at INTEGER
+);
+
+-- Relevés successifs du compteur cumulé OpenRouter : les coûts par période
+-- (7 jours, aujourd'hui, dernière heure) sont des différences entre relevés.
+CREATE TABLE IF NOT EXISTS openrouter_usage_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    total_usage REAL NOT NULL,
+    total_credits REAL DEFAULT 0
+);
+
+-- Aménagement du bureau : retouches appliquées par-dessus le plan généré.
+CREATE TABLE IF NOT EXISTS office_layout (
+    id TEXT PRIMARY KEY,
+    patches TEXT NOT NULL,
+    patch_count INTEGER DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

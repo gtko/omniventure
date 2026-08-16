@@ -19,6 +19,15 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
     'Cloudflare Queue : Buffer 0 tâche en attente.'
   ]);
   const [isPinging, setIsPinging] = useState<boolean>(false);
+  const [usage, setUsage] = useState<{
+    connected: boolean;
+    reason?: string;
+    allTime: number | null;
+    last7d: number | null;
+    today: number | null;
+    lastHour: number | null;
+    remaining?: number;
+  } | null>(null);
 
   const loadData = () => {
     const list = getStoredVentures();
@@ -43,10 +52,30 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
       setLatency(Math.floor(Math.random() * 8) + 24);
     }, 4000);
 
+    /**
+     * Consommation OpenRouter. Chaque appel relève aussi le compteur cumulé :
+     * ce sont ces relevés successifs qui permettent de calculer les fenêtres.
+     */
+    const pollUsage = async () => {
+      try {
+        const res = await fetch('/api/usage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined })
+        });
+        if (res.ok) setUsage(await res.json());
+      } catch {
+        /* hors ligne */
+      }
+    };
+    void pollUsage();
+    const usageInterval = setInterval(pollUsage, 120000);
+
     return () => {
       window.removeEventListener('ventures-updated', handleVenturesUpdated);
       window.removeEventListener('active-project-changed', handleActiveChanged);
       clearInterval(interval);
+      clearInterval(usageInterval);
     };
   }, []);
 
@@ -143,7 +172,9 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Bureau Virtuel 2D', href: '/office', icon: '🏢' },
                   { label: 'Tous mes Business', href: '/ventures', icon: '📂' },
                   { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
-                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' }
+                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
+                  { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
+                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
                   return (
@@ -187,7 +218,9 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
                   { label: 'Bureau Virtuel 2D (Live)', href: '/office', icon: '🏢' },
                   { label: 'Mes Business (Liste)', href: '/ventures', icon: '📂' },
                   { label: 'Analyse Concurrents', href: '/market', icon: '🔍' },
-                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' }
+                  { label: 'Graphe d\'Agents', href: '/agents', icon: '🧠' },
+                  { label: 'Harnais de Codage', href: '/harness', icon: '🛠️' },
+                  { label: 'Auto-amélioration', href: '/improve', icon: '♻️' }
                 ].map(item => {
                   const isActive = currentPath === item.href;
                   return (
@@ -251,6 +284,42 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
             <span className="text-slate-400 block text-[9px]">Boucle Auto</span>
             <span className="font-bold text-slate-900">30s (Edge)</span>
           </div>
+        </div>
+
+        {/* OpenRouter spend */}
+        <div className="rounded border border-slate-200 bg-white p-2 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-700 tracking-tight">Coûts OpenRouter</span>
+            {usage?.connected ? (
+              <span className="font-mono text-[9px] text-slate-400">
+                {usage.remaining != null ? `reste $${usage.remaining.toFixed(2)}` : ''}
+              </span>
+            ) : (
+              <span className="font-mono text-[9px] text-amber-600">clé absente</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-1 text-[10px] font-mono">
+            {[
+              { label: 'Total', value: usage?.allTime },
+              { label: '7 jours', value: usage?.last7d },
+              { label: "Aujourd'hui", value: usage?.today },
+              { label: '1 heure', value: usage?.lastHour }
+            ].map(stat => (
+              <div key={stat.label} className="rounded bg-slate-50 px-1.5 py-1 border border-slate-200">
+                <span className="block text-[9px] text-slate-400">{stat.label}</span>
+                <span className="font-bold text-slate-900">
+                  {stat.value == null ? '—' : `$${stat.value.toFixed(stat.value < 1 ? 4 : 2)}`}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {usage?.connected && usage.last7d == null && (
+            <p className="text-[9px] leading-snug text-slate-400">
+              Les fenêtres se remplissent au fil des relevés (un toutes les 2 min).
+            </p>
+          )}
         </div>
 
         {/* Interactive Telemetry Inspector Trigger */}

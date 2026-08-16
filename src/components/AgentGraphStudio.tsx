@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
-import { VirtualOffice2D } from './VirtualOffice2D';
 import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
 
@@ -947,6 +946,9 @@ export const AgentGraphStudio: React.FC = () => {
             </div>
 
           </div>
+        </div>
+      )}
+
       {/* VIEW 0: INTERACTIVE VISUAL NODE NETWORK GRAPH (DAG) */}
       {activeTab === 'graph' && (
         <div className="space-y-4">
@@ -1410,7 +1412,16 @@ export const AgentGraphStudio: React.FC = () => {
 
       {/* VIEW: 2D GRAPHIC VIRTUAL OFFICE */}
       {activeTab === 'virtual_office' && (
-        <VirtualOffice2D initialMissionName="Orchestration & Échanges Multi-Agents en Direct" autoPlay={true} />
+        <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-xs text-slate-500 shadow-sm">
+          <p className="text-sm font-semibold text-slate-900">🏢 Le bureau tourne en permanence derrière cette fenêtre.</p>
+          <p className="mt-1">Fermez cette modale (ou touche Échap) pour reprendre la main sur le plateau.</p>
+          <a
+            href="/office"
+            className="mt-3 inline-block rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+          >
+            Aller au bureau
+          </a>
+        </div>
       )}
 
       {/* VIEW 3: MARKDOWN PERSONA EDITOR (Ame.md & Job.md & Hierarchy Level) */}

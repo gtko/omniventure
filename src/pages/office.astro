@@ -1,16 +1,10 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { VirtualOffice2D } from '../components/VirtualOffice2D';
 ---
 
-<Layout title="Bureau Virtuel — Agence OmniVenture" currentPath="/office" fullBleed>
-  <!-- Le bureau EST l'interface : le tableau de bord se superpose en transparence. -->
-  <div class="h-full w-full">
-    <VirtualOffice2D
-      initialMissionName="Agence OmniVenture — orchestration multi-agents"
-      autoPlay={true}
-      height="100%"
-      client:load
-    />
-  </div>
-</Layout>
+<!--
+  Le bureau est rendu par le layout lui-même (décor permanent de l'application).
+  Cette page se contente donc de ne rien empiler par-dessus : on obtient le
+  plateau en plein écran, entièrement interactif.
+-->
+<Layout title="Bureau Virtuel — Agence OmniVenture" currentPath="/office" fullBleed />

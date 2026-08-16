@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { getStoredVentures, saveStoredVentures, setActiveProjectId } from '../lib/store';
 import { saveRealAgentLog } from '../lib/agent-bus';
 import type { Venture } from '../types';
-import { VirtualOffice2D } from './VirtualOffice2D';
 
 interface CompetitorResult {
   name: string;
@@ -323,10 +322,16 @@ ${(analysisResult.mvpCoreFeatures || []).map(m => `- ${m}`).join('\n')}
 
       {/* 2D VIRTUAL OFFICE IN MARKET STUDIO */}
       {showLiveOffice && (
-        <VirtualOffice2D
-          initialMissionName={query.trim() ? `Investigation sur "${query}"` : "Recherche Concurrentielle & Opportunités"}
-          autoPlay={isAnalyzing}
-        />
+        <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-xs text-slate-500 shadow-sm">
+          <p className="text-sm font-semibold text-slate-900">🏢 Le bureau tourne en permanence derrière cette fenêtre.</p>
+          <p className="mt-1">Fermez cette modale (ou touche Échap) pour reprendre la main sur le plateau.</p>
+          <a
+            href="/office"
+            className="mt-3 inline-block rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+          >
+            Aller au bureau
+          </a>
+        </div>
       )}
 
       {/* Structured Competitor / Keyword Benchmark Results */}

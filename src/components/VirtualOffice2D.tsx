@@ -144,6 +144,19 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
   // Le masquage de l'UI vit sur <body> (il pilote aussi la nav de l'app).
   useEffect(() => () => document.body.classList.remove('office-ui-hidden'), []);
 
+  /**
+   * Le bureau est monté en permanence sous l'application. Sur /office il est au
+   * premier plan et pilotable ; ailleurs il reste vivant mais passe en décor,
+   * sans interface ni interception des clics (la modale est au-dessus).
+   */
+  const [foreground, setForeground] = useState(true);
+  useEffect(() => {
+    const sync = () => setForeground(window.location.pathname.replace(/\/$/, '') === '/office');
+    sync();
+    document.addEventListener('astro:page-load', sync);
+    return () => document.removeEventListener('astro:page-load', sync);
+  }, []);
+
   const notify = useCallback((message: string) => {
     setNotification(message);
     window.setTimeout(() => setNotification(null), 4000);
@@ -776,7 +789,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
         }}
         onWheel={handleWheel}
         onContextMenu={(event) => event.preventDefault()}
-        className="absolute inset-0 h-full w-full"
+        className={`absolute inset-0 h-full w-full ${foreground ? '' : 'pointer-events-none'}`}
         style={{ imageRendering: 'pixelated', cursor: 'grab' }}
       />
 
@@ -794,6 +807,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       )}
 
       {/* Bouton toujours visible pour masquer/afficher l'interface */}
+      {foreground && (
       <button
         type="button"
         onClick={() => {
@@ -809,9 +823,10 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       >
         {uiVisible ? '👁️ Masquer l’UI' : '👁️ Afficher l’UI'}
       </button>
+      )}
 
       {/* ── Calque d'interface, en transparence sur le bureau ── */}
-      {uiVisible && (
+      {uiVisible && foreground && (
         <div className="office-ui-layer pointer-events-none absolute inset-0 z-20">
           {/* Bandeau d'état */}
           <div className={`pointer-events-auto absolute left-3 top-3 max-w-[52%] px-3.5 py-2.5 ${GLASS}`}>
@@ -1028,7 +1043,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       )}
 
       {/* ── Palette d'aménagement ── */}
-      {editMode && (
+      {editMode && foreground && (
         <div className="absolute bottom-3 right-3 top-3 z-40 flex">
           <EditorPalette
             assets={sceneRef.current?.assets ?? null}
@@ -1051,7 +1066,7 @@ export const VirtualOffice2D: React.FC<Props> = ({ initialMissionName, height })
       )}
 
       {/* ── Fiche agent ── */}
-      {!editMode && selected && (
+      {!editMode && selected && foreground && (
         <div className="absolute bottom-3 right-3 top-3 z-40 flex">
           <AgentPanel
             agent={selected}

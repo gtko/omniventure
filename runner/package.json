@@ -1,0 +1,10 @@
+{
+  "name": "omniventure-local-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pont local qui exécute les harnais de codage (Claude Code, Codex, opencode…) pour OmniVenture",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

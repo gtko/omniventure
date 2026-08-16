@@ -1,0 +1,71 @@
+{
+  "port": 4599,
+  "harnesses": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "vendor": "Anthropic",
+      "bin": "claude",
+      "versionArgs": ["--version"],
+      "runArgs": ["-p", "{prompt}"],
+      "install": "npm i -g @anthropic-ai/claude-code",
+      "docs": "https://docs.claude.com/en/docs/claude-code",
+      "notes": "Mode print non interactif. Ajouter --output-format stream-json pour un flux structuré."
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "vendor": "OpenAI",
+      "bin": "codex",
+      "versionArgs": ["--version"],
+      "runArgs": ["exec", "{prompt}"],
+      "install": "npm i -g @openai/codex",
+      "docs": "https://developers.openai.com/codex/cli",
+      "notes": "`codex exec` est la forme non interactive."
+    },
+    {
+      "id": "opencode",
+      "label": "opencode",
+      "vendor": "SST",
+      "bin": "opencode",
+      "versionArgs": ["--version"],
+      "runArgs": ["run", "{prompt}"],
+      "install": "npm i -g opencode-ai",
+      "docs": "https://opencode.ai/docs",
+      "notes": "`opencode run` exécute une tâche puis rend la main."
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "vendor": "Google",
+      "bin": "gemini",
+      "versionArgs": ["--version"],
+      "runArgs": ["-p", "{prompt}"],
+      "install": "npm i -g @google/gemini-cli",
+      "docs": "https://github.com/google-gemini/gemini-cli",
+      "notes": "Option -p pour un prompt unique."
+    },
+    {
+      "id": "antigravity",
+      "label": "Antigravity CLI",
+      "vendor": "Google",
+      "bin": "agy",
+      "versionArgs": ["--version"],
+      "runArgs": ["{prompt}"],
+      "install": "voir la documentation Antigravity",
+      "docs": "https://antigravity.google",
+      "notes": "Invocation à confirmer selon votre version : ajustez runArgs dans src/lib/harnesses.json."
+    },
+    {
+      "id": "aider",
+      "label": "Aider",
+      "vendor": "Communauté",
+      "bin": "aider",
+      "versionArgs": ["--version"],
+      "runArgs": ["--message", "{prompt}", "--yes"],
+      "install": "pip install aider-install && aider-install",
+      "docs": "https://aider.chat/docs",
+      "notes": "--message exécute une requête unique sans session interactive."
+    }
+  ]
+}

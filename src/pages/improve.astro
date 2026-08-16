@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { ImprovementBoard } from '../components/ImprovementBoard';
+---
+
+<Layout
+  title="Auto-amélioration"
+  subtitle="L'agence propose et fait implémenter ses propres évolutions"
+  icon="🧠"
+  currentPath="/improve"
+>
+  <ImprovementBoard client:load />
+</Layout>

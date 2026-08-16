@@ -1,0 +1,67 @@
+---
+/**
+ * Enveloppe de page : le bureau reste visible en fond, la page s'ouvre en
+ * modale translucide par-dessus. Fermer la modale ramène simplement au bureau.
+ */
+interface Props {
+  title: string;
+  subtitle?: string;
+  icon?: string;
+}
+
+const { title, subtitle, icon } = Astro.props;
+---
+
+<!-- pl-72 : la modale ne passe jamais sous la navigation, qui reste utilisable. -->
+<div
+  class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-3 sm:p-6 lg:pl-72"
+  data-page-modal
+>
+  <!-- Voile cliquable : un clic à côté referme et rend la main au bureau. -->
+  <a
+    href="/office"
+    aria-label="Fermer et revenir au bureau"
+    class="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] transition-opacity"
+  ></a>
+
+  <section
+    class="relative z-10 my-auto w-full max-w-[1400px] overflow-hidden rounded-2xl border border-white/25 shadow-2xl"
+    style="background: rgba(255,255,255,0.78); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);"
+  >
+    <header class="flex items-center justify-between gap-4 border-b border-slate-200/80 px-6 py-3.5">
+      <div class="flex items-center gap-2.5 min-w-0">
+        {icon && <span class="text-lg">{icon}</span>}
+        <div class="min-w-0">
+          <h1 class="truncate text-sm font-bold text-slate-900">{title}</h1>
+          {subtitle && <p class="truncate text-[11px] text-slate-500">{subtitle}</p>}
+        </div>
+      </div>
+      <a
+        href="/office"
+        title="Fermer (Échap)"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+      >
+        ✕
+      </a>
+    </header>
+
+    <div class="max-h-[calc(100vh-9rem)] overflow-y-auto px-6 py-5">
+      <slot />
+    </div>
+  </section>
+</div>
+
+<script>
+  // Échap referme la modale et redonne le bureau en plein écran.
+  const bindEscape = () => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (!document.querySelector('[data-page-modal]')) return;
+      window.location.href = '/office';
+    };
+    document.removeEventListener('keydown', handler);
+    document.addEventListener('keydown', handler, { once: true });
+  };
+  bindEscape();
+  document.addEventListener('astro:page-load', bindEscape);
+</script>
