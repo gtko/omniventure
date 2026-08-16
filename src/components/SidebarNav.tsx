@@ -8,9 +8,34 @@ interface Props {
   currentPath?: string;
 }
 
+/**
+ * Les vues d'un produit.
+ *
+ * Elles étaient des onglets à l'intérieur de la page ; elles vivent maintenant
+ * ici. On voit d'un coup d'œil tout ce qu'un produit contient, et la vue
+ * courante reste repérable même après être parti ailleurs dans l'agence.
+ *
+ * La vue voyage dans l'adresse : c'est ce qui permet à un lien de la barre
+ * d'ouvrir directement la bonne section.
+ */
+const PROJECT_VIEWS = [
+  { view: 'apercu', label: 'Aperçu', href: '/', icon: '👁️' },
+  { view: 'direction', label: 'Direction', href: '/?vue=direction', icon: '🧭' },
+  { view: 'chantier', label: 'Chantier', href: '/?vue=chantier', icon: '🔨' },
+  { view: 'livrables', label: 'Livrables', href: '/?vue=livrables', icon: '📦' },
+  { view: 'reglages', label: 'Réglages', href: '/?vue=reglages', icon: '⚙️' }
+] as const;
+
 export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeId, setActiveId] = useState<string>('');
+  /**
+   * La vue ouverte dans la page du produit.
+   *
+   * Elle est lue dans l'adresse plutôt que reçue en propriété : la barre est
+   * rendue par Astro, qui ne connaît que le chemin, pas la chaîne de requête.
+   */
+  const [currentView, setCurrentView] = useState<string>('apercu');
   const [showTelemetryModal, setShowTelemetryModal] = useState<boolean>(false);
   const [latency, setLatency] = useState<number>(28);
   const [telemetryLogs, setTelemetryLogs] = useState<string[]>([
@@ -39,6 +64,7 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
 
   useEffect(() => {
     loadData();
+    setCurrentView(new URLSearchParams(window.location.search).get('vue') ?? 'apercu');
 
     const handleVenturesUpdated = () => loadData();
     const handleActiveChanged = (e: any) => {
@@ -129,16 +155,41 @@ export const SidebarNav: React.FC<Props> = ({ currentPath = '/' }) => {
           /* CONTEXTUAL PROJECT MENU (WHEN A PROJECT IS SELECTED) */
           <nav className="space-y-4 pt-1">
             
-            {/* Section 1: Active Project Dashboard */}
+            {/* Les vues du produit */}
             <div className="space-y-1">
-              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono flex items-center justify-between">
-                <span>Projet : {activeVenture.name.slice(0, 14)}...</span>
-                <span className="text-[9px] px-1 rounded bg-indigo-50 text-indigo-700 font-semibold">{activeVenture.type.toUpperCase()}</span>
+              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono flex items-center justify-between gap-1">
+                <span className="truncate">{activeVenture.name}</span>
+                <span className="text-[9px] px-1 rounded bg-indigo-50 text-indigo-700 font-semibold shrink-0">{activeVenture.type.toUpperCase()}</span>
+              </div>
+              <div className="space-y-0.5">
+                {PROJECT_VIEWS.map(item => {
+                  const isActive = currentPath === '/' && currentView === item.view;
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        isActive
+                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-sm">{item.icon}</span>
+                      <span>{item.label}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Les ateliers rattachés à ce produit */}
+            <div className="space-y-1 pt-2 border-t border-slate-100">
+              <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                Ateliers du produit
               </div>
               <div className="space-y-0.5">
                 {[
-                  { label: 'Vue d\'ensemble', href: '/', icon: '📊' },
-                  { label: 'Livrables & ateliers', href: '/studio', icon: '🎨' },
+                  { label: 'Ateliers métier', href: '/studio', icon: '🎨' },
                   { label: 'Rituels & sprints', href: '/rituels', icon: '🔁' },
                   { label: 'Mesure', href: '/analytics', icon: '📊' }
                 ].map(item => {

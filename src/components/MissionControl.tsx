@@ -18,15 +18,10 @@ const FIELD =
 
 type View = 'apercu' | 'direction' | 'chantier' | 'livrables' | 'reglages';
 
-const VIEWS: Array<{ id: View; label: string; icon: string; hint: string }> = [
-  { id: 'apercu', label: 'Aperçu', icon: '👁️', hint: 'Où en est le produit, en cinq secondes.' },
-  { id: 'direction', label: 'Direction', icon: '🧭', hint: "L'étape de vie et la feuille de route." },
-  { id: 'chantier', label: 'Chantier', icon: '🔨', hint: 'La chaîne de valeur et ce qu\'elle exécute.' },
-  { id: 'livrables', label: 'Livrables', icon: '📦', hint: 'Ce qui a été produit, et ce qui est sorti.' },
-  { id: 'reglages', label: 'Réglages', icon: '⚙️', hint: 'Paramètres, dépense, remise à zéro.' }
-];
+/** Les vues valides. Leur libellé et leur icône vivent dans la barre latérale. */
+const VIEWS: View[] = ['apercu', 'direction', 'chantier', 'livrables', 'reglages'];
 
-const isView = (value: string | null): value is View => VIEWS.some((view) => view.id === value);
+const isView = (value: string | null): value is View => VIEWS.includes(value as View);
 
 /**
  * La page d'un produit.
@@ -62,29 +57,18 @@ export const MissionControl: React.FC = () => {
     const onActive = (event: any) => {
       if (event.detail?.id) setActiveId(event.detail.id);
     };
-    // Le bouton « précédent » du navigateur doit ramener à la vue précédente.
-    const onPop = () => {
-      const current = new URLSearchParams(window.location.search).get('vue');
-      setView(isView(current) ? current : 'apercu');
-    };
-
     window.addEventListener('ventures-updated', onVentures);
     window.addEventListener('active-project-changed', onActive);
-    window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('ventures-updated', onVentures);
       window.removeEventListener('active-project-changed', onActive);
-      window.removeEventListener('popstate', onPop);
     };
   }, [loadData]);
 
+  /** Changer de vue est une navigation : la barre latérale doit suivre. */
   const go = useCallback((next: string) => {
     if (!isView(next)) return;
-    setView(next);
-    const url = new URL(window.location.href);
-    next === 'apercu' ? url.searchParams.delete('vue') : url.searchParams.set('vue', next);
-    window.history.pushState({}, '', url);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.location.href = next === 'apercu' ? '/' : '/?vue=' + next;
   }, []);
 
   const activeVenture = ventures.find((entry) => entry.id === activeId) ?? ventures[0];
@@ -170,22 +154,6 @@ export const MissionControl: React.FC = () => {
         </div>
         <p className="mt-1 text-xs text-slate-500">{activeVenture.niche}</p>
 
-        <nav className="mt-4 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
-          {VIEWS.map((entry) => (
-            <button
-              key={entry.id}
-              onClick={() => go(entry.id)}
-              title={entry.hint}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                view === entry.id
-                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {entry.icon} {entry.label}
-            </button>
-          ))}
-        </nav>
       </header>
 
       {view === 'apercu' && <VentureOverview venture={identity} onGo={go} />}
