@@ -89,6 +89,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     openRouterKey?: string;
     culture?: CulturePillar[];
     persona?: string;
+    job?: string;
   };
 
   const brief = body.prompt?.trim() ?? '';
@@ -111,6 +112,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const prompt = [
     cultureBlock(body.culture),
     body.persona?.trim() || 'Tu es le graphiste de l’agence OmniVenture.',
+    body.job?.trim() ?? '',
     KIND_BRIEF[kind] ?? '',
     paletteLine,
     body.project ? `Produit concerné : ${body.project}.` : '',

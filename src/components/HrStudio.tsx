@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { saveRealAgentLog } from '../lib/agent-bus';
+import { agentPayload } from '../lib/agent-profile';
 import { readCulture } from '../lib/culture';
 import {
   addRequest,
@@ -142,6 +143,8 @@ export const HrStudio: React.FC = () => {
           })),
           teams,
           culture: readCulture(),
+          // Modèle, âme et fiche de poste viennent de la DRH du graphe.
+          ...agentPayload('recruiting'),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })
       });

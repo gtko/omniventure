@@ -9,6 +9,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { askModelJson } from '../../../lib/model-json';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
@@ -42,6 +43,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     openRouterKey?: string;
     model?: string;
     culture?: CulturePillar[];
+    persona?: string;
+    job?: string;
+    temperature?: number;
   };
 
   const need = body.need?.trim() ?? '';
@@ -57,8 +61,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const prompt = `${cultureBlock(body.culture)}
 
-Tu es la DRH d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS.
-Tu recrutes les agents qui manquent à l'organisation.
+${body.persona?.trim() || "Tu es la DRH d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS."}
+${body.job?.trim() ?? 'Tu recrutes les agents qui manquent à l’organisation.'}
 
 [BESOIN EXPRIMÉ${body.requestedByName ? ` PAR ${body.requestedByName}` : ''}]
 ${need.slice(0, 1200)}
@@ -86,38 +90,15 @@ Réponds STRICTEMENT par un objet JSON valide, sans markdown, sans texte autour 
 ${SHAPE}`;
 
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-        'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI - Recruiting'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.5,
-        max_tokens: 2000,
-        response_format: { type: 'json_object' }
-      })
+    // Trois tentatives, réparation du JSON tronqué comprise.
+    const { data: parsed, model: modelUsed } = await askModelJson({
+      key,
+      model,
+      prompt,
+      temperature: body.temperature ?? 0.5,
+      maxTokens: 2400,
+      title: 'OmniVenture AI - Recruiting'
     });
-
-    if (!res.ok) return json({ error: `OpenRouter ${res.status} : ${(await res.text()).slice(0, 200)}` }, 502);
-
-    const completion = (await res.json()) as any;
-    const raw: string = completion.choices?.[0]?.message?.content ?? '';
-    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start < 0 || end < 0) return json({ error: 'Réponse illisible du modèle' }, 502);
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleaned.slice(start, end + 1));
-    } catch {
-      return json({ error: 'JSON invalide dans la réponse du modèle' }, 502);
-    }
 
     const level = LEVELS.includes(parsed?.hierarchyLevel) ? parsed.hierarchyLevel : 'expert';
     const candidate = {
@@ -138,7 +119,7 @@ ${SHAPE}`;
         : []
     };
 
-    return json({ candidate, modelUsed: completion.model || model });
+    return json({ candidate, modelUsed });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Appel impossible' }, 500);
   }

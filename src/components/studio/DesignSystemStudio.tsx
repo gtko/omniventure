@@ -76,7 +76,9 @@ export const DesignSystemStudio: React.FC<{
             .map((color) => color.trim())
             .filter(Boolean),
           persona: designer?.ameMd,
+          job: designer?.jobMd,
           model: designer?.modelId,
+          temperature: designer?.temperature,
           culture: readCulture(),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })

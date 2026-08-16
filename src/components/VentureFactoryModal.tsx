@@ -70,6 +70,8 @@ interface StepView {
   status: 'start' | 'done';
   summary?: string;
   failed?: boolean;
+  /** Reprise en cours : « tentative 2/3 ». */
+  retry?: { attempt: number; max: number; reason: string };
 }
 
 
@@ -242,8 +244,11 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
 
           if (payload.type === 'step') {
             setSteps((prev) => {
+              const previous = prev.find((entry) => entry.key === payload.key);
               const next = prev.filter((entry) => entry.key !== payload.key);
-              return [...next, payload as StepView].sort(
+              const merged: StepView =
+                payload.status === 'done' ? (payload as StepView) : { ...(payload as StepView), retry: previous?.retry };
+              return [...next, merged].sort(
                 (a, b) => Number(a.status === 'done') - Number(b.status === 'done')
               );
             });
@@ -260,6 +265,15 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
                 modelUsed: payload.model
               });
             }
+          } else if (payload.type === 'retry') {
+            // L'étape n'a pas abouti : on montre la reprise plutôt qu'un gel.
+            setSteps((prev) =>
+              prev.map((entry) =>
+                entry.key === payload.key
+                  ? { ...entry, retry: { attempt: payload.attempt, max: payload.max, reason: payload.reason } }
+                  : entry
+              )
+            );
           } else if (payload.type === 'read') {
             setReads((prev) => {
               const next = prev.filter((entry) => entry.domain !== payload.domain);
@@ -421,6 +435,11 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
                   <span className="font-semibold text-slate-800">{step.label}</span>
                   <span className="text-slate-500">— {step.agentRole}</span>
                   <span className="font-mono text-[9.5px] text-slate-400">{step.model}</span>
+                  {step.retry && step.status !== 'done' && (
+                    <span className="ml-auto text-amber-600" title={step.retry.reason}>
+                      reprise {step.retry.attempt + 1}/{step.retry.max}
+                    </span>
+                  )}
                   {step.summary && <span className="ml-auto text-slate-500">{step.summary}</span>}
                 </div>
               ))}

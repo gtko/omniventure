@@ -8,6 +8,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { askModelJson } from '../../../lib/model-json';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
@@ -26,7 +27,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const body = (await request.json().catch(() => ({}))) as {
     docs?: Array<{ id: string; title: string; path: string; excerpt: string; updatedAt: number }>;
     persona?: string;
+    job?: string;
     model?: string;
+    temperature?: number;
     openRouterKey?: string;
     culture?: CulturePillar[];
   };
@@ -51,6 +54,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const prompt = `${cultureBlock(body.culture)}
 
 ${body.persona?.trim() || "Tu es le documentaliste d'OmniVenture."}
+${body.job?.trim() ?? ''}
 
 [BASE DE CONNAISSANCE ACTUELLE — ${docs.length} documents]
 ${inventory.slice(0, 22000)}
@@ -71,33 +75,15 @@ ${SHAPE}
 Écris en français.`;
 
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-        'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI - Documentation Review'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 3000,
-        response_format: { type: 'json_object' }
-      })
+    // Trois tentatives, réparation du JSON tronqué comprise.
+    const { data: parsed, model: modelUsed } = await askModelJson({
+      key,
+      model,
+      prompt,
+      temperature: body.temperature ?? 0.3,
+      maxTokens: 3000,
+      title: 'OmniVenture AI - Documentation Review'
     });
-
-    if (!res.ok) return json({ error: `OpenRouter ${res.status} : ${(await res.text()).slice(0, 200)}` }, 502);
-
-    const completion = (await res.json()) as any;
-    const raw: string = completion.choices?.[0]?.message?.content ?? '';
-    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start < 0 || end < 0) return json({ error: 'Réponse illisible du modèle' }, 502);
-
-    const parsed = JSON.parse(cleaned.slice(start, end + 1));
     const list = (value: unknown, max: number) => (Array.isArray(value) ? value.slice(0, max) : []);
 
     return json({
@@ -108,7 +94,7 @@ ${SHAPE}
         missing: list(parsed?.missing, 12),
         reorganisation: list(parsed?.reorganisation, 12),
         duplicates: list(parsed?.duplicates, 8),
-        modelUsed: completion.model || model,
+        modelUsed,
         at: Date.now()
       }
     });

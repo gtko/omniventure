@@ -17,6 +17,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { askModelJson } from '../../../lib/model-json';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
@@ -163,6 +164,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     count?: number;
     direction?: string;
     culture?: CulturePillar[];
+    // L'agent responsable de cet appel (Chief of Staff), tel qu'il est réglé
+    // dans le studio : c'est lui qui fournit modèle, persona et fiche de poste.
+    persona?: string;
+    job?: string;
+    temperature?: number;
   };
 
   const key = body.openRouterKey?.trim() || env?.OPENROUTER_API_KEY;
@@ -179,11 +185,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const existing = await readAll(env);
   const count = Math.max(3, Math.min(12, body.count ?? 6));
-  const model = body.model?.trim() || 'deepseek/deepseek-v4-flash';
+  const model = body.model?.trim() || 'deepseek/deepseek-chat';
 
   const prompt = `${cultureBlock(body.culture)}
 
-Tu es le Chief of Staff d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS rentables.
+${body.persona?.trim() || "Tu es le Chief of Staff d'OmniVenture, une agence d'agents IA qui construit et exploite des micro-SaaS rentables."}
+${body.job?.trim() ?? ''}
+
 Tu n'as PAS autorité sur la feuille de route : elle est fixée par l'opérateur humain, ci-dessous.
 
 [DIRECTION DONNÉE PAR L'OPÉRATEUR — c'est la consigne qui prime sur tout le reste]
@@ -210,40 +218,23 @@ Réponds STRICTEMENT par un tableau JSON, sans texte autour :
   "prompt": "consigne autoportante pour un agent de code : fichiers concernés, comportement attendu, critère de validation"
 }]`;
 
-  let raw: string;
-  try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-        'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI - Self Improvement'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.8,
-        max_tokens: 3000
-      })
-    });
-    if (!res.ok) return json({ error: `OpenRouter ${res.status} : ${(await res.text()).slice(0, 200)}` }, 502);
-    const completion = (await res.json()) as any;
-    raw = completion.choices?.[0]?.message?.content ?? '';
-  } catch (err) {
-    return json({ error: err instanceof Error ? err.message : 'Appel impossible' }, 500);
-  }
-
-  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-  const start = cleaned.indexOf('[');
-  const end = cleaned.lastIndexOf(']');
-  if (start < 0 || end < 0) return json({ error: 'Réponse illisible du modèle' }, 502);
-
   let parsed: any[];
   try {
-    parsed = JSON.parse(cleaned.slice(start, end + 1));
-  } catch {
-    return json({ error: 'JSON invalide dans la réponse' }, 502);
+    // Trois tentatives, réparation du JSON tronqué comprise. La réponse
+    // attendue est un tableau : le format strict d'OpenRouter ne s'applique
+    // donc pas, d'où l'importance de la réparation.
+    const result = await askModelJson({
+      key,
+      model,
+      prompt,
+      temperature: body.temperature ?? 0.8,
+      maxTokens: 3000,
+      title: 'OmniVenture AI - Self Improvement',
+      expect: 'array'
+    });
+    parsed = Array.isArray(result.data) ? result.data : [];
+  } catch (err) {
+    return json({ error: err instanceof Error ? err.message : 'Appel impossible' }, 500);
   }
 
   const now = Date.now();

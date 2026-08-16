@@ -15,6 +15,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { askModelJson } from '../../../lib/model-json';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
 
 export const prerender = false;
@@ -51,7 +52,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     logoAssetId?: string;
     project?: string;
     persona?: string;
+    job?: string;
     model?: string;
+    temperature?: number;
     openRouterKey?: string;
     culture?: CulturePillar[];
   };
@@ -69,6 +72,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const prompt = `${cultureBlock(body.culture)}
 
 ${body.persona?.trim() || "Tu es la designeuse système d'OmniVenture."}
+${body.job?.trim() ?? ''}
 
 [PRODUIT]
 ${brief.slice(0, 2000)}
@@ -93,38 +97,16 @@ ${SHAPE}
 Écris les descriptions en français.`;
 
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-        'HTTP-Referer': 'https://factory.dev',
-        'X-Title': 'OmniVenture AI - Design System'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.4,
-        max_tokens: 6000,
-        response_format: { type: 'json_object' }
-      })
+    // Trois tentatives, réparation du JSON tronqué comprise : un système de
+    // design est une réponse longue, donc particulièrement exposée.
+    const { data: parsed, model: modelUsed, attempts } = await askModelJson({
+      key,
+      model,
+      prompt,
+      temperature: body.temperature ?? 0.4,
+      maxTokens: 6000,
+      title: 'OmniVenture AI - Design System'
     });
-
-    if (!res.ok) return json({ error: `OpenRouter ${res.status} : ${(await res.text()).slice(0, 200)}` }, 502);
-
-    const completion = (await res.json()) as any;
-    const raw: string = completion.choices?.[0]?.message?.content ?? '';
-    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start < 0 || end < 0) return json({ error: 'Réponse illisible du modèle' }, 502);
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleaned.slice(start, end + 1));
-    } catch {
-      return json({ error: 'JSON invalide dans la réponse du modèle' }, 502);
-    }
 
     const tokens = (Array.isArray(parsed?.tokens) ? parsed.tokens : [])
       .filter((token: any) => token?.name && token?.value)
@@ -167,9 +149,9 @@ ${SHAPE}
         tokens,
         components,
         notes: String(parsed?.notes ?? '').slice(0, 1200),
-        modelUsed: completion.model || model
+        modelUsed
       },
-      tokens: { input: completion.usage?.prompt_tokens ?? 0, output: completion.usage?.completion_tokens ?? 0 }
+      attempts
     });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Appel impossible' }, 500);

@@ -32,6 +32,9 @@ interface TopicsBody {
   model?: string;
   count?: number;
   context?: string;
+  /** Persona et fiche de poste de l'agent responsable (DRH). */
+  persona?: string;
+  job?: string;
 }
 
 interface StoredTopics {
@@ -175,8 +178,19 @@ async function resolveModel(key: string, requested: string): Promise<string> {
   }
 }
 
-async function generateBatch(key: string, model: string, theme: string, count: number, context: string): Promise<string[]> {
-  const prompt = `Tu écris les dialogues d'ambiance d'un jeu de gestion représentant une agence IA de 230 personnes.
+async function generateBatch(
+  key: string,
+  model: string,
+  theme: string,
+  count: number,
+  context: string,
+  persona?: string,
+  job?: string
+): Promise<string[]> {
+  const prompt = `${persona?.trim() || "Tu es responsable de la vie d'agence chez OmniVenture."}
+${job?.trim() ?? ''}
+
+Tu écris les dialogues d'ambiance d'un jeu de gestion représentant une agence IA de 230 personnes.
 
 [CONTEXTE RÉEL DE LA BOÎTE]
 ${context}
@@ -262,7 +276,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const results = await Promise.allSettled(
     Array.from({ length: batches }, (_, i) =>
-      generateBatch(key, model, THEMES[i % THEMES.length], BATCH_SIZE, context)
+      generateBatch(key, model, THEMES[i % THEMES.length], BATCH_SIZE, context, body.persona, body.job)
     )
   );
 

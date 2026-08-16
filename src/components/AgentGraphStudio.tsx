@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelCombobox, type OpenRouterModelItem } from './ModelCombobox';
+import { agentCall } from '../lib/agent-profile';
 import { CultureEditor } from './CultureEditor';
 import { EnterpriseNetworkGraph } from './EnterpriseNetworkGraph';
 import { exportGraphToZip, importGraphFromZip, downloadBlobAsFile, type CommunicationChannel } from '../lib/zip-manager';
@@ -336,6 +337,25 @@ Il considère qu'une décision non écrite n'a pas eu lieu. Il traque les doublo
     jobMd: `# Job.md — Documentation
 
 Relire la base : signaler ce qui est faux, périmé ou mal rangé, lister ce qui manque pour réduire le bus factor, proposer une arborescence tenable. Ne pas réécrire à la place des auteurs.`
+  },
+  {
+    id: 'improve_agent',
+    role: 'Chief of Staff — Auto-amélioration du produit',
+    hierarchyLevel: 'head_of',
+    tier: 2,
+    teamId: 'team_ops_qa',
+    teamName: 'Direction & Organisation',
+    category: 'orchestration',
+    modelId: 'deepseek/deepseek-chat',
+    description: "Traduit la direction donnée par l'opérateur en évolutions concrètes du produit, chiffrées et implémentables.",
+    temperature: 0.8,
+    maxTokens: 3000,
+    ameMd: `# Ame.md — Chief of Staff
+
+Il ne propose que ce qui sert la direction reçue. Une idée brillante hors cap est une idée écartée.`,
+    jobMd: `# Job.md — Auto-amélioration
+
+À partir de la direction de l'opérateur et de l'état du produit : proposer des évolutions concrètes, chacune avec son impact, son effort, son score et une consigne autoportante pour un agent de code.`
   }
 ];
 
@@ -483,7 +503,9 @@ export const AgentGraphStudio: React.FC = () => {
   // AI Graph Generator Modal State
   const [isAiModalOpen, setIsAiModalOpen] = useState<boolean>(false);
   const [aiPrompt, setAiPrompt] = useState<string>('');
-  const [aiModel, setAiModel] = useState<string>('google/gemini-2.5-flash');
+  // Le générateur d'organigramme est un appel de modèle comme un autre : il
+  // part sur celui de la DRH, responsable de la conception de l'organisation.
+  const [aiModel, setAiModel] = useState<string>(() => agentCall('orgDesign').model ?? 'google/gemini-2.5-flash');
   const [generatorMode, setGeneratorMode] = useState<'full_supergraph' | 'add_team'>('full_supergraph');
   const [isGeneratingGraph, setIsGeneratingGraph] = useState<boolean>(false);
   const [generatedGraphPreview, setGeneratedGraphPreview] = useState<{ summary: string; teams?: TeamData[]; agents: AgentCustomData[]; channels: CommunicationChannel[] } | null>(null);

@@ -41,7 +41,8 @@ export const GRAPH_DEFAULTS: GraphAgent[] = [
   { id: 'ui_designer', role: 'Expert UI & Design System', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat', teamName: 'Design & Marque' },
   { id: 'graphic_agent', role: 'Graphiste — Logos, Illustrations & Maquettes', tier: 2, category: 'growth', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash-image', teamName: 'Design & Marque' },
   { id: 'design_system_agent', role: 'Designeuse Système — Tokens & Composants', tier: 2, category: 'engineering', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
-  { id: 'doc_agent', role: 'Documentaliste — Connaissance & Process', tier: 2, category: 'operations', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' }
+  { id: 'doc_agent', role: 'Documentaliste — Connaissance & Process', tier: 2, category: 'operations', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' },
+  { id: 'improve_agent', role: "Chief of Staff — Auto-amélioration du produit", tier: 2, category: 'orchestration', hierarchyLevel: 'head_of', modelId: 'deepseek/deepseek-chat', teamName: 'Direction & Organisation' }
 ];
 
 /** Prénom d'affichage des agents historiques du graphe. */
@@ -62,7 +63,8 @@ const KNOWN_NAMES: Record<string, string> = {
   ui_designer: 'Théo',
   graphic_agent: 'Milo',
   design_system_agent: 'Anaïs',
-  doc_agent: 'Basile'
+  doc_agent: 'Basile',
+  improve_agent: 'Rémi'
 };
 
 /** Pôle du bureau où s'installe chaque famille d'agents. */

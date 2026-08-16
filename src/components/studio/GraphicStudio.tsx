@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { saveRealAgentLog } from '../../lib/agent-bus';
+import { agentCall } from '../../lib/agent-profile';
 import { readCulture } from '../../lib/culture';
 import { readGraph } from '../../lib/hiring';
 
@@ -43,7 +44,8 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
 }) => {
   const [assets, setAssets] = useState<StoredAsset[]>([]);
   const [models, setModels] = useState<ImageModel[]>([]);
-  const [model, setModel] = useState('google/gemini-2.5-flash-image');
+  // Le modèle vient de la fiche du graphiste ; le menu permet un écart ponctuel.
+  const [model, setModel] = useState(() => agentCall('image').model ?? 'google/gemini-2.5-flash-image');
   const [kind, setKind] = useState('logo');
   const [prompt, setPrompt] = useState('');
   const [project, setProject] = useState('');
@@ -75,6 +77,7 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
         if (!res.ok) return;
         const json = (await res.json()) as { models: ImageModel[] };
         setModels(json.models ?? []);
+        // On ne remplace le modèle de l'agent que s'il n'existe plus chez OpenRouter.
         if (json.models?.length && !json.models.some((entry) => entry.id === model)) {
           setModel(json.models[0].id);
         }
@@ -122,6 +125,7 @@ export const GraphicStudio: React.FC<{ onPalette?: (colors: string[], logoAssetI
             .filter((color) => /^#?[0-9a-f]{3,8}$/i.test(color))
             .map((color) => (color.startsWith('#') ? color : `#${color}`)),
           persona: graphic?.ameMd,
+          job: graphic?.jobMd,
           culture: readCulture(),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })

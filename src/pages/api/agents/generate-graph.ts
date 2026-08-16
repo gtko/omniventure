@@ -9,7 +9,11 @@ export const POST: APIRoute = async ({ request }) => {
       prompt, 
       openRouterKey, 
       model = 'google/gemini-2.5-flash',
-      availableModels = []
+      availableModels = [],
+      // Concevoir l'organigramme est un acte de DRH : elle prête sa persona
+      // et sa fiche de poste à cet appel.
+      persona,
+      job
     } = body;
 
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -35,7 +39,10 @@ ${availableModels.slice(0, 40).map((m: any) => `- ${m.id} (${m.name})`).join('\n
     // If an OpenRouter key is available, call the real LLM for deep graph & team generation
     if (openRouterKey && openRouterKey.startsWith('sk-or-')) {
       try {
-        const systemInstruction = `Tu es le Métamodèle Architecte d'Entreprises d'IA & Systèmes Multi-Agents OmniVenture.
+        const systemInstruction = `${persona?.trim() || "Tu es la DRH d'OmniVenture, architecte de l'organisation."}
+${job?.trim() ?? ''}
+
+Tu es le Métamodèle Architecte d'Entreprises d'IA & Systèmes Multi-Agents OmniVenture.
 Ta mission est de concevoir un Super-Graphe d'Équipes d'Agents complet, ultra-profond et moderne selon la demande de l'utilisateur.
 
 HIÉRARCHIE D'ENTREPRISE STRICTE (5 NIVEAUX DE PROFONDEUR) :

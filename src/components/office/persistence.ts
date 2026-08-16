@@ -9,6 +9,7 @@
 
 import { STATE_STORAGE_KEY, TOPICS_STORAGE_KEY } from './constants';
 import type { OfficeSnapshot } from './simulation';
+import { agentCall } from '../../lib/agent-profile';
 
 export type StateSource = 'd1' | 'kv' | 'local' | 'none';
 
@@ -136,16 +137,25 @@ export interface GenerateTopicsResult {
 
 /** Génération ponctuelle de la banque via OpenRouter (coût unique, assumé). */
 export async function generateTopics(options: {
-  model: string;
+  model?: string;
   count: number;
   context: string;
 }): Promise<GenerateTopicsResult> {
   const openRouterKey = localStorage.getItem('omniventure_openrouter_key') ?? undefined;
+  // La banque de sujets est un appel de modèle : elle a donc un agent
+  // responsable dans le graphe, dont elle prend modèle, âme et fiche de poste.
+  const owner = agentCall('officeTopics');
 
   const res = await fetch('/api/office/topics', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...options, openRouterKey })
+    body: JSON.stringify({
+      ...options,
+      model: options.model || owner.model,
+      persona: owner.persona,
+      job: owner.job,
+      openRouterKey
+    })
   });
 
   const json = (await res.json()) as GenerateTopicsResult & { error?: string };

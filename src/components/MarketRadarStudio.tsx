@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getStoredVentures, saveStoredVentures, setActiveProjectId } from '../lib/store';
 import { saveRealAgentLog } from '../lib/agent-bus';
+import { readGraph } from '../lib/hiring';
 import type { Venture } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -203,15 +204,9 @@ export const MarketRadarStudio: React.FC = () => {
       const key = localStorage.getItem('omniventure_openrouter_key');
       if (key) setOpenRouterKey(key);
 
-      const agentsStr =
-        localStorage.getItem('omniventure_custom_agents_v4') ||
-        localStorage.getItem('omniventure_custom_agents_v3') ||
-        localStorage.getItem('omniventure_custom_agents_v2');
-      if (agentsStr) {
-        const list = JSON.parse(agentsStr);
-        const found = Array.isArray(list) ? list.find((a: any) => a.id === 'market_agent') : null;
-        if (found) setConfiguredAgent(found);
-      }
+      // Le graphe courant fait foi : c'est lui qui porte modèle, âme et poste.
+      const found = readGraph().find((agent) => agent.id === 'market_agent');
+      if (found) setConfiguredAgent(found);
     } catch {
       /* stockage indisponible */
     }

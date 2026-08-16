@@ -21,6 +21,7 @@
 
 import type { APIRoute } from 'astro';
 import { cultureBlock, type CulturePillar } from '../../../lib/culture';
+import { askModelJson } from '../../../lib/model-json';
 import { collectEvidence, detectTech } from '../market/analyze';
 
 export const prerender = false;
@@ -61,10 +62,9 @@ async function askAgent(options: {
   shape: string;
   maxTokens?: number;
   culture?: CulturePillar[] | null;
-}): Promise<{ data: any; model: string; tokens: number }> {
-  const { key, agent, fallbackRole, instruction, shape } = options;
-  const model = agent?.modelId || FALLBACK_MODEL;
-
+  onRetry?: (info: { attempt: number; max: number; reason: string }) => void;
+}): Promise<{ data: any; model: string; tokens: number; attempts: number }> {
+  const { agent, fallbackRole, instruction, shape } = options;
   const persona = agent?.ameMd?.trim() || `Tu es ${agent?.role || fallbackRole} chez OmniVenture.`;
   const job = agent?.jobMd?.trim() || '';
 
@@ -81,119 +81,15 @@ ${shape}
 
 Écris en français. Sois concret : des noms, des chiffres, des faits. Aucune généralité de consultant.`;
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-      'HTTP-Referer': 'https://factory.dev',
-      'X-Title': 'OmniVenture AI - Venture Blueprint'
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: agent?.temperature ?? 0.5,
-      max_tokens: options.maxTokens ?? 2400,
-      response_format: { type: 'json_object' }
-    })
+  return askModelJson({
+    key: options.key,
+    model: agent?.modelId || FALLBACK_MODEL,
+    prompt,
+    temperature: agent?.temperature ?? 0.5,
+    maxTokens: options.maxTokens,
+    title: 'OmniVenture AI - Venture Blueprint',
+    onRetry: options.onRetry
   });
-
-  if (!res.ok) throw new Error(`${model} → OpenRouter ${res.status} : ${(await res.text()).slice(0, 160)}`);
-
-  const completion = (await res.json()) as any;
-  const raw: string = completion.choices?.[0]?.message?.content ?? '';
-
-  return {
-    data: parseModelJson(raw, model),
-    model: completion.model || model,
-    tokens: (completion.usage?.completion_tokens ?? 0) + (completion.usage?.prompt_tokens ?? 0)
-  };
-}
-
-/**
- * Lecture tolérante du JSON d'un modèle.
- *
- * Un modèle qui atteint sa limite de jetons s'arrête au milieu d'un tableau :
- * la réponse est alors utilisable à 95 %, mais `JSON.parse` la rejette en bloc.
- * On répare donc ce qui est réparable — virgules traînantes, chaîne ouverte,
- * accolades non refermées — plutôt que de jeter le travail de l'agent.
- */
-export function parseModelJson(raw: string, model = 'modèle'): any {
-  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-  const start = cleaned.indexOf('{');
-  if (start < 0) throw new Error(`${model} : réponse sans objet JSON`);
-
-  const end = cleaned.lastIndexOf('}');
-  const candidates: string[] = [];
-  if (end > start) candidates.push(cleaned.slice(start, end + 1));
-  candidates.push(cleaned.slice(start));
-
-  for (const candidate of candidates) {
-    for (const attempt of [candidate, dropTrailingCommas(candidate), closeTruncated(candidate)]) {
-      try {
-        return JSON.parse(attempt);
-      } catch {
-        /* on essaie la réparation suivante */
-      }
-    }
-  }
-  throw new Error(`${model} : JSON invalide même après réparation`);
-}
-
-const dropTrailingCommas = (text: string) => text.replace(/,\s*([}\]])/g, '$1');
-
-/**
- * Referme une réponse coupée en cours de route : on parcourt le texte en
- * suivant les chaînes et les échappements, on tronque l'élément incomplet,
- * puis on ferme les structures restées ouvertes.
- */
-function closeTruncated(text: string): string {
-  const stack: string[] = [];
-  let inString = false;
-  let escaped = false;
-  /** Dernière position sûre : juste après un élément complet. */
-  let safe = -1;
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') inString = true;
-    else if (char === '{' || char === '[') stack.push(char === '{' ? '}' : ']');
-    else if (char === '}' || char === ']') {
-      stack.pop();
-      safe = i;
-    } else if (char === ',') safe = i - 1;
-  }
-
-  if (stack.length === 0) return text;
-
-  // On coupe l'élément laissé à moitié, puis on referme dans l'ordre inverse.
-  const trimmed = safe >= 0 ? text.slice(0, safe + 1) : text;
-  const reopened: string[] = [];
-  let depthString = false;
-  let depthEscape = false;
-  const open: string[] = [];
-  for (let i = 0; i < trimmed.length; i++) {
-    const char = trimmed[i];
-    if (depthString) {
-      if (depthEscape) depthEscape = false;
-      else if (char === '\\') depthEscape = true;
-      else if (char === '"') depthString = false;
-      continue;
-    }
-    if (char === '"') depthString = true;
-    else if (char === '{') open.push('}');
-    else if (char === '[') open.push(']');
-    else if (char === '}' || char === ']') open.pop();
-  }
-  while (open.length > 0) reopened.push(open.pop() as string);
-
-  return dropTrailingCommas(trimmed) + reopened.join('');
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,18 +172,32 @@ export const POST: APIRoute = async ({ request, locals }) => {
       };
 
 
-      /** Un métier peut échouer sans que le dossier entier soit perdu. */
+      /**
+       * Un métier retente jusqu'à trois fois avant d'abandonner, et son échec
+       * final vide sa section sans emporter le dossier.
+       */
       const failures: string[] = [];
       const safeAsk = async (
         definition: StepDefinition,
         options: Parameters<typeof askAgent>[0]
       ): Promise<{ data: any; model: string; tokens: number; ok: boolean }> => {
         try {
-          const result = await askAgent(options);
+          const result = await askAgent({
+            ...options,
+            onRetry: ({ attempt, max, reason }) =>
+              send({
+                type: 'retry',
+                key: definition.key,
+                label: definition.label,
+                attempt,
+                max,
+                reason: reason.slice(0, 140)
+              })
+          });
           return { ...result, ok: true };
         } catch (error) {
           const reason = error instanceof Error ? error.message : 'échec';
-          failures.push(`${definition.label} — ${reason}`);
+          failures.push(`${definition.label} — ${reason} (3 tentatives)`);
           return { data: {}, model: options.agent?.modelId ?? FALLBACK_MODEL, tokens: 0, ok: false };
         }
       };

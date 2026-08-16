@@ -107,7 +107,9 @@ export const DocsWorkspace: React.FC = () => {
             updatedAt: doc.updatedAt
           })),
           persona: documentalist?.ameMd,
+          job: documentalist?.jobMd,
           model: documentalist?.modelId,
+          temperature: documentalist?.temperature,
           culture: readCulture(),
           openRouterKey: localStorage.getItem('omniventure_openrouter_key') ?? undefined
         })

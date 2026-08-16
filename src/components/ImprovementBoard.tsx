@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { agentPayload } from '../lib/agent-profile';
 import { readCulture } from '../lib/culture';
 import { checkRunner, startRun, type HarnessInfo } from '../lib/harness-client';
 
@@ -129,6 +130,7 @@ export const ImprovementBoard: React.FC = () => {
           context,
           direction: direction.trim(),
           culture: readCulture(),
+          ...agentPayload('improve'),
           count: 6
         })
       });
