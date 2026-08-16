@@ -638,7 +638,33 @@ export const AgentGraphStudio: React.FC = () => {
       if (models && models.length > 0) {
         setKeyStatus('valid');
         writeLocal('omniventure_openrouter_key', openRouterKey);
-        setNotification(`Connexion réussie ! ${models.length} modèles OpenRouter prêts.`);
+
+        /*
+         * La clé part aussi au coffre, chiffrée.
+         *
+         * C'est le serveur qui appelle le modèle depuis que la chaîne a
+         * déménagé : sans cela, il faudrait lui retransmettre la clé à chaque
+         * démarrage — et une clé qui circule finit dans un journal. Rangée là,
+         * elle ne ressort plus.
+         */
+        const stored = await fetch('/api/vault', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'OPENROUTER_API_KEY',
+            value: openRouterKey,
+            category: 'modeles',
+            description: 'Clé OpenRouter utilisée par le chantier serveur.'
+          })
+        })
+          .then((res) => res.json() as Promise<any>)
+          .catch(() => ({ error: 'coffre injoignable' }));
+
+        setNotification(
+          stored?.saved
+            ? `Connexion réussie ! ${models.length} modèles prêts, clé rangée au coffre.`
+            : `Connexion réussie ! ${models.length} modèles prêts (coffre indisponible : le serveur devra recevoir la clé au démarrage).`
+        );
       } else {
         setKeyStatus('invalid');
         setNotification('Clé OpenRouter rejetée.');

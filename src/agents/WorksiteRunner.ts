@@ -19,7 +19,8 @@
  */
 
 import { runAgent, type AgentTool } from '../lib/agent-sdk';
-import { SHARED_ROLES } from '../lib/agent-roster';
+import { defaultAgency, readAgency, type AgencyAgent } from '../lib/agency-graph';
+import { resolveOpenRouterKey } from '../lib/openrouter-key';
 import { PHASES, phaseById, handoffPrompt, type Phase } from '../lib/pipeline';
 import { runSandboxTool, WORKDIR } from '../lib/sandbox-tools';
 import { ensureWorksiteTables } from '../lib/worksite-store';
@@ -86,11 +87,17 @@ export class WorksiteRunner {
     }
 
     /*
-     * La clé ne va ni dans la base ni dans le journal : elle reste dans le
-     * stockage du Durable Object, qui n'est lu par personne d'autre.
+     * La clé vient d'abord de l'environnement, puis du coffre, et seulement à
+     * défaut de l'appelant. Elle ne va ni dans la base ni dans le journal :
+     * elle reste dans le stockage de l'hôte, que personne d'autre ne lit.
      */
-    const key = payload.openRouterKey?.trim() || this.env.OPENROUTER_API_KEY;
-    if (!key || !key.startsWith('sk-or-')) return { error: 'Clé OpenRouter absente ou invalide.' };
+    const key = await resolveOpenRouterKey(this.env, payload.openRouterKey);
+    if (!key) {
+      return {
+        error:
+          "Clé OpenRouter absente. Rangez-la dans le coffre (elle y sera chiffrée et le serveur s'en servira seul) ou renseignez-la dans le studio d'agents."
+      };
+    }
 
     await ensureWorksiteTables(this.env.DB);
 
@@ -140,6 +147,9 @@ export class WorksiteRunner {
   async alarm(): Promise<void> {
     const runId = await this.state.storage.get<string>('runId');
     if (!runId) return;
+
+    // Vous avez pu modifier l'organigramme entre deux réveils.
+    this.roster = null;
 
     try {
       const keepGoing = await this.tick(runId);
@@ -219,7 +229,7 @@ export class WorksiteRunner {
     }
 
     const deliverables = await this.deliverablesOf(runId, phase.id);
-    const lead = this.pickAgent(phaseById(phase.next as any));
+    const lead = this.pickAgent(phaseById(phase.next as any), await this.agency());
     const key = (await this.state.storage.get<string>('key'))!;
 
     await this.patch(runId, { step: `passation ${phase.label} → ${phaseById(phase.next as any).label}` });
@@ -257,7 +267,7 @@ export class WorksiteRunner {
 
   /** Une tâche : un agent, un livrable, un compte rendu. */
   private async runTask(runId: string, run: any, phase: Phase, task: any): Promise<void> {
-    const agent = this.pickAgent(phase);
+    const agent = this.pickAgent(phase, await this.agency());
     const attempt = Number(task.attempt ?? 0) + 1;
     const key = (await this.state.storage.get<string>('key'))!;
 
@@ -457,13 +467,32 @@ export class WorksiteRunner {
     ];
   }
 
-  /** L'étape désigne ses responsables : on prend le premier qui existe. */
-  private pickAgent(phase: Phase) {
+  /**
+   * L'agence telle que vous l'avez construite.
+   *
+   * Lue une fois par réveil et gardée en mémoire le temps de celui-ci : la
+   * relire à chaque tâche coûterait une requête pour rien, et la garder au-delà
+   * ferait travailler le chantier avec un organigramme périmé.
+   */
+  private roster: AgencyAgent[] | null = null;
+
+  private async agency(): Promise<AgencyAgent[]> {
+    if (!this.roster) this.roster = await readAgency(this.env.DB);
+    return this.roster;
+  }
+
+  /**
+   * L'étape désigne ses responsables : on prend le premier qui existe dans le
+   * graphe. S'il n'y est pas — vous avez pu renommer ou supprimer ce rôle — on
+   * se rabat sur un agent du bon niveau plutôt que de refuser d'avancer.
+   */
+  private pickAgent(phase: Phase, roster: AgencyAgent[]): AgencyAgent {
     for (const id of phase.owners) {
-      const found = SHARED_ROLES.find((agent) => agent.id === id);
+      const found = roster.find((agent) => agent.id === id);
       if (found) return found;
     }
-    return SHARED_ROLES[0];
+    const senior = roster.find((agent) => agent.level === 'c_level' || agent.level === 'vp');
+    return senior ?? roster[0] ?? defaultAgency()[0];
   }
 
   private async deliverablesOf(runId: string, phaseId: string): Promise<string> {
