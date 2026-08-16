@@ -93,7 +93,7 @@ ${shape}
       model,
       messages: [{ role: 'user', content: prompt }],
       temperature: agent?.temperature ?? 0.5,
-      max_tokens: options.maxTokens ?? 1800,
+      max_tokens: options.maxTokens ?? 2400,
       response_format: { type: 'json_object' }
     })
   });
@@ -102,16 +102,98 @@ ${shape}
 
   const completion = (await res.json()) as any;
   const raw: string = completion.choices?.[0]?.message?.content ?? '';
-  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) throw new Error(`${model} : réponse illisible`);
 
   return {
-    data: JSON.parse(cleaned.slice(start, end + 1)),
+    data: parseModelJson(raw, model),
     model: completion.model || model,
     tokens: (completion.usage?.completion_tokens ?? 0) + (completion.usage?.prompt_tokens ?? 0)
   };
+}
+
+/**
+ * Lecture tolérante du JSON d'un modèle.
+ *
+ * Un modèle qui atteint sa limite de jetons s'arrête au milieu d'un tableau :
+ * la réponse est alors utilisable à 95 %, mais `JSON.parse` la rejette en bloc.
+ * On répare donc ce qui est réparable — virgules traînantes, chaîne ouverte,
+ * accolades non refermées — plutôt que de jeter le travail de l'agent.
+ */
+export function parseModelJson(raw: string, model = 'modèle'): any {
+  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const start = cleaned.indexOf('{');
+  if (start < 0) throw new Error(`${model} : réponse sans objet JSON`);
+
+  const end = cleaned.lastIndexOf('}');
+  const candidates: string[] = [];
+  if (end > start) candidates.push(cleaned.slice(start, end + 1));
+  candidates.push(cleaned.slice(start));
+
+  for (const candidate of candidates) {
+    for (const attempt of [candidate, dropTrailingCommas(candidate), closeTruncated(candidate)]) {
+      try {
+        return JSON.parse(attempt);
+      } catch {
+        /* on essaie la réparation suivante */
+      }
+    }
+  }
+  throw new Error(`${model} : JSON invalide même après réparation`);
+}
+
+const dropTrailingCommas = (text: string) => text.replace(/,\s*([}\]])/g, '$1');
+
+/**
+ * Referme une réponse coupée en cours de route : on parcourt le texte en
+ * suivant les chaînes et les échappements, on tronque l'élément incomplet,
+ * puis on ferme les structures restées ouvertes.
+ */
+function closeTruncated(text: string): string {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  /** Dernière position sûre : juste après un élément complet. */
+  let safe = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{' || char === '[') stack.push(char === '{' ? '}' : ']');
+    else if (char === '}' || char === ']') {
+      stack.pop();
+      safe = i;
+    } else if (char === ',') safe = i - 1;
+  }
+
+  if (stack.length === 0) return text;
+
+  // On coupe l'élément laissé à moitié, puis on referme dans l'ordre inverse.
+  const trimmed = safe >= 0 ? text.slice(0, safe + 1) : text;
+  const reopened: string[] = [];
+  let depthString = false;
+  let depthEscape = false;
+  const open: string[] = [];
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (depthString) {
+      if (depthEscape) depthEscape = false;
+      else if (char === '\\') depthEscape = true;
+      else if (char === '"') depthString = false;
+      continue;
+    }
+    if (char === '"') depthString = true;
+    else if (char === '{') open.push('}');
+    else if (char === '[') open.push(']');
+    else if (char === '}' || char === ']') open.pop();
+  }
+  while (open.length > 0) reopened.push(open.pop() as string);
+
+  return dropTrailingCommas(trimmed) + reopened.join('');
 }
 
 /* ------------------------------------------------------------------ */
@@ -193,12 +275,29 @@ export const POST: APIRoute = async ({ request, locals }) => {
         });
       };
 
+
+      /** Un métier peut échouer sans que le dossier entier soit perdu. */
+      const failures: string[] = [];
+      const safeAsk = async (
+        definition: StepDefinition,
+        options: Parameters<typeof askAgent>[0]
+      ): Promise<{ data: any; model: string; tokens: number; ok: boolean }> => {
+        try {
+          const result = await askAgent(options);
+          return { ...result, ok: true };
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'échec';
+          failures.push(`${definition.label} — ${reason}`);
+          return { data: {}, model: options.agent?.modelId ?? FALLBACK_MODEL, tokens: 0, ok: false };
+        }
+      };
+
       let totalTokens = 0;
 
       try {
         /* 1. Cadrage ------------------------------------------------ */
         step(STEPS[0], 'start');
-        const cadrage = await askAgent({
+        const cadrage = await safeAsk(STEPS[0], {
           key,
           agent: agentOf('master'),
           fallbackRole: STEPS[0].fallbackRole,
@@ -216,7 +315,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
         const domains = asStrings(cadrage.data?.competitorDomains, 6)
           .map((domain) => domain.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim())
           .filter((domain) => /\./.test(domain));
-        step(STEPS[0], 'done', { summary: `${domains.length} concurrents à étudier` });
+        step(STEPS[0], 'done', {
+          summary: cadrage.ok ? `${domains.length} concurrents à étudier` : '⚠ étape échouée',
+          failed: !cadrage.ok
+        });
 
         /* 2. Lecture réelle des sites ------------------------------- */
         step(STEPS[1], 'start', { model: 'aucun modèle — lecture directe' });
@@ -243,12 +345,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
         /* 3. Analyse concurrentielle -------------------------------- */
         step(STEPS[2], 'start');
-        const concurrence = await askAgent({
+        const concurrence = await safeAsk(STEPS[2], {
           key,
           agent: agentOf('market_agent'),
           fallbackRole: STEPS[2].fallbackRole,
           culture,
-          maxTokens: 2200,
+          maxTokens: 3200,
           instruction: `[PROJET]\n${cadrage.data?.brief ?? idea}\n\n[PAGES RÉELLEMENT LUES — source de vérité, prime sur ta mémoire]\n${evidenceBlock}\n\n[MISSION]\nDresse l'état du marché : qui est là, à quel prix, ce qu'ils font bien, et où se trouve la brèche. N'invente aucun prix qui n'apparaît pas dans les pages : écris "non communiqué".`,
           shape: `{
   "competitors": [{ "name": "", "url": "", "price": "", "strength": "", "weakness": "" }],
@@ -260,7 +362,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 }`
         });
         totalTokens += concurrence.tokens;
-        step(STEPS[2], 'done', { summary: concurrence.data?.gap?.slice(0, 90) ?? 'analyse produite' });
+        step(STEPS[2], 'done', {
+          summary: concurrence.ok ? concurrence.data?.gap?.slice(0, 90) ?? 'analyse produite' : '⚠ étape échouée',
+          failed: !concurrence.ok
+        });
 
         const marketContext = `[PROJET]\n${cadrage.data?.brief ?? idea}\n[MARCHÉ]\n${cadrage.data?.market ?? ''}\n[POSITIONNEMENT RETENU]\n${concurrence.data?.positioning ?? ''}\n[BRÈCHE]\n${concurrence.data?.gap ?? ''}\n[PRIX DU MARCHÉ]\n${concurrence.data?.priceRange ?? ''}`;
 
@@ -270,7 +375,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         step(STEPS[5], 'start');
 
         const [produit, design, growth] = await Promise.all([
-          askAgent({
+          safeAsk(STEPS[3], {
             key,
             agent: agentOf('lead_dev'),
             fallbackRole: STEPS[3].fallbackRole,
@@ -285,7 +390,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   "mainTechnicalRisk": ""
 }`
           }),
-          askAgent({
+          safeAsk(STEPS[4], {
             key,
             agent: agentOf('design_lead'),
             fallbackRole: STEPS[4].fallbackRole,
@@ -302,7 +407,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   "visualDirection": ""
 }`
           }),
-          askAgent({
+          safeAsk(STEPS[5], {
             key,
             agent: agentOf('cro_agent'),
             fallbackRole: STEPS[5].fallbackRole,
@@ -321,13 +426,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
           })
         ]);
         totalTokens += produit.tokens + design.tokens + growth.tokens;
-        step(STEPS[3], 'done', { summary: `${asStrings(produit.data?.mvpFeatures, 8).length} fonctionnalités au MVP` });
-        step(STEPS[4], 'done', { summary: design.data?.name ?? 'identité produite' });
-        step(STEPS[5], 'done', { summary: `${(Number(growth.data?.recurringCents) || 0) / 100} €/mois` });
+        step(STEPS[3], 'done', {
+          summary: produit.ok ? `${asStrings(produit.data?.mvpFeatures, 8).length} fonctionnalités au MVP` : '⚠ étape échouée',
+          failed: !produit.ok
+        });
+        step(STEPS[4], 'done', {
+          summary: design.ok ? design.data?.name ?? 'identité produite' : '⚠ étape échouée',
+          failed: !design.ok
+        });
+        step(STEPS[5], 'done', {
+          summary: growth.ok ? `${(Number(growth.data?.recurringCents) || 0) / 100} €/mois` : '⚠ étape échouée',
+          failed: !growth.ok
+        });
 
         /* 7. Recrutement -------------------------------------------- */
         step(STEPS[6], 'start');
-        const recrutement = await askAgent({
+        const recrutement = await safeAsk(STEPS[6], {
           key,
           agent: agentOf('hr_agent'),
           fallbackRole: STEPS[6].fallbackRole,
@@ -340,7 +454,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
         });
         totalTokens += recrutement.tokens;
         const hires = asObjects(recrutement.data?.hires, 5);
-        step(STEPS[6], 'done', { summary: hires.length > 0 ? `${hires.length} recrutement(s) proposé(s)` : 'aucun recrutement nécessaire' });
+        step(STEPS[6], 'done', {
+          summary: !recrutement.ok
+            ? '⚠ étape échouée'
+            : hires.length > 0
+              ? `${hires.length} recrutement(s) proposé(s)`
+              : 'aucun recrutement nécessaire',
+          failed: !recrutement.ok
+        });
 
         /* Dossier final — assemblé en code, sans appel supplémentaire */
         const name = String(design.data?.name ?? idea.slice(0, 30)).slice(0, 60).trim();
@@ -421,6 +542,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             },
             risks: asStrings(cadrage.data?.risks, 5),
             sources: dossierSources,
+            warnings: failures,
             tokens: totalTokens
           }
         });

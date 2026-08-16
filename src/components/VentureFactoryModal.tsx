@@ -57,6 +57,8 @@ interface Dossier {
   };
   risks: string[];
   sources: string[];
+  /** Étapes qui ont échoué : le dossier est livré quand même, mais amputé. */
+  warnings?: string[];
   tokens: number;
 }
 
@@ -67,6 +69,7 @@ interface StepView {
   model: string;
   status: 'start' | 'done';
   summary?: string;
+  failed?: boolean;
 }
 
 
@@ -404,8 +407,16 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
             <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
               {steps.map((step) => (
                 <div key={step.key} className="flex items-baseline gap-2 text-[11px]">
-                  <span className={step.status === 'done' ? 'text-emerald-600' : 'animate-pulse text-indigo-600'}>
-                    {step.status === 'done' ? '✓' : '●'}
+                  <span
+                    className={
+                      step.failed
+                        ? 'text-amber-600'
+                        : step.status === 'done'
+                          ? 'text-emerald-600'
+                          : 'animate-pulse text-indigo-600'
+                    }
+                  >
+                    {step.failed ? '⚠' : step.status === 'done' ? '✓' : '●'}
                   </span>
                   <span className="font-semibold text-slate-800">{step.label}</span>
                   <span className="text-slate-500">— {step.agentRole}</span>
@@ -434,6 +445,17 @@ export const VentureFactoryModal: React.FC<Props> = ({ isOpen, onClose, onCreate
           {/* Dossier */}
           {dossier && !busy && (
             <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 text-sm">
+              {dossier.warnings && dossier.warnings.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                  <strong>Dossier incomplet.</strong> Ces étapes n'ont pas abouti, le reste est exploitable :
+                  <ul className="mt-1 list-disc pl-4">
+                    {dossier.warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div>
                 <div className="flex flex-wrap items-baseline gap-2">
                   <h3 className="text-xl font-bold text-slate-900">{dossier.name}</h3>
