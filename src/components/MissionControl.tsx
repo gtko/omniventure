@@ -4,6 +4,7 @@ import type { Venture } from '../types';
 import { VentureFactoryModal } from './VentureFactoryModal';
 import { LifecyclePanel } from './LifecyclePanel';
 import { VentureLedger } from './VentureLedger';
+import { ReleasesPanel } from './ReleasesPanel';
 import { RoadmapPanel } from './RoadmapPanel';
 import { VentureDeliverables } from './VentureDeliverables';
 import { WorksitePanel } from './WorksitePanel';
@@ -134,6 +135,11 @@ export const MissionControl: React.FC = () => {
 
       {/* Ce qui fait avancer le projet : sans ça, le dossier reste lettre morte */}
       <WorksitePanel
+        venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
+      />
+
+      {/* Ce qui est sorti, et sur quoi ça repose */}
+      <ReleasesPanel
         venture={{ id: activeVenture.id, name: activeVenture.name, slug: activeVenture.slug || activeVenture.id }}
       />
 
