@@ -35,8 +35,7 @@ export const HARNESS_BRANDS: Record<string, HarnessBrand> = {
   codex: { id: 'codex', label: 'Codex CLI', short: 'Codex', bg: '#0d0d0d', ink: '#ffffff', accent: '#e5e7eb' },
   opencode: { id: 'opencode', label: 'opencode', short: 'opencode', bg: '#0b1220', ink: '#38bdf8', accent: '#38bdf8' },
   gemini: { id: 'gemini', label: 'Gemini CLI', short: 'Gemini', bg: '#0b1a2e', ink: '#8ab4f8', accent: '#8ab4f8' },
-  antigravity: { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', bg: '#141026', ink: '#c4b5fd', accent: '#a78bfa' },
-  aider: { id: 'aider', label: 'Aider', short: 'Aider', bg: '#0d1a12', ink: '#4ade80', accent: '#4ade80' }
+  antigravity: { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', bg: '#141026', ink: '#c4b5fd', accent: '#a78bfa' }
 };
 
 export function harnessBrand(id: string): HarnessBrand {
@@ -136,22 +135,12 @@ const markAntigravity: Mark = (ctx, cx, cy, r, ink) => {
   ctx.fillRect(cx - r * 0.62, cy + r * 0.76, r * 1.24, Math.max(0.8, r * 0.18));
 };
 
-/** Curseur de terminal plein. */
-const markAider: Mark = (ctx, cx, cy, r, ink) => {
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = Math.max(0.8, r * 0.16);
-  ctx.strokeRect(cx - r * 0.78, cy - r * 0.6, r * 1.56, r * 1.2);
-  ctx.fillStyle = ink;
-  ctx.fillRect(cx - r * 0.42, cy - r * 0.22, r * 0.42, r * 0.62);
-};
-
 const MARKS: Record<string, Mark> = {
   claude: markClaude,
   codex: markCodex,
   opencode: markOpencode,
   gemini: markGemini,
-  antigravity: markAntigravity,
-  aider: markAider
+  antigravity: markAntigravity
 };
 
 /** Monogramme de repli pour un harnais ajouté à la main dans le registre. */

@@ -152,33 +152,6 @@
           ]
         }
       }
-    },
-    {
-      "id": "aider",
-      "label": "Aider",
-      "vendor": "Communauté",
-      "bin": "aider",
-      "versionArgs": [
-        "--version"
-      ],
-      "runArgs": [
-        "--message",
-        "{prompt}",
-        "--yes"
-      ],
-      "install": "pip install aider-install && aider-install",
-      "docs": "https://aider.chat/docs",
-      "notes": "--message exécute une requête unique sans session interactive.",
-      "autonomy": {
-        "write": {
-          "insert": 0,
-          "args": []
-        },
-        "full": {
-          "insert": 0,
-          "args": []
-        }
-      }
     }
   ]
 }

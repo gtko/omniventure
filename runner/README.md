@@ -1,7 +1,7 @@
 # Pont local OmniVenture
 
 Exécute les harnais de codage (**Claude Code**, **Codex CLI**, **opencode**,
-**Gemini CLI**, **Antigravity**, **Aider**) sur votre machine et les expose à
+**Gemini CLI**, **Antigravity**) sur votre machine et les expose à
 l'interface OmniVenture.
 
 ## Pourquoi un processus séparé
