@@ -73,21 +73,64 @@ function readStoredGraph(): GraphAgent[] {
 }
 
 /**
- * Organigramme courant.
+ * Repère de synchronisation : la liste des métiers livrés avec le produit.
  *
- * À défaut de configuration enregistrée, on repart de la composition livrée
- * avec le produit — la DRH doit pouvoir travailler dès la première visite. Et
- * si un graphe existant ne contient pas encore la DRH, on l'y ajoute une fois :
- * sans elle, personne ne peut traiter une demande de renfort.
+ * Tant qu'elle ne change pas, on ne touche plus au graphe enregistré — un agent
+ * que vous avez supprimé reste supprimé. Le jour où une nouvelle version ajoute
+ * un métier, la liste change, la synchronisation se rejoue une fois, et vous
+ * récupérez le nouvel arrivant sans perdre vos réglages.
+ */
+const SYNC_KEY = 'omniventure_graph_sync';
+const CORE_SIGNATURE = GRAPH_DEFAULTS.map((agent) => agent.id).sort().join(',');
+
+/**
+ * Complète un graphe enregistré avec les métiers livrés qui lui manquent.
+ *
+ * C'est le point qui manquait : ajouter un agent au code ne servait à rien pour
+ * quelqu'un qui avait déjà sauvegardé son organigramme — le graphe livré n'est
+ * lu qu'à la toute première visite.
+ */
+export function ensureCoreAgents(): GraphAgent[] {
+  const stored = readStoredGraph();
+  if (stored.length === 0) {
+    const seeded = GRAPH_DEFAULTS as GraphAgent[];
+    writeGraph(seeded);
+    markSynced();
+    return seeded;
+  }
+
+  let alreadySynced = false;
+  try {
+    alreadySynced = localStorage.getItem(SYNC_KEY) === CORE_SIGNATURE;
+  } catch {
+    alreadySynced = false;
+  }
+  if (alreadySynced) return stored;
+
+  const known = new Set(stored.map((agent) => agent.id));
+  const missing = (GRAPH_DEFAULTS as GraphAgent[]).filter((agent) => !known.has(agent.id));
+  markSynced();
+  if (missing.length === 0) return stored;
+
+  const merged = [...stored, ...missing];
+  writeGraph(merged);
+  return merged;
+}
+
+function markSynced(): void {
+  try {
+    localStorage.setItem(SYNC_KEY, CORE_SIGNATURE);
+  } catch {
+    /* stockage indisponible */
+  }
+}
+
+/**
+ * Organigramme courant, complété des métiers livrés qui manquaient.
+ * À défaut de configuration enregistrée, on repart de la composition d'origine.
  */
 export function readGraph(): GraphAgent[] {
-  const stored = readStoredGraph();
-  const base: GraphAgent[] = stored.length > 0 ? stored : (GRAPH_DEFAULTS as GraphAgent[]);
-  if (base.some((agent) => agent.id === HR_AGENT_ID)) return base;
-
-  const migrated = [...base, ...GRAPH_DEFAULTS.filter((agent) => agent.id === HR_AGENT_ID)] as GraphAgent[];
-  writeGraph(migrated);
-  return migrated;
+  return ensureCoreAgents();
 }
 
 export function writeGraph(agents: GraphAgent[]): void {

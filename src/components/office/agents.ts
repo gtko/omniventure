@@ -8,6 +8,7 @@
  * apparaître dans le bureau, en supprimer un le fait disparaître.
  */
 
+import { SHARED_ROLES } from '../../lib/agent-roster';
 import { harnessBrand } from './harnessMarks';
 import type { AgentProfile } from './simulation';
 
@@ -35,14 +36,10 @@ export const GRAPH_DEFAULTS: GraphAgent[] = [
   { id: 'sentiment_agent', role: "Expert Analyseur d'Avis & Sentiment", tier: 3, category: 'research', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
   { id: 'worker_dev', role: 'Worker Développeur Micro-Tasks', tier: 3, category: 'engineering', hierarchyLevel: 'expert', modelId: 'qwen/qwen-2.5-coder-32b-instruct' },
   { id: 'qa_agent', role: 'Expert QA & Recette Automatique', tier: 3, category: 'operations', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
-  { id: 'cro_agent', role: 'Expert CRO & Multi-Armed Bandit', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' },
-  { id: 'hr_agent', role: 'DRH — Recrutement & Organisation', tier: 2, category: 'operations', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' },
-  { id: 'design_lead', role: 'Head of Design — Marque & Interface', tier: 2, category: 'growth', hierarchyLevel: 'head_of', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
-  { id: 'ui_designer', role: 'Expert UI & Design System', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat', teamName: 'Design & Marque' },
-  { id: 'graphic_agent', role: 'Graphiste — Logos, Illustrations & Maquettes', tier: 2, category: 'growth', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash-image', teamName: 'Design & Marque' },
-  { id: 'design_system_agent', role: 'Designeuse Système — Tokens & Composants', tier: 2, category: 'engineering', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Design & Marque' },
-  { id: 'doc_agent', role: 'Documentaliste — Connaissance & Process', tier: 2, category: 'operations', hierarchyLevel: 'lead', modelId: 'google/gemini-2.5-flash', teamName: 'Direction & Organisation' },
-  { id: 'improve_agent', role: "Chief of Staff — Auto-amélioration du produit", tier: 2, category: 'orchestration', hierarchyLevel: 'head_of', modelId: 'deepseek/deepseek-chat', teamName: 'Direction & Organisation' }
+  { id: 'cro_agent', role: 'Expert CRO & Multi-Armed Bandit', tier: 3, category: 'growth', hierarchyLevel: 'expert', modelId: 'deepseek/deepseek-chat' }
+,
+  // Métiers récents : définition complète partagée avec le studio.
+  ...(SHARED_ROLES as unknown as GraphAgent[])
 ];
 
 /** Prénom d'affichage des agents historiques du graphe. */
@@ -64,7 +61,8 @@ const KNOWN_NAMES: Record<string, string> = {
   graphic_agent: 'Milo',
   design_system_agent: 'Anaïs',
   doc_agent: 'Basile',
-  improve_agent: 'Rémi'
+  improve_agent: 'Rémi',
+  frontend_agent: 'Jonas'
 };
 
 /** Pôle du bureau où s'installe chaque famille d'agents. */
