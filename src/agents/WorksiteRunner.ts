@@ -20,6 +20,8 @@
 
 import { runAgent, type AgentTool } from '../lib/agent-sdk';
 import { defaultAgency, readAgency, type AgencyAgent } from '../lib/agency-graph';
+import { checkBudget, recordSpend } from '../lib/agency-spend';
+import { readConfig } from '../lib/agency-store';
 import { resolveOpenRouterKey } from '../lib/openrouter-key';
 import { PHASES, phaseById, handoffPrompt, type Phase } from '../lib/pipeline';
 import { runSandboxTool, WORKDIR } from '../lib/sandbox-tools';
@@ -186,6 +188,16 @@ export class WorksiteRunner {
     if (!run || String((run as any).status) !== 'en-cours') return false;
 
     const phase = phaseById(String((run as any).phase) as any);
+
+    /* Le frein : une chaîne autonome sans plafond se découvre sur une facture. */
+    const config = await readConfig(this.env.DB, String((run as any).venture_id));
+    const budget = await checkBudget(this.env.DB, String((run as any).venture_id), config.dailyBudgetUsd);
+    if (!budget.allowed) {
+      await this.patch(runId, { error: budget.reason ?? null });
+      await this.log(runId, "quota", budget.reason ?? "Plafond de dépense atteint.");
+      return false;
+    }
+
     const handled = (await this.state.storage.get<number>('handled')) ?? 0;
     if (handled >= MAX_TASKS_PER_RUN) {
       await this.log(runId, 'quota', `${MAX_TASKS_PER_RUN} tâches sur ce passage — relancez pour continuer.`);
@@ -266,6 +278,18 @@ export class WorksiteRunner {
       { openRouterKey: key }
     );
 
+    await recordSpend(this.env.DB, {
+      ventureId: String(run.venture_id),
+      kind: 'passation',
+      agentId: lead.id,
+      agentName: lead.role,
+      model: result.modelUsed,
+      tokensIn: result.tokensInput,
+      tokensOut: result.tokensOutput,
+      costUsd: result.costUsd,
+      label: `${phase.label} → ${phaseById(phase.next as any).label}`
+    });
+
     const titles = this.parseTitles(result.text);
     if (titles.length === 0) {
       await this.log(runId, 'attente', `Passation sans suite : ${lead.role} n'a listé aucune tâche.`);
@@ -334,6 +358,18 @@ export class WorksiteRunner {
           .join('\n'),
         { openRouterKey: key }
       );
+
+      await recordSpend(this.env.DB, {
+        ventureId: String(run.venture_id),
+        kind: 'tache',
+        agentId: agent.id,
+        agentName: agent.role,
+        model: result.modelUsed,
+        tokensIn: result.tokensInput,
+        tokensOut: result.tokensOutput,
+        costUsd: result.costUsd,
+        label: String(task.title)
+      });
 
       const body = (result.text ?? '').trim();
 

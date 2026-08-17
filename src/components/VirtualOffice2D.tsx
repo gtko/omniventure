@@ -9,7 +9,8 @@ import {
   type HarnessStartDetail
 } from '../lib/harness-client';
 import { AGENT_ACTIVITY_EVENT, type AgentActivity } from '../lib/agent-activity';
-import { MEETING_LIVE_EVENT } from '../lib/agenda';
+/** Émis par office-feed quand le journal du serveur signale une réunion. */
+const MEETING_LIVE_EVENT = 'omniventure_meeting_live';
 import { GRAPH_UPDATED_EVENT } from '../lib/hiring';
 import { harnessProfile, loadGraphProfiles } from './office/agents';
 import { drawHarnessBadge, harnessBrand } from './office/harnessMarks';

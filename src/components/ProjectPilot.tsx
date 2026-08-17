@@ -1,8 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ACCESS_EVENT, answerAccess, readAccessRequests, type AccessRequest } from '../lib/agenda';
 import { readLocal } from '../lib/local';
-import { setLifecycle, nextStep, readLifecycle } from '../lib/lifecycle';
-import { answer, INBOX_EVENT, INBOX_LABEL, pendingFor, type InboxItem } from '../lib/operator-inbox';
 import { commandRun, fetchRun, SERVER_RUN_EVENT, watchRun, type ServerRun } from '../lib/server-run';
 import { Portal } from './Portal';
 
@@ -23,28 +20,28 @@ interface Props {
  */
 export const ProjectPilot: React.FC<Props> = ({ venture }) => {
   const [run, setRun] = useState<ServerRun | null>(null);
-  const [inbox, setInbox] = useState<InboxItem[]>([]);
-  const [access, setAccess] = useState<AccessRequest[]>([]);
-  /** Ce qu'un C-Level a fait remonter jusqu'au CEO. */
-  const [escalations, setEscalations] = useState<Array<{ id: string; from: string; subject: string; body: string; at: number }>>([]);
+  /**
+   * Ce qu'un C-Level a fait remonter jusqu'au CEO.
+   *
+   * Il y avait ici deux autres files, tenues dans le navigateur : une boîte de
+   * questions et des demandes d'accès. Plus rien ne les alimentait depuis que
+   * l'agence tourne côté serveur — elles affichaient un vide permanent. Une
+   * seule voie subsiste, et elle est la bonne : seul un C-Level vous saisit, et
+   * ce qui arrive ici a déjà été jugé hors de portée de l'agence.
+   */
+  const [escalations, setEscalations] = useState<
+    Array<{ id: string; from: string; subject: string; body: string; at: number }>
+  >([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    setInbox(pendingFor(venture.name));
-    setAccess(readAccessRequests().filter((request) => request.status === 'attente'));
-
-    /*
-     * Ce que l'agence fait remonter jusqu'à vous vit désormais en base : seul un
-     * C-Level peut vous saisir, et ce qui arrive ici a déjà été jugé hors de sa
-     * portée. La cloche lisait le navigateur, elle serait donc restée muette.
-     */
     void fetch(`/api/agenda?ventureId=${encodeURIComponent(venture.id)}`)
       .then((res) => res.json())
       .then((json: any) => setEscalations(Array.isArray(json?.ceo) ? json.ceo : []))
       .catch(() => undefined);
-  }, [venture.id, venture.name]);
+  }, [venture.id]);
 
   useEffect(() => {
     refresh();
@@ -54,13 +51,13 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
     };
 
     window.addEventListener(SERVER_RUN_EVENT, onRun);
-    for (const event of [INBOX_EVENT, ACCESS_EVENT]) window.addEventListener(event, refresh);
     // L'état vient du serveur : on le suit, on ne le détient pas.
     const stopWatching = watchRun(venture.id);
+    const timer = window.setInterval(refresh, 15000);
 
     return () => {
       window.removeEventListener(SERVER_RUN_EVENT, onRun);
-      for (const event of [INBOX_EVENT, ACCESS_EVENT]) window.removeEventListener(event, refresh);
+      window.clearInterval(timer);
       stopWatching();
     };
   }, [refresh, venture.id]);
@@ -78,17 +75,7 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
   };
 
   const running = run?.status === 'en-cours';
-  const waiting = inbox.length + access.length + escalations.length;
-
-  /** Répondre « oui » à une étape la franchit : c'est tout l'intérêt de la question. */
-  const answerStage = (item: InboxItem, yes: boolean) => {
-    answer(item.id, yes ? 'oui' : 'non');
-    if (yes && item.kind === 'etape') {
-      const following = nextStep(readLifecycle(venture.id));
-      if (following) setLifecycle(venture.id, following, 'validée par le CEO');
-    }
-    refresh();
-  };
+  const waiting = escalations.length;
 
   return (
     <div className="space-y-1.5">
@@ -221,62 +208,6 @@ export const ProjectPilot: React.FC<Props> = ({ venture }) => {
                   </article>
                 ))}
 
-                {inbox.map((item) => (
-                  <article key={item.id} className="rounded-lg border border-slate-200 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-900">
-                      <span>{INBOX_LABEL[item.kind].icon}</span>
-                      <span>{item.question}</span>
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-[11px] leading-snug text-slate-600">{item.detail}</p>
-                    <p className="mt-1 font-mono text-[10px] text-slate-400">
-                      {item.askedBy} · {new Date(item.at).toLocaleString('fr-FR')}
-                    </p>
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        onClick={() => answerStage(item, true)}
-                        className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
-                      >
-                        Oui
-                      </button>
-                      <button
-                        onClick={() => answerStage(item, false)}
-                        className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                      >
-                        Non
-                      </button>
-                    </div>
-                  </article>
-                ))}
-
-                {access.map((request) => (
-                  <article key={request.id} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
-                    <p className="text-xs font-semibold text-slate-900">🔑 {request.what}</p>
-                    {request.why && <p className="mt-1 text-[11px] text-slate-600">{request.why}</p>}
-                    <p className="mt-1 font-mono text-[10px] text-slate-400">
-                      {request.askedByName} · réunion « {request.meetingTitle} »
-                    </p>
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        onClick={() => {
-                          answerAccess(request.id, 'accorde');
-                          refresh();
-                        }}
-                        className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
-                      >
-                        Accorder
-                      </button>
-                      <button
-                        onClick={() => {
-                          answerAccess(request.id, 'refuse');
-                          refresh();
-                        }}
-                        className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                      >
-                        Refuser
-                      </button>
-                    </div>
-                  </article>
-                ))}
               </div>
             </div>
           </div>

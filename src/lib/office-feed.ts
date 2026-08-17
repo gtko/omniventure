@@ -75,6 +75,21 @@ export function watchOffice(ventureId: string): void {
       const who = named ? head : style.who;
       const said = readable(named ? rest.join(' : ') : entry.message);
 
+      /*
+       * Une réunion envoie les personnages en salle.
+       *
+       * Le plateau écoutait cet événement depuis la version navigateur de
+       * `hold()`, qui ne tourne plus : les salles restaient vides pendant que
+       * l'agence se réunissait pour de bon.
+       */
+      if (entry.kind === 'reunion') {
+        window.dispatchEvent(
+          new CustomEvent('omniventure_meeting_live', {
+            detail: { room: 'Salle Nord', ids: [], titre: said.slice(0, 60) }
+          })
+        );
+      }
+
       saveRealAgentLog({
         fromAgentId: who.toLowerCase().replace(/[^a-z]/g, '_').slice(0, 40),
         fromAgentName: who,

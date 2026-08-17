@@ -5,7 +5,6 @@ import { artifactsOf, ARTIFACT_KINDS, countByKind } from '../lib/artifacts';
 import { readLifecycle, stageById, subStageOf } from '../lib/lifecycle';
 import { formatUsd } from '../lib/model-pricing';
 import { phaseById } from '../lib/pipeline';
-import { readAccessRequests } from '../lib/agenda';
 import { releasesOf } from '../lib/releases';
 import { HORIZONS, ORIGIN_STYLE, roadmapOf } from '../lib/roadmap';
 import { currentSprint, sprintProgress } from '../lib/sprint';
@@ -76,7 +75,6 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
     .reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
 
   const now = roadmapOf(venture.name).filter((item) => item.horizon === 'maintenant' && item.status !== 'ecarte');
-  const pending = readAccessRequests().filter((request) => request.status === 'attente');
 
   return (
     <div className="space-y-4">
@@ -230,14 +228,6 @@ export const VentureOverview: React.FC<Props> = ({ venture, onGo }) => {
             </p>
           )}
 
-          {pending.length > 0 && (
-            <a
-              href="/agenda"
-              className="mt-3 block rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900"
-            >
-              {pending.length} demande(s) attendent votre décision — les agents ne s'accordent pas ce qu'ils n'ont pas.
-            </a>
-          )}
         </section>
       </div>
 

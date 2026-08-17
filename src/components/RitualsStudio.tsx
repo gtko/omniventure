@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { agencyNow, formatAgency, formatSlot, humanDelay, realDelayUntil } from '../lib/agency-time';
-import { AGENDA_EVENT, MEETING_KINDS, readAgenda, type Meeting } from '../lib/agenda';
+
 import { readGraph, type GraphAgent } from '../lib/hiring';
 import {
   ATTENDANCE,
@@ -48,7 +48,8 @@ export const RitualsStudio: React.FC = () => {
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [history, setHistory] = useState<Sprint[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  /** Les rendez-vous du sprint, lus côté serveur : les agents en posent eux-mêmes. */
+  const [meetings, setMeetings] = useState<Array<{ id: string; title: string; day: number; hour: number; status: string }>>([]);
   const [venture, setVenture] = useState<{ id: string; name: string } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -68,7 +69,12 @@ export const RitualsStudio: React.FC = () => {
       setSprint(running);
       setHistory(sprintsOf(active.name).filter((entry) => entry.status === 'termine'));
       setTasks(running ? committedTasks(running) : []);
-      setMeetings(readAgenda().filter((meeting) => meeting.ventureName === active.name && meeting.template !== 'libre'));
+      // Les rendez-vous viennent du serveur : les agents en posent eux-mêmes,
+      // et le navigateur ne tient plus l'agenda.
+      void fetch(`/api/agenda?ventureId=${encodeURIComponent(active.id)}`)
+        .then((res) => res.json())
+        .then((json: any) => setMeetings(Array.isArray(json?.meetings) ? json.meetings : []))
+        .catch(() => setMeetings([]));
     } else {
       setSprint(null);
       setHistory([]);
@@ -80,9 +86,9 @@ export const RitualsStudio: React.FC = () => {
   useEffect(() => {
     setGraph(readGraph());
     refresh();
-    for (const event of [RITUALS_EVENT, SPRINT_EVENT, AGENDA_EVENT]) window.addEventListener(event, refresh);
+    for (const event of [RITUALS_EVENT, SPRINT_EVENT]) window.addEventListener(event, refresh);
     return () => {
-      for (const event of [RITUALS_EVENT, SPRINT_EVENT, AGENDA_EVENT]) window.removeEventListener(event, refresh);
+      for (const event of [RITUALS_EVENT, SPRINT_EVENT]) window.removeEventListener(event, refresh);
     };
   }, [refresh]);
 
@@ -260,7 +266,7 @@ export const RitualsStudio: React.FC = () => {
                 <ul className="mt-1 space-y-1">
                   {meetings.map((meeting) => (
                     <li key={meeting.id} className="flex items-baseline gap-2 text-[11px]">
-                      <span>{MEETING_KINDS[meeting.kind].icon}</span>
+                      <span>🗓️</span>
                       <span className="min-w-0 flex-1 truncate text-slate-700">{meeting.title}</span>
                       <span className="shrink-0 font-mono text-[10px] text-slate-400">
                         {formatSlot(meeting.day, meeting.hour)}
@@ -366,7 +372,7 @@ export const RitualsStudio: React.FC = () => {
                   </label>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold text-slate-900">
-                      {MEETING_KINDS[ritual.meetingKind].icon} {ritual.name}
+                      {ritual.name}
                       {ritual.template !== 'libre' && (
                         <span className="ml-1.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700">
                           {ritual.template}

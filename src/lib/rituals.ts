@@ -15,7 +15,11 @@
  */
 
 import { agencyNow, WORK_START } from './agency-time';
-import { readAgenda, schedule, type MeetingKind, type MeetingTemplate } from './agenda';
+import { getActiveProjectId } from './store';
+
+/** Les genres de réunion, repris tels quels de l'ancien agenda navigateur. */
+export type MeetingKind = 'rituel' | 'un-a-un' | 'revue' | 'atelier' | 'incident' | 'comite';
+export type MeetingTemplate = 'libre' | 'planning' | 'demo' | 'retro';
 import { readGraph, type GraphAgent } from './hiring';
 import { currentSprint, demoBrief, planningBrief, retroBrief, sprintTeam, type Sprint } from './sprint';
 import { readLocal, writeLocal } from './local';
@@ -233,10 +237,12 @@ export function attendeesOf(ritual: RitualDef, sprint: Sprint | null, graph: Gra
       // n'existe pas. On prend alors ceux qui s'y sont engagés en
       // planification — sans quoi la rétrospective ne serait jamais posée,
       // faute de participants au moment où on la met au calendrier.
-      const planning = readAgenda().find(
-        (meeting) => meeting.sprintId === sprint.id && meeting.template === 'planning'
-      );
-      for (const id of planning?.participantIds ?? []) if (graph.some((agent) => agent.id === id)) ids.add(id);
+      /*
+       * L'agenda vit côté serveur : on ne peut plus le lire ici de façon
+       * synchrone. Faute de mieux, on s'en tient à l'organisateur et à ceux
+       * que le rituel désigne — c'est le battement qui, en base, complétera.
+       */
+      for (const id of ritual.participantIds) if (graph.some((agent) => agent.id === id)) ids.add(id);
     }
   }
 
@@ -286,23 +292,35 @@ export function scheduleDue(ventureName: string): ScheduledRitual[] {
       continue;
     }
 
-    const result = schedule({
-      title: sprint ? `${ritual.name} — sprint ${sprint.number}` : ritual.name,
-      kind: ritual.meetingKind,
-      topic: ritual.objective,
-      organiserId: ritual.organiserId,
-      participantIds: attendees,
-      day,
-      hour: Math.max(WORK_START, ritual.hour),
-      duration: ritual.duration,
-      ventureName,
-      template: ritual.template,
-      sprintId: sprint?.id,
-      brief: briefFor(ritual, ventureName, sprint)
-    });
+    /*
+     * La réunion est posée côté serveur, comme toutes les autres.
+     *
+     * L'appel part sans qu'on l'attende : cette fonction est appelée depuis un
+     * rendu et doit rester synchrone. Le calendrier se rafraîchit de lui-même
+     * quelques secondes plus tard — et si la pose échoue, le serveur le dira
+     * dans sa réponse plutôt que de créer un doublon, puisqu'il refuse déjà
+     * deux fois la même réunion.
+     */
+    void fetch('/api/agenda', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'convoquer',
+        ventureId: getActiveProjectId(),
+        ventureName,
+        title: sprint ? `${ritual.name} — sprint ${sprint.number}` : ritual.name,
+        kind: ritual.meetingKind,
+        topic: ritual.objective,
+        organiserId: ritual.organiserId,
+        participantIds: attendees,
+        day,
+        hour: Math.max(WORK_START, ritual.hour),
+        duration: ritual.duration
+      })
+    }).catch(() => undefined);
 
     updateRitual(ritual.id, { lastDay: day });
-    results.push({ ritual: ritual.name, day, hour: ritual.hour, error: result.error });
+    results.push({ ritual: ritual.name, day, hour: ritual.hour });
   }
 
   return results;

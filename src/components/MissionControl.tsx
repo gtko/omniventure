@@ -3,6 +3,7 @@ import { getActiveProjectId, getStoredVentures, saveStoredVentures, setActivePro
 import { sendToDesigner, takeSeed } from '../lib/design-handoff';
 import { readLifecycle, stageById } from '../lib/lifecycle';
 import type { Venture } from '../types';
+import { AgencySettings } from './AgencySettings';
 import { AnalyticsStudio } from './AnalyticsStudio';
 import { LifecyclePanel } from './LifecyclePanel';
 import { ReleasesPanel } from './ReleasesPanel';
@@ -229,6 +230,10 @@ export const MissionControl: React.FC = () => {
           <VentureDeliverables venture={identity} />
         </>
       )}
+
+      {/* Le rythme de l'agence et son plafond de dépense, avant le reste : ce
+          sont les deux réglages qui décident de ce qu'elle fait sans vous. */}
+      {view === 'reglages' && <AgencySettings venture={identity} />}
 
       {view === 'reglages' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

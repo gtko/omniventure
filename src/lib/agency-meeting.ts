@@ -17,6 +17,7 @@
 import { runAgent } from './agent-sdk';
 import type { AgencyAgent } from './agency-graph';
 import { ask, setMeetingStatus, type MeetingRow } from './agency-store';
+import { recordSpend } from './agency-spend';
 import { parseModelJson } from './model-json';
 
 export interface MeetingOutcome {
@@ -149,6 +150,20 @@ export async function holdMeeting(options: HoldOptions): Promise<MeetingResult> 
         speakPrompt(meeting, names, transcript, agent),
         { openRouterKey }
       );
+      // Une réunion est ce qui coûte le plus cher : un appel par participant,
+      // plus la conclusion. Chacun est compté.
+      await recordSpend(db, {
+        ventureId: meeting.ventureId,
+        kind: 'reunion',
+        agentId: agent.id,
+        agentName: agent.role,
+        model: result.modelUsed,
+        tokensIn: result.tokensInput,
+        tokensOut: result.tokensOutput,
+        costUsd: result.costUsd,
+        label: meeting.title
+      });
+
       const said = (result.text ?? '').trim();
       if (said) {
         transcript.push({ who: agent.role, said });
@@ -186,6 +201,18 @@ export async function holdMeeting(options: HoldOptions): Promise<MeetingResult> 
       reportPrompt(meeting, transcript),
       { openRouterKey }
     );
+    await recordSpend(db, {
+      ventureId: meeting.ventureId,
+      kind: 'reunion',
+      agentId: chair.id,
+      agentName: chair.role,
+      model: result.modelUsed,
+      tokensIn: result.tokensInput,
+      tokensOut: result.tokensOutput,
+      costUsd: result.costUsd,
+      label: `conclusion — ${meeting.title}`
+    });
+
     const parsed = parseModelJson(result.text ?? '', chair.role) as { decisions?: string; suites?: any[] };
     decisions = String(parsed?.decisions ?? '').slice(0, 4000);
     raw = Array.isArray(parsed?.suites) ? parsed.suites : [];

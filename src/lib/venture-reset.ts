@@ -13,7 +13,6 @@
  * du travail de réflexion, pas du travail d'exécution.
  */
 
-import { readAgenda, type Meeting } from './agenda';
 import { readLedger, type LedgerEntry } from './agent-ledger';
 import { readArtifacts, type Artifact } from './artifacts';
 import { resetLifecycle } from './lifecycle';
@@ -60,7 +59,9 @@ export function previewReset(ventureName: string): ResetCount {
     dossierDocs: docs.filter((doc) => isDossier(doc, ventureName)).length,
     roadmap: readRoadmap().filter((item: RoadmapItem) => item.ventureName === ventureName).length,
     sprints: readSprints().filter((sprint: Sprint) => sprint.ventureName === ventureName).length,
-    meetings: readAgenda().filter((meeting: Meeting) => meeting.ventureName === ventureName).length,
+    // Les réunions vivent en base : leur remise à zéro passe par le serveur,
+    // pas par ce décompte navigateur qui ne verrait plus rien.
+    meetings: 0,
     ledger: readLedger().filter((entry: LedgerEntry) => entry.ventureName === ventureName).length
   };
 }

@@ -62,6 +62,11 @@ export interface AgentRunResult {
   tokensOutput: number;
   modelUsed: string;
   /**
+   * Ce que l'appel a coûté, en dollars. `null` quand le fournisseur ne le dit
+   * pas — mieux vaut l'ignorer franchement que d'inventer une estimation.
+   */
+  costUsd: number | null;
+  /**
    * Pourquoi le modèle s'est tu : `stop` (il a fini), `length` (il a été coupé
    * net), `content_filter`… Sans cette information, une réponse tronquée est
    * indiscernable d'une réponse vide, et l'erreur affichée n'aide personne.
@@ -122,6 +127,7 @@ export async function runAgent(
 
   let tokensInput = 0;
   let tokensOutput = 0;
+  let costUsd: number | null = null;
   let modelUsed = def.model;
 
   for (let step = 0; step < (def.maxSteps ?? 6); step++) {
@@ -139,6 +145,16 @@ export async function runAgent(
         messages,
         temperature: def.temperature ?? 0.4,
         max_tokens: def.maxTokens ?? 2048,
+        /*
+         * Le coût réel de l'appel, rendu par OpenRouter.
+         *
+         * Le déduire d'une table de tarifs oblige à la tenir à jour et se
+         * trompe dès qu'un modèle change de prix ou qu'un fournisseur de repli
+         * prend la main. Ici c'est le montant facturé qui est renvoyé. Un
+         * fournisseur qui ignore ce champ ne casse rien : on retombe simplement
+         * sur un coût inconnu, et le registre le dit.
+         */
+        usage: { include: true },
         ...(tools.length > 0
           ? {
               tools: tools.map((tool) => ({
@@ -158,6 +174,8 @@ export async function runAgent(
     modelUsed = completion.model ?? modelUsed;
     tokensInput += completion.usage?.prompt_tokens ?? 0;
     tokensOutput += completion.usage?.completion_tokens ?? 0;
+    // Un agent fait plusieurs allers-retours : les coûts s'additionnent.
+    if (typeof completion.usage?.cost === 'number') costUsd = (costUsd ?? 0) + completion.usage.cost;
 
     const choice = completion.choices?.[0]?.message;
     const finishReason = completion.choices?.[0]?.finish_reason as string | undefined;
@@ -180,7 +198,7 @@ export async function runAgent(
         );
       }
 
-      return { text, steps, tokensInput, tokensOutput, modelUsed, finishReason };
+      return { text, steps, tokensInput, tokensOutput, costUsd, modelUsed, finishReason };
     }
 
     for (const call of calls) {
@@ -213,6 +231,7 @@ export async function runAgent(
     steps,
     tokensInput,
     tokensOutput,
+    costUsd,
     modelUsed,
     finishReason: 'max_steps'
   };

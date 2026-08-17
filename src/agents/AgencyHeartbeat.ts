@@ -25,7 +25,7 @@
  *     de travail d'agence.
  */
 
-import { runAgent, type AgentTool } from '../lib/agent-sdk';
+import { runAgent } from '../lib/agent-sdk';
 import { readAgency, responsableDe, rightsOf, subordonnesDe, type AgencyAgent } from '../lib/agency-graph';
 import { holdMeeting } from '../lib/agency-meeting';
 import {
@@ -46,6 +46,7 @@ import {
   WORK_END,
   type RequestRow
 } from '../lib/agency-store';
+import { checkBudget, recordSpend, type SpendKind } from '../lib/agency-spend';
 import { resolveOpenRouterKey } from '../lib/openrouter-key';
 import { parseModelJson } from '../lib/model-json';
 
@@ -121,6 +122,20 @@ export class AgencyHeartbeat {
     if (!running || !ventureId || !key) return;
 
     const config = await readConfig(this.env.DB, ventureId);
+
+    /*
+     * Le frein, avant toute chose.
+     *
+     * Le plafond existait dans la configuration sans jamais être lu : une
+     * boucle autonome sans limite, qu'on lance en fermant l'onglet. On s'arrête
+     * ici, et on dit pourquoi.
+     */
+    const budget = await checkBudget(this.env.DB, ventureId, config.dailyBudgetUsd);
+    if (!budget.allowed) {
+      await this.log(ventureId, 'battement', budget.reason ?? 'Plafond de dépense atteint.');
+      await this.stop();
+      return;
+    }
 
     try {
       await this.tick(ventureId, key, config.agentsPerTick);
@@ -254,7 +269,9 @@ export class AgencyHeartbeat {
         '{"action":"repondre|remonter","reponse":"…","motif":"…"}'
       ]
         .filter(Boolean)
-        .join('\n')
+        .join('\n'),
+      ventureId,
+      'reponse'
     );
 
     const parsed = parseModelJson(result, agent.role) as { action?: string; reponse?: string; motif?: string };
@@ -344,7 +361,9 @@ export class AgencyHeartbeat {
         '{"action":"…","sujet":"…","detail":"…","participants":["id"]}'
       ]
         .filter(Boolean)
-        .join('\n')
+        .join('\n'),
+      ventureId,
+      'tour'
     );
 
     const parsed = parseModelJson(result, agent.role) as {
@@ -430,7 +449,13 @@ export class AgencyHeartbeat {
   /* Outillage                                                           */
   /* ------------------------------------------------------------------ */
 
-  private async speak(agent: AgencyAgent, key: string, prompt: string, tools: AgentTool[] = []): Promise<string> {
+  private async speak(
+    agent: AgencyAgent,
+    key: string,
+    prompt: string,
+    ventureId: string,
+    kind: SpendKind = 'tour'
+  ): Promise<string> {
     const result = await runAgent(
       {
         id: agent.id,
@@ -441,11 +466,26 @@ export class AgencyHeartbeat {
         temperature: agent.temperature ?? 0.4,
         maxTokens: agent.maxTokens,
         maxSteps: 1,
-        tools
+        tools: []
       },
       prompt,
       { openRouterKey: key }
     );
+
+    // Chaque prise de parole est comptée : sans cela, le plafond ne freinerait
+    // que ce qu'il ignore.
+    await recordSpend(this.env.DB, {
+      ventureId,
+      kind,
+      agentId: agent.id,
+      agentName: agent.role,
+      model: result.modelUsed,
+      tokensIn: result.tokensInput,
+      tokensOut: result.tokensOutput,
+      costUsd: result.costUsd,
+      label: kind === 'reponse' ? 'réponse à une demande' : 'tour de parole'
+    });
+
     return result.text ?? '';
   }
 
